@@ -196,6 +196,7 @@ def entertainmentService(group, user):
                             #logging.debug("in X: " + str(x) + " Y: " + str(y) + " B: " + str(bri))
                             #logging.debug("st X: " + str(light.state["xy"][0]) + " Y: " + str(light.state["xy"][1]) + " B: " + str(light.state["bri"]))
                             #logging.debug("co XY: " + str(convert_rgb_xy(r, g, b)) + " B: " + str((r + g + b) / 3))
+                        logging.debug(f"Processing light: {light.name}, proto: {proto}, modelid: {light.modelid}, gradient_segment_id: {gradient_segment_id}")
                         if proto in ["native", "native_multi", "native_single"]:
                             if light.protocol_cfg["ip"] not in nativeLights:
                                 nativeLights[light.protocol_cfg["ip"]] = {}
@@ -260,13 +261,16 @@ def entertainmentService(group, user):
                                             "id": gradient_segment_id,
                                             "color": [r, g, b]
                                         })
+                                        logging.debug(f"Added gradient point: id={gradient_segment_id}, color=[{r},{g},{b}]")
                                     else:
-                                        # Device type 0 - single color, replace with single point
-                                        # Use the latest color received
-                                        wledLights[light.protocol_cfg["ip"]]["gradient_points"] = [{
-                                            "id": -1,  # Use -1 to indicate single color mode
-                                            "color": [r, g, b]
-                                        }]
+                                        # Device type 0 - only replace if we don't have gradient points yet
+                                        # This prevents overwriting gradient data
+                                        if len(wledLights[light.protocol_cfg["ip"]]["gradient_points"]) == 0:
+                                            wledLights[light.protocol_cfg["ip"]]["gradient_points"] = [{
+                                                "id": -1,  # Use -1 to indicate single color mode
+                                                "color": [r, g, b]
+                                            }]
+                                            logging.debug(f"Set single color mode: color=[{r},{g},{b}]")
                                 else:
                                     # Non-gradient lights - single color for all
                                     wledLights[light.protocol_cfg["ip"]]["gradient_points"] = [{
@@ -332,7 +336,10 @@ def entertainmentService(group, user):
                     if len(wledLights) != 0:
                         # Use WARLS with per-LED linear interpolation and decay
                         # Check gradient mode from config
-                        gradient_mode = bridgeConfig["config"]["wled"].get("gradient_mode", "sparse")
+                        gradient_mode = "sparse"  # Default to sparse
+                        if "wled" in bridgeConfig["config"]:
+                            gradient_mode = bridgeConfig["config"]["wled"].get("gradient_mode", "sparse")
+                        logging.info(f"WLED gradient mode: {gradient_mode}")
                         
                         for ip in wledLights.keys():
                             wled_data = wledLights[ip]
@@ -364,9 +371,9 @@ def entertainmentService(group, user):
                                 gradient_points.sort(key=lambda x: x["id"])
                                 
                                 # Debug log
-                                logging.debug(f"WLED gradient points count: {len(gradient_points)}, mode: {gradient_mode}")
+                                logging.info(f"WLED gradient points count: {len(gradient_points)}, mode: {gradient_mode}")
                                 for idx, pt in enumerate(gradient_points):
-                                    logging.debug(f"  Point {idx}: id={pt['id']}, color={pt['color']}")
+                                    logging.info(f"  Point {idx}: id={pt['id']}, color={pt['color']}")
                                 
                                 if len(gradient_points) == 1:
                                     # Single color for all LEDs - NO GRADIENT

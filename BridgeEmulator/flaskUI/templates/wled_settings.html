@@ -110,7 +110,14 @@
             try {
                 // First get the API key
                 const keyResponse = await fetch('/get-key');
-                apiKey = await keyResponse.text();
+                const keyText = await keyResponse.text();
+                apiKey = keyText.trim(); // Remove any whitespace
+                
+                if (!apiKey) {
+                    console.error('No API key received');
+                    showStatus('Error: No API key available', 'error');
+                    return;
+                }
                 
                 // Then get the config
                 const response = await fetch(`/api/${apiKey}/config`);
