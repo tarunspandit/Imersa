@@ -189,7 +189,6 @@ class EntertainmentConfiguration():
                 elif light().modelid in ["915005987201", "LCX004", "LCX006"]:
                     loops = len(self.locations[light()])
                 for x in range(loops):
-                    print("x:", x)
                     channel = {
                         "channel_id": channel_id,
                         "members": [

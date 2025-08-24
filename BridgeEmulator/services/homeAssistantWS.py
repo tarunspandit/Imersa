@@ -151,6 +151,15 @@ class HomeAssistantClient(WebSocketClient):
             service_data['hs_color'] = [data['hue'], data['sat']]
 
         self._send_with_id(payload, "service")
+    
+    def change_lights_batch(self, light_data_list):
+        """Send multiple light changes in rapid succession for better performance"""
+        for light_data in light_data_list:
+            try:
+                self.change_light(light_data["light"], light_data["data"])
+            except Exception as e:
+                logging.debug(f"Batch HA light update failed: {e}")
+                # Continue with other lights even if one fails
 
     def do_result(self, message):
         if 'result' in message and message['result']:

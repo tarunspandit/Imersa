@@ -126,6 +126,7 @@ def entertainmentService(group, user):
                 esphomeLights = {}
                 mqttLights = []
                 wledLights = {}
+                haLights = []  # Batch Home Assistant lights
                 non_UDP_lights = []
                 if data[:9].decode('utf-8') == "HueStream":
                     i = 0
@@ -242,9 +243,11 @@ def entertainmentService(group, user):
                         elif proto == "hue" and int(light.protocol_cfg["id"]) in hueGroupLights:
                             hueGroupLights[int(light.protocol_cfg["id"])] = [r,g,b]
                         elif proto == "homeassistant_ws":
-                            # Home Assistant lights via WebSocket - update directly for better performance
-                            from lights.protocols.homeassistant_ws import set_light as ha_set_light
-                            ha_set_light(light, {"bri": light.state["bri"], "xy": light.state["xy"], "on": light.state["on"]})
+                            # Batch Home Assistant lights for better performance
+                            haLights.append({
+                                "light": light,
+                                "data": {"bri": light.state["bri"], "xy": light.state["xy"], "on": light.state["on"]}
+                            })
                         else:
                             if light not in non_UDP_lights:
                                 non_UDP_lights.append(light)
@@ -294,6 +297,14 @@ def entertainmentService(group, user):
                                 udp_socket_pool[ip].sendto(udpdata, (ip.split(":")[0], wledLights[ip][segments]["udp_port"]))
                     if len(hueGroupLights) != 0:
                         h.send(hueGroupLights, hueGroup)
+                    if len(haLights) != 0:
+                        # Batch send all Home Assistant lights at once
+                        from services.homeAssistantWS import homeassistant_ws_client
+                        if homeassistant_ws_client and not homeassistant_ws_client.client_terminated:
+                            try:
+                                homeassistant_ws_client.change_lights_batch(haLights)
+                            except Exception as e:
+                                logging.debug(f"HA batch update failed: {e}")
                     if len(non_UDP_lights) != 0:
                         light = non_UDP_lights[non_UDP_update_counter]
                         operation = skipSimilarFrames(light.id_v1, light.state["xy"], light.state["bri"])
