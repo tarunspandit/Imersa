@@ -252,14 +252,17 @@ def entertainmentService(group, user):
                                         # This is a gradient strip with specific segment addressing
                                         if gradient_segment_id < total_segments:
                                             wledLights[light.protocol_cfg["ip"]]["colors"][gradient_segment_id] = [r, g, b]
+                                            logging.info(f"WLED gradient: segment {gradient_segment_id} = RGB({r},{g},{b})")
                                         else:
                                             # Segment ID out of range, apply to all
                                             for seg_id in range(total_segments):
                                                 wledLights[light.protocol_cfg["ip"]]["colors"][seg_id] = [r, g, b]
+                                            logging.info(f"WLED gradient: all segments (id {gradient_segment_id} >= {total_segments}) = RGB({r},{g},{b})")
                                     else:
                                         # No specific segment ID, apply to all segments
                                         for seg_id in range(total_segments):
                                             wledLights[light.protocol_cfg["ip"]]["colors"][seg_id] = [r, g, b]
+                                        logging.info(f"WLED gradient: all segments (no ID) = RGB({r},{g},{b})")
                                 else:
                                     # Non-gradient lights - apply to all segments
                                     for seg_id in range(total_segments):
@@ -333,6 +336,8 @@ def entertainmentService(group, user):
                                 # Build complete UDP packet with all segment data
                                 udpdata = bytes([wled_udpmode, wled_secstowait])
                                 
+                                logging.info(f"WLED UDP: IP={ip}, segments={len(segments)}, colors={colors}")
+                                
                                 # For each segment, add its LED data
                                 for seg_idx, segment in enumerate(segments):
                                     # Get color for this segment (use white if not set)
@@ -340,6 +345,7 @@ def entertainmentService(group, user):
                                         seg_color = colors[seg_idx]
                                     else:
                                         seg_color = [255, 255, 255]  # White fallback
+                                        logging.info(f"WLED UDP: segment {seg_idx} using white fallback")
                                     
                                     # Add all LEDs in this segment with the segment's color
                                     for led_idx in range(segment["start"], segment["start"] + segment["len"]):
