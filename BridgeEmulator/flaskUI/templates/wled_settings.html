@@ -83,6 +83,22 @@
         <h1>WLED Entertainment Settings</h1>
         
         <div class="setting-group">
+            <label class="setting-label">Segment Mode</label>
+            <div class="toggle-container">
+                <div class="toggle-option" id="segments-enabled" onclick="setSegmentMode(true)">
+                    Use Segments
+                </div>
+                <div class="toggle-option" id="segments-disabled" onclick="setSegmentMode(false)">
+                    Single Light
+                </div>
+            </div>
+            <div class="description">
+                <strong>Use Segments:</strong> Each WLED segment appears as a separate light (skip segment 0). Best for individual control of strip sections.<br><br>
+                <strong>Single Light:</strong> Entire WLED strip appears as one light using segment 0. Best for whole-strip effects and gradients.
+            </div>
+        </div>
+        
+        <div class="setting-group">
             <label class="setting-label">Gradient Mode</label>
             <div class="toggle-container">
                 <div class="toggle-option" id="sparse-mode" onclick="setGradientMode('sparse')">
@@ -123,20 +139,48 @@
                 const response = await fetch(`/api/${apiKey}/config`);
                 const config = await response.json();
                 
-                const currentMode = config.wled_gradient_mode || 'sparse';
-                updateUI(currentMode);
+                const currentGradientMode = config.wled_gradient_mode || 'sparse';
+                const useSegments = config.wled_use_segments !== undefined ? config.wled_use_segments : true;
+                updateUI(currentGradientMode, useSegments);
             } catch (error) {
                 console.error('Error loading config:', error);
                 showStatus('Error loading configuration', 'error');
             }
         }
         
-        // Update UI to show current mode
-        function updateUI(mode) {
+        // Update UI to show current settings
+        function updateUI(gradientMode, useSegments) {
             document.querySelectorAll('.toggle-option').forEach(el => {
                 el.classList.remove('active');
             });
-            document.getElementById(`${mode}-mode`).classList.add('active');
+            document.getElementById(`${gradientMode}-mode`).classList.add('active');
+            document.getElementById(useSegments ? 'segments-enabled' : 'segments-disabled').classList.add('active');
+        }
+        
+        // Set segment mode
+        async function setSegmentMode(useSegments) {
+            try {
+                const response = await fetch(`/api/${apiKey}/config`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        wled_use_segments: useSegments
+                    })
+                });
+                
+                if (response.ok) {
+                    // Reload current config to update UI
+                    loadCurrentMode();
+                    showStatus(`Segment mode changed to ${useSegments ? 'Use Segments' : 'Single Light'}`, 'success');
+                } else {
+                    showStatus('Error updating configuration', 'error');
+                }
+            } catch (error) {
+                console.error('Error setting segment mode:', error);
+                showStatus('Error updating configuration', 'error');
+            }
         }
         
         // Set gradient mode
@@ -153,7 +197,8 @@
                 });
                 
                 if (response.ok) {
-                    updateUI(mode);
+                    // Reload current config to update UI
+                    loadCurrentMode();
                     showStatus(`Gradient mode changed to ${mode}`, 'success');
                 } else {
                     showStatus('Error updating configuration', 'error');

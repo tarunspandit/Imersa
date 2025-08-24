@@ -26,6 +26,18 @@ def on_mdns_discover(zeroconf, service_type, name, state_change):
 
 def discover(detectedLights, device_ips):
     logging.info('<WLED> discovery started')
+    
+    # Import here to avoid circular dependency
+    import configManager
+    bridgeConfig = configManager.bridgeConfig.yaml_config
+    
+    # Check if we should use segments or treat as single light
+    use_segments = True  # Default to using segments
+    if "config" in bridgeConfig and "wled" in bridgeConfig["config"]:
+        use_segments = bridgeConfig["config"]["wled"].get("use_segments", True)
+    
+    logging.info(f'<WLED> Segment mode: {"enabled" if use_segments else "disabled (using whole strip as single light)"}')
+    
     ip_version = IPVersion.V4Only
     zeroconf = Zeroconf(ip_version=ip_version)
     services = "_http._tcp.local."
@@ -53,8 +65,8 @@ def discover(detectedLights, device_ips):
             logging.info("<WLED> Found device: %s with %d segments" %
                          (device[1], x.segmentCount))
             
-            # Create a separate light for each segment
-            if x.segmentCount > 1:
+            # Check if we should use segments or treat entire strip as one light
+            if use_segments and x.segmentCount > 1:
                 # Multiple segments - create a light for each (skip segment 0 as it's the entire strip)
                 for seg_idx, segment in enumerate(x.segments):
                     # Log segment details for debugging
@@ -92,12 +104,16 @@ def discover(detectedLights, device_ips):
                                    }
                                    })
             else:
-                # Single segment (or only segment 0) - treat as one light
-                modelid = "LCX002"  # Default gradient strip model for single segment
+                # Either: single segment, only segment 0, or segments disabled - treat as one light
+                # Always use segment 0 which is the entire strip
+                modelid = "LCX002"  # Default gradient strip model
                 segment = x.segments[0] if x.segments else {}
                 seg_start = segment.get("start", 0)
                 seg_stop = segment.get("stop", x.ledCount)
                 seg_len = segment.get("len", x.ledCount)
+                
+                if not use_segments and x.segmentCount > 1:
+                    logging.info(f"<WLED> Segments disabled - using segment 0 (entire strip) as single light")
                 
                 lights.append({"protocol": "wled",
                                "name": x.name,

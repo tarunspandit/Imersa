@@ -61,11 +61,13 @@ def buildConfig():
     result["UTC"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
     result["localtime"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     result["LogLevel"] = logManager.logger.get_level_name()
-    # Add WLED gradient mode to config
-    if "wled" in config and "gradient_mode" in config["wled"]:
-        result["wled_gradient_mode"] = config["wled"]["gradient_mode"]
+    # Add WLED settings to config
+    if "wled" in config:
+        result["wled_gradient_mode"] = config["wled"].get("gradient_mode", "sparse")
+        result["wled_use_segments"] = config["wled"].get("use_segments", True)
     else:
         result["wled_gradient_mode"] = "sparse"  # Default
+        result["wled_use_segments"] = True  # Default
     result["whitelist"] = {}
     for key, user in bridgeConfig["apiUsers"].items():
         result["whitelist"][key] = {"create date": user.create_date,
@@ -284,9 +286,16 @@ class ResourceElements(Resource):
         # Handle WLED gradient mode update
         if resource == "config" and "wled_gradient_mode" in putDict:
             if "wled" not in bridgeConfig["config"]:
-                bridgeConfig["config"]["wled"] = {"enabled": True}
+                bridgeConfig["config"]["wled"] = {"enabled": True, "gradient_mode": "sparse", "use_segments": True}
             bridgeConfig["config"]["wled"]["gradient_mode"] = putDict["wled_gradient_mode"]
             del putDict["wled_gradient_mode"]  # Remove from dict to avoid setting it as a top-level config
+            
+        # Handle WLED use segments update
+        if resource == "config" and "wled_use_segments" in putDict:
+            if "wled" not in bridgeConfig["config"]:
+                bridgeConfig["config"]["wled"] = {"enabled": True, "gradient_mode": "sparse", "use_segments": True}
+            bridgeConfig["config"]["wled"]["use_segments"] = putDict["wled_use_segments"]
+            del putDict["wled_use_segments"]  # Remove from dict to avoid setting it as a top-level config
 
         for key, value in putDict.items():
             if isinstance(value, dict):
