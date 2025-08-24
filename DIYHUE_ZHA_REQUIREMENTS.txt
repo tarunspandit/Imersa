@@ -1,0 +1,7 @@
+# Additional requirements for diyHue ZHA Entertainment Mode
+
+# For WebSocket communication with Home Assistant
+websocket-client>=1.0.0
+
+# Note: These should be installed in the diyHue container:
+# docker exec -it diyhue pip install websocket-client

@@ -7,6 +7,7 @@ from subprocess import Popen, PIPE
 from functions.colors import convert_rgb_xy, convert_xy
 import paho.mqtt.publish as publish
 import time
+from services.zha_entertainment import setup_zha_entertainment, stop_zha_entertainment, update_zha_entertainment
 logging = logManager.logger.get_logger(__name__)
 bridgeConfig = configManager.bridgeConfig.yaml_config
 
@@ -75,6 +76,7 @@ def entertainmentService(group, user):
     prev_frame_time = 0
     new_frame_time = 0
     non_UDP_update_counter = 0
+    zha_entertainment_client = None  # ZHA entertainment client
     for light in group.lights:
         lights_v1[int(light().id_v1)] = light()
         if light().protocol == "hue" and get_hue_entertainment_group(light(), group.name) != -1: # If the lights' Hue bridge has an entertainment group with the same name as this current group, we use it to sync the lights.
@@ -100,6 +102,11 @@ def entertainmentService(group, user):
         h.connect(hueGroup, hueGroupLights)
         if h._connected == False:
             hueGroupLights = {} # on a failed connection, empty the list
+
+    # Set up ZHA entertainment if enabled
+    zha_entertainment_client = setup_zha_entertainment(group, bridgeConfig)
+    if zha_entertainment_client:
+        logging.info("ZHA entertainment mode enabled for group")
 
     init = False
     frameBites = 10
@@ -315,13 +322,25 @@ def entertainmentService(group, user):
                     if len(hueGroupLights) != 0:
                         h.send(hueGroupLights, hueGroup)
                     if len(haLights) != 0:
-                        # Batch send all Home Assistant lights at once
-                        from services.homeAssistantWS import homeassistant_ws_client
-                        if homeassistant_ws_client and not homeassistant_ws_client.client_terminated:
-                            try:
-                                homeassistant_ws_client.change_lights_batch(haLights)
-                            except Exception as e:
-                                logging.debug(f"HA batch update failed: {e}")
+                        # Check if we should use ZHA entertainment or regular HA updates
+                        if zha_entertainment_client and zha_entertainment_client.streaming:
+                            # Use ZHA entertainment mode for faster updates
+                            zha_light_data = {}
+                            for light_info in haLights:
+                                light_obj = light_info["light"]
+                                zha_light_data[light_obj.id_v1] = {
+                                    "xy": light_info["data"]["xy"],
+                                    "bri": light_info["data"]["bri"]
+                                }
+                            update_zha_entertainment(zha_entertainment_client, zha_light_data)
+                        else:
+                            # Use regular Home Assistant updates
+                            from services.homeAssistantWS import homeassistant_ws_client
+                            if homeassistant_ws_client and not homeassistant_ws_client.client_terminated:
+                                try:
+                                    homeassistant_ws_client.change_lights_batch(haLights)
+                                except Exception as e:
+                                    logging.debug(f"HA batch update failed: {e}")
                     if len(non_UDP_lights) != 0:
                         light = non_UDP_lights[non_UDP_update_counter]
                         operation = skipSimilarFrames(light.id_v1, light.state["xy"], light.state["bri"])
@@ -351,6 +370,9 @@ def entertainmentService(group, user):
         h.disconnect()
     except UnboundLocalError:
         pass
+    # Stop ZHA entertainment if active
+    if zha_entertainment_client:
+        stop_zha_entertainment(zha_entertainment_client)
     bridgeConfig["groups"][group.id_v1].stream["active"] = False
     for light in group.lights:
          bridgeConfig["lights"][light().id_v1].state["mode"] = "homeautomation"

@@ -1,0 +1,26 @@
+{
+  "domain": "zha_entertainment",
+  "name": "Zigbee Home Automation with Entertainment Mode",
+  "after_dependencies": ["hassio", "onboarding", "usb"],
+  "codeowners": ["@yourusername"],
+  "config_flow": true,
+  "dependencies": ["file_upload", "homeassistant_hardware"],
+  "documentation": "https://github.com/yourusername/zha_entertainment",
+  "iot_class": "local_polling",
+  "loggers": [
+    "aiosqlite",
+    "bellows",
+    "crccheck",
+    "pure_pcapy3",
+    "zhaquirks",
+    "zigpy",
+    "zigpy_deconz",
+    "zigpy_xbee",
+    "zigpy_zigate",
+    "zigpy_znp",
+    "zha",
+    "universal_silabs_flasher"
+  ],
+  "requirements": ["zha==0.0.69", "websockets>=10.0"],
+  "version": "1.0.0"
+}
