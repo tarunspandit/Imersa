@@ -331,6 +331,9 @@ def entertainmentService(group, user):
                         publish.multiple(mqttLights, hostname=bridgeConfig["config"]["mqtt"]["mqttServer"], port=bridgeConfig["config"]["mqtt"]["mqttPort"], auth=auth)
                     if len(wledLights) != 0:
                         # Use WARLS with per-LED linear interpolation and decay
+                        # Check gradient mode from config
+                        gradient_mode = bridgeConfig["config"]["wled"].get("gradient_mode", "sparse")
+                        
                         for ip in wledLights.keys():
                             wled_data = wledLights[ip]
                             gradient_points = wled_data.get("gradient_points", [])
@@ -361,7 +364,7 @@ def entertainmentService(group, user):
                                 gradient_points.sort(key=lambda x: x["id"])
                                 
                                 # Debug log
-                                logging.debug(f"WLED gradient points count: {len(gradient_points)}")
+                                logging.debug(f"WLED gradient points count: {len(gradient_points)}, mode: {gradient_mode}")
                                 for idx, pt in enumerate(gradient_points):
                                     logging.debug(f"  Point {idx}: id={pt['id']}, color={pt['color']}")
                                 
@@ -371,34 +374,70 @@ def entertainmentService(group, user):
                                     for led in range(ledCount):
                                         current_colors.append([color[0], color[1], color[2]])
                                 elif len(gradient_points) > 1:
-                                    # Linear smooth interpolation between gradient points
-                                    for led in range(ledCount):
-                                        # Calculate position in gradient (0.0 to 1.0)
-                                        position = led / max(1, ledCount - 1)
+                                    if gradient_mode == "sparse":
+                                        # SPARSE MODE: Entertainment only sends a few colors (e.g., segments 2 and 3 out of 6)
+                                        # We need to create a gradient from first color to last color across entire strip
                                         
-                                        # Map position to gradient points
-                                        scaled_pos = position * (len(gradient_points) - 1)
-                                        lower_idx = int(scaled_pos)
-                                        upper_idx = min(lower_idx + 1, len(gradient_points) - 1)
+                                        # Get the first and last colors (ignore segment IDs for sparse mode)
+                                        first_color = gradient_points[0]["color"]
+                                        last_color = gradient_points[-1]["color"]
                                         
-                                        if lower_idx == upper_idx:
-                                            # Same index, use the color directly
-                                            color = gradient_points[lower_idx]["color"]
-                                            current_colors.append([color[0], color[1], color[2]])
+                                        # If we have middle colors, include them in the gradient
+                                        if len(gradient_points) == 2:
+                                            # Simple gradient from first to last
+                                            for led in range(ledCount):
+                                                position = led / max(1, ledCount - 1)
+                                                r = int(first_color[0] + (last_color[0] - first_color[0]) * position)
+                                                g = int(first_color[1] + (last_color[1] - first_color[1]) * position)
+                                                b = int(first_color[2] + (last_color[2] - first_color[2]) * position)
+                                                current_colors.append([r, g, b])
                                         else:
-                                            # Calculate interpolation factor
-                                            factor = scaled_pos - lower_idx
+                                            # Multiple colors - spread them evenly across the strip
+                                            for led in range(ledCount):
+                                                position = led / max(1, ledCount - 1)
+                                                
+                                                # Map position to gradient points (evenly distributed)
+                                                scaled_pos = position * (len(gradient_points) - 1)
+                                                lower_idx = int(scaled_pos)
+                                                upper_idx = min(lower_idx + 1, len(gradient_points) - 1)
+                                                factor = scaled_pos - lower_idx
+                                                
+                                                lower_color = gradient_points[lower_idx]["color"]
+                                                upper_color = gradient_points[upper_idx]["color"]
+                                                
+                                                r = int(lower_color[0] + (upper_color[0] - lower_color[0]) * factor)
+                                                g = int(lower_color[1] + (upper_color[1] - lower_color[1]) * factor)
+                                                b = int(lower_color[2] + (upper_color[2] - lower_color[2]) * factor)
+                                                current_colors.append([r, g, b])
+                                    else:
+                                        # FULL MODE: Original implementation - use segment IDs as positions
+                                        for led in range(ledCount):
+                                            # Calculate position in gradient (0.0 to 1.0)
+                                            position = led / max(1, ledCount - 1)
                                             
-                                            # Get colors to interpolate between
-                                            lower_color = gradient_points[lower_idx]["color"]
-                                            upper_color = gradient_points[upper_idx]["color"]
+                                            # Map position to gradient points
+                                            scaled_pos = position * (len(gradient_points) - 1)
+                                            lower_idx = int(scaled_pos)
+                                            upper_idx = min(lower_idx + 1, len(gradient_points) - 1)
                                             
-                                            # Linear interpolation for this specific LED
-                                            r = int(lower_color[0] + (upper_color[0] - lower_color[0]) * factor)
-                                            g = int(lower_color[1] + (upper_color[1] - lower_color[1]) * factor)
-                                            b = int(lower_color[2] + (upper_color[2] - lower_color[2]) * factor)
-                                            
-                                            current_colors.append([r, g, b])
+                                            if lower_idx == upper_idx:
+                                                # Same index, use the color directly
+                                                color = gradient_points[lower_idx]["color"]
+                                                current_colors.append([color[0], color[1], color[2]])
+                                            else:
+                                                # Calculate interpolation factor
+                                                factor = scaled_pos - lower_idx
+                                                
+                                                # Get colors to interpolate between
+                                                lower_color = gradient_points[lower_idx]["color"]
+                                                upper_color = gradient_points[upper_idx]["color"]
+                                                
+                                                # Linear interpolation for this specific LED
+                                                r = int(lower_color[0] + (upper_color[0] - lower_color[0]) * factor)
+                                                g = int(lower_color[1] + (upper_color[1] - lower_color[1]) * factor)
+                                                b = int(lower_color[2] + (upper_color[2] - lower_color[2]) * factor)
+                                                
+                                                current_colors.append([r, g, b])
                             else:
                                 # No gradient points, apply decay to previous colors
                                 if previous_colors:

@@ -74,7 +74,7 @@ class Config:
                 if "tasmota" not in config:
                     config["tasmota"] = {"enabled": True}
                 if "wled" not in config:
-                    config["wled"] = {"enabled": True}
+                    config["wled"] = {"enabled": True, "gradient_mode": "sparse"}  # sparse or full
                 if "shelly" not in config:
                     config["shelly"] = {"enabled": True}
                 if "esphome" not in config:

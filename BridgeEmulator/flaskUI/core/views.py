@@ -177,3 +177,7 @@ def description_xml():
 def logout():
     flask_login.logout_user()
     return redirect(url_for('core.login'))
+
+@core.route('/wled-settings')
+def wled_settings():
+    return render_template('wled_settings.html')
