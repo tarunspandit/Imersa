@@ -307,11 +307,14 @@ class ZHAEntertainmentClient:
 _zha_client = None
 
 def get_zha_entertainment_client(config: dict) -> Optional[ZHAEntertainmentClient]:
-    """Get or create ZHA entertainment client."""
+    """Get or create ZHA entertainment client with automatic fallback."""
     global _zha_client
     
-    # Check if ZHA entertainment is enabled
-    if not config.get("homeassistant", {}).get("use_zha_entertainment", False):
+    # Always try ZHA entertainment if HA is configured (default enabled)
+    # Only disable if explicitly set to False
+    use_zha = config.get("homeassistant", {}).get("use_zha_entertainment", True)
+    if use_zha is False:  # Explicitly disabled
+        logger.info("ZHA entertainment explicitly disabled in config")
         return None
         
     ha_url = config.get("homeassistant", {}).get("url")
@@ -333,39 +336,45 @@ def get_zha_entertainment_client(config: dict) -> Optional[ZHAEntertainmentClien
 
 
 def setup_zha_entertainment(group, bridgeConfig) -> Optional[ZHAEntertainmentClient]:
-    """Set up ZHA entertainment for a group."""
+    """Set up ZHA entertainment for a group with automatic fallback."""
     
-    # Get client
-    client = get_zha_entertainment_client(bridgeConfig["config"])
-    if not client:
-        return None
-        
-    # Map lights
-    client.map_lights(bridgeConfig["lights"])
-    
-    # Get lights in this group that are Home Assistant lights
-    zha_light_ids = []
-    for light in group.lights:
-        light_obj = light()
-        if light_obj.protocol == "homeassistant_ws":
-            zha_light_ids.append(light_obj.id_v1)
+    try:
+        # Get client
+        client = get_zha_entertainment_client(bridgeConfig["config"])
+        if not client:
+            logger.debug("ZHA entertainment client not available, using standard mode")
+            return None
             
-    if not zha_light_ids:
-        logger.info("No Home Assistant lights in entertainment group")
-        return None
+        # Map lights
+        client.map_lights(bridgeConfig["lights"])
         
-    # Create entertainment group
-    if not client.create_entertainment_group(group.id_v1, zha_light_ids):
-        logger.error("Failed to create ZHA entertainment group")
-        return None
+        # Get lights in this group that are Home Assistant lights
+        zha_light_ids = []
+        for light in group.lights:
+            light_obj = light()
+            if light_obj.protocol == "homeassistant_ws":
+                zha_light_ids.append(light_obj.id_v1)
+                
+        if not zha_light_ids:
+            logger.debug("No Home Assistant lights in entertainment group, ZHA not needed")
+            return None
+            
+        # Try to create entertainment group
+        if not client.create_entertainment_group(group.id_v1, zha_light_ids):
+            logger.warning("Failed to create ZHA entertainment group, falling back to standard mode")
+            return None
+            
+        # Try to start streaming
+        if not client.start_streaming():
+            logger.warning("Failed to start ZHA entertainment streaming, falling back to standard mode")
+            return None
+            
+        logger.info(f"✓ ZHA entertainment mode ACTIVE for group {group.id_v1} - Expect faster performance!")
+        return client
         
-    # Start streaming
-    if not client.start_streaming():
-        logger.error("Failed to start ZHA entertainment streaming")
+    except Exception as e:
+        logger.warning(f"ZHA entertainment setup failed, falling back to standard mode: {e}")
         return None
-        
-    logger.info(f"ZHA entertainment streaming started for group {group.id_v1}")
-    return client
 
 
 def stop_zha_entertainment(client: Optional[ZHAEntertainmentClient]):

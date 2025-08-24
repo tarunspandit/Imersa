@@ -1,0 +1,12 @@
+# Enhanced diyHue with ZHA Entertainment Support
+FROM diyhue/core:latest
+
+# Install WebSocket client for ZHA entertainment
+RUN pip install websocket-client
+
+# Copy the enhanced entertainment services
+COPY BridgeEmulator/services/zha_entertainment.py /opt/hue-emulator/BridgeEmulator/services/
+COPY BridgeEmulator/services/entertainment.py /opt/hue-emulator/BridgeEmulator/services/
+
+# The system will automatically use ZHA entertainment when available
+# No configuration needed - it's enabled by default!
