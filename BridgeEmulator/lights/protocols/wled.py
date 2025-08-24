@@ -374,42 +374,34 @@ def send_segment_data(c, light, data):
             logging.error(f"<WLED> Failed to send to {c.ip}")
 
 def send_udp_gradient(ip, port, segment_start, colors, led_count):
-    """Send gradient colors via UDP using DRGB protocol for specific segment position"""
+    """Send colors via UDP using WARLS protocol - always starts from LED 0 for entire strip control"""
     try:
-        if segment_start == 0:
-            # For the first segment (or segments starting at 0), use WARLS
-            # WARLS protocol: 0x01 (protocol) + 0x02 (wait 2 frames) + RGB data
-            buffer = bytearray(2 + led_count * 3)
-            buffer[0] = 0x01  # WARLS protocol
-            buffer[1] = 0x02  # Wait 2 frames
-            
-            # Fill in RGB values
-            for i, color in enumerate(colors[:led_count]):
-                buffer[2 + i*3] = color[0]     # R
-                buffer[2 + i*3 + 1] = color[1] # G
-                buffer[2 + i*3 + 2] = color[2] # B
-        else:
-            # For other segments, use DRGB with offset
-            # DRGB protocol: 0x04 + offset (2 bytes) + RGB data
-            buffer = bytearray(3 + led_count * 3)
-            buffer[0] = 0x04  # DRGB protocol
-            buffer[1] = (segment_start >> 8) & 0xFF  # Offset high byte
-            buffer[2] = segment_start & 0xFF  # Offset low byte
-            
-            # Fill in RGB values
-            for i, color in enumerate(colors[:led_count]):
-                buffer[3 + i*3] = color[0]     # R
-                buffer[3 + i*3 + 1] = color[1] # G
-                buffer[3 + i*3 + 2] = color[2] # B
+        # Always use WARLS for simplicity and reliability
+        # WARLS protocol: 0x01 (protocol) + 0x02 (timeout in seconds) + RGB data for ALL LEDs
+        # Note: WARLS always starts at LED 0, so we send the entire strip data
+        
+        # Create buffer for WARLS: 2 byte header + RGB for each LED
+        buffer = bytearray(2 + led_count * 3)
+        buffer[0] = 0x01  # WARLS protocol
+        buffer[1] = 0x02  # Timeout: 2 seconds (LED data remains for 2 seconds if no new packet)
+        
+        # Fill in RGB values
+        for i, color in enumerate(colors[:led_count]):
+            buffer[2 + i*3] = min(255, max(0, color[0]))     # R
+            buffer[2 + i*3 + 1] = min(255, max(0, color[1])) # G
+            buffer[2 + i*3 + 2] = min(255, max(0, color[2])) # B
         
         # Send UDP packet - ensure IP is a string, not hostname
         if ":" in ip:
             ip = ip.split(":")[0]  # Remove port if included
+        
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.sendto(buffer, (ip, port))
         sock.close()
+        
+        logging.debug(f"<WLED> Sent WARLS packet to {ip}:{port} with {led_count} LEDs")
     except Exception as e:
-        logging.error(f"<WLED> Error sending UDP gradient: {e}")
+        logging.error(f"<WLED> Error sending UDP WARLS: {e}")
 
 def get_light_state(light):
     ip = light.protocol_cfg['ip']
