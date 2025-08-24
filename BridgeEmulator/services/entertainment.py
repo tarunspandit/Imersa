@@ -321,50 +321,46 @@ def entertainmentService(group, user):
                             auth = {'username':bridgeConfig["config"]["mqtt"]["mqttUser"], 'password':bridgeConfig["config"]["mqtt"]["mqttPassword"]}
                         publish.multiple(mqttLights, hostname=bridgeConfig["config"]["mqtt"]["mqttServer"], port=bridgeConfig["config"]["mqtt"]["mqttPort"], auth=auth)
                     if len(wledLights) != 0:
-                        # Use NOTIFIER_CALL mode for best performance
+                        # Use WARLS but build it efficiently 
                         for ip in wledLights.keys():
                             wled_data = wledLights[ip]
                             segments = wled_data.get("segments", [])
                             colors = wled_data.get("colors", {})
                             udp_port = wled_data.get("udp_port", 21324)
                             
-                            if colors:  # Only send if we have color data
-                                # Use DRGB mode for targeted updates - much faster
-                                # Format: [2][timeout][index_high][index_low][R][G][B]...
-                                udpdata = bytearray([2, 1])  # DRGB mode, 1 second timeout
+                            if segments and colors:
+                                # WARLS: Send RGB for every LED, but build it smart
+                                total_leds = sum(seg["len"] for seg in segments)
                                 
-                                # Only send the segments we have colors for
-                                for seg_idx in sorted(colors.keys()):
-                                    if seg_idx < len(segments):
-                                        segment = segments[seg_idx]
+                                # Pre-allocate the exact size we need
+                                udpdata = bytearray(2 + total_leds * 3)  # header + RGB per LED
+                                udpdata[0] = 1  # WARLS mode
+                                udpdata[1] = 1  # 1 second timeout
+                                
+                                # Fill in LED colors based on segments
+                                idx = 2
+                                for seg_idx, segment in enumerate(segments):
+                                    # Get color for this segment (use last known or black)
+                                    if seg_idx in colors:
                                         seg_color = colors[seg_idx]
-                                        
-                                        # For gradient effect, set color at key points in the segment
-                                        # WLED will interpolate between them
-                                        segment_start = segment["start"]
-                                        segment_len = segment["len"]
-                                        
-                                        if segment_len > 0:
-                                            # Set start of segment
-                                            udpdata.extend(segment_start.to_bytes(2, 'big'))
-                                            udpdata.extend(seg_color)
-                                            
-                                            # Set middle of segment for better gradient
-                                            if segment_len > 10:
-                                                mid_point = segment_start + segment_len // 2
-                                                udpdata.extend(mid_point.to_bytes(2, 'big'))
-                                                udpdata.extend(seg_color)
-                                            
-                                            # Set end of segment
-                                            end_point = segment_start + segment_len - 1
-                                            if end_point != segment_start:
-                                                udpdata.extend(end_point.to_bytes(2, 'big'))
-                                                udpdata.extend(seg_color)
+                                    elif colors:
+                                        # Use nearest available color
+                                        nearest = min(colors.keys(), key=lambda x: abs(x - seg_idx))
+                                        seg_color = colors[nearest]
+                                    else:
+                                        seg_color = [0, 0, 0]
+                                    
+                                    # Fill this segment's LEDs
+                                    for _ in range(segment["len"]):
+                                        udpdata[idx] = seg_color[0]
+                                        udpdata[idx+1] = seg_color[1]
+                                        udpdata[idx+2] = seg_color[2]
+                                        idx += 3
                                 
-                                # Send compact packet - much smaller and faster
+                                # Send optimized packet
                                 if ip not in udp_socket_pool:
                                     udp_socket_pool[ip] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                                udp_socket_pool[ip].sendto(bytes(udpdata), (ip.split(":")[0], udp_port))
+                                udp_socket_pool[ip].sendto(udpdata, (ip.split(":")[0], udp_port))
                     if len(hueGroupLights) != 0:
                         h.send(hueGroupLights, hueGroup)
                     if len(haLights) != 0:
