@@ -52,23 +52,54 @@ def discover(detectedLights, device_ips):
             x = WledDevice(device[0], device[1])
             logging.info("<WLED> Found device: %s with %d segments" %
                          (device[1], x.segmentCount))
-            # Treat entire WLED strip as one gradient light
-            modelid = "LCX002"  # Default gradient strip model
-            total_leds = sum(seg["len"] for seg in x.segments)
-            lights.append({"protocol": "wled",
-                           "name": x.name,
-                           "modelid": modelid,
-                           "protocol_cfg": {
-                               "ip": x.ip,
-                               "ledCount": total_leds,
-                               "mdns_name": device[1],
-                               "mac": x.mac,
-                               "segments": x.segments,  # Store all segments
-                               "segmentCount": x.segmentCount,
-                               "udp_port": x.udpPort,
-                               "points_capable": x.segmentCount  # Number of gradient points supported
-                           }
-                           })
+            
+            # Create a light for each segment
+            if x.segmentCount > 1:
+                # Multiple segments - create one light per segment
+                for seg_idx, segment in enumerate(x.segments):
+                    segment_name = f"{x.name}_seg{seg_idx}"
+                    # Default to regular color light, user can change to gradient model
+                    modelid = "LST002"  
+                    
+                    lights.append({"protocol": "wled",
+                                   "name": segment_name,
+                                   "modelid": modelid,
+                                   "protocol_cfg": {
+                                       "ip": x.ip,
+                                       "segment_id": seg_idx,  # Which segment this light controls
+                                       "segment_start": segment["start"],  # Starting LED index
+                                       "segment_stop": segment["stop"],   # Ending LED index
+                                       "ledCount": segment["len"],        # Number of LEDs in this segment
+                                       "mdns_name": device[1],
+                                       "mac": x.mac,
+                                       "udp_port": x.udpPort,
+                                       "is_segment": True,
+                                       "points_capable": 5  # Gradient points if model changed to gradient
+                                   }
+                                   })
+            else:
+                # Single segment or no segments - create one light for entire strip
+                total_leds = sum(seg["len"] for seg in x.segments) if x.segments else x.ledCount
+                # Default to regular color light, user can change to gradient model
+                modelid = "LST002"
+                
+                lights.append({"protocol": "wled",
+                               "name": x.name,
+                               "modelid": modelid,
+                               "protocol_cfg": {
+                                   "ip": x.ip,
+                                   "segment_id": 0,  # Entire strip
+                                   "segment_start": 0,
+                                   "segment_stop": total_leds,
+                                   "ledCount": total_leds,
+                                   "mdns_name": device[1],
+                                   "mac": x.mac,
+                                   "udp_port": x.udpPort,
+                                   "is_segment": False,
+                                   "points_capable": 5  # Gradient points if model changed to gradient
+                               }
+                               })
+            
             for light in lights:
                 detectedLights.append(light)
         except:
@@ -83,10 +114,9 @@ def set_light(light, data):
         c = WledDevice(ip, light.protocol_cfg['mdns_name'])
         Connections[ip] = c
 
-    if "gradient" in data:
-        # Handle gradient data - distribute colors across segments
-        send_gradient_data(c, light, data)
-    elif "lights" in data:
+    # For WLED lights, we primarily use WARLS via entertainment mode
+    # This is a fallback for direct API calls (not entertainment mode)
+    if "lights" in data:
         # We ignore the segment count of hue provides atm
         destructured_data = data["lights"][list(data["lights"].keys())[0]]
         send_light_data(c, light, destructured_data)
@@ -94,83 +124,39 @@ def set_light(light, data):
         send_light_data(c, light, data)
 
 
-def send_gradient_data(c, light, data):
-    """Send gradient data to WLED by distributing colors across segments"""
-    state = {}
-    segments = []
-    
-    gradient_points = data.get("gradient", {}).get("points", [])
-    num_segments = light.protocol_cfg.get("segmentCount", 1)
-    
-    if gradient_points:
-        # Distribute gradient points across segments
-        # We'll interpolate colors if we have fewer points than segments
-        for seg_idx in range(num_segments):
-            # Calculate which gradient point this segment should use
-            point_idx = min(int(seg_idx * len(gradient_points) / num_segments), len(gradient_points) - 1)
-            point = gradient_points[point_idx]
-            
-            xy = point.get("color", {}).get("xy", {})
-            color = convert_xy(xy.get("x", 0.5), xy.get("y", 0.5), 255)
-            
-            seg = {
-                "id": seg_idx,
-                "on": data.get("on", True),
-                "bri": data.get("bri", 254),
-                "col": [[color[0], color[1], color[2]]]
-            }
-            segments.append(seg)
-    
-    # Apply other properties like on/off and brightness
-    for k, v in data.items():
-        if k == "on":
-            for seg in segments:
-                seg["on"] = v
-        elif k == "bri":
-            for seg in segments:
-                seg["bri"] = v + 1
-    
-    state["seg"] = segments
-    c.sendJson(state)
-
 
 def send_light_data(c, light, data):
+    """Send data to a specific segment of WLED device"""
     state = {}
-    segments = []
     
-    # Apply to all segments for single color
-    num_segments = light.protocol_cfg.get("segmentCount", 1)
+    # Get the specific segment this light controls
+    segment_id = light.protocol_cfg.get("segment_id", 0)
     
-    for seg_idx in range(num_segments):
-        seg = {
-            "id": seg_idx,
-            "on": True
-        }
-        
-        for k, v in data.items():
-            if k == "on":
-                seg["on"] = v
-            elif k == "bri":
-                seg["bri"] = v + 1
-            elif k == "ct":
-                kelvin = round(translateRange(v, 153, 500, 6500, 2000))
-                color = kelvinToRgb(kelvin)
-                seg["col"] = [[color[0], color[1], color[2]]]
-            elif k == "xy":
-                color = convert_xy(v[0], v[1], 255)
-                seg["col"] = [[color[0], color[1], color[2]]]
-            elif k == "alert" and v != "none":
-                # Flash all segments
-                for alert_seg in range(num_segments):
-                    c.setBriSeg(0, alert_seg)
-                sleep(0.6)
-                for alert_seg in range(num_segments):
-                    c.setBriSeg(data.get("bri", 254), alert_seg)
-                return
-        
-        segments.append(seg)
+    seg = {
+        "id": segment_id,
+        "on": True
+    }
     
-    state["seg"] = segments
+    for k, v in data.items():
+        if k == "on":
+            seg["on"] = v
+        elif k == "bri":
+            seg["bri"] = v + 1
+        elif k == "ct":
+            kelvin = round(translateRange(v, 153, 500, 6500, 2000))
+            color = kelvinToRgb(kelvin)
+            seg["col"] = [[color[0], color[1], color[2]]]
+        elif k == "xy":
+            color = convert_xy(v[0], v[1], 255)
+            seg["col"] = [[color[0], color[1], color[2]]]
+        elif k == "alert" and v != "none":
+            # Flash this specific segment
+            c.setBriSeg(0, segment_id)
+            sleep(0.6)
+            c.setBriSeg(data.get("bri", 254), segment_id)
+            return
+    
+    state["seg"] = [seg]
     c.sendJson(state)
 
 def get_light_state(light):
@@ -181,14 +167,16 @@ def get_light_state(light):
         c = WledDevice(ip, light.protocol_cfg['mdns_name'])
         Connections[ip] = c
     
-    # Get state for all segments and combine for gradient
-    num_segments = light.protocol_cfg.get("segmentCount", 1)
-    if num_segments > 1:
-        # Return gradient state combining all segments
+    # Check if this WLED light has a gradient-capable model ID
+    is_gradient_model = light.modelid in ["LCX001", "LCX002", "LCX003", "915005987201", "LCX004", "LCX006"]
+    segment_id = light.protocol_cfg.get("segment_id", 0)
+    
+    if is_gradient_model:
+        # Return gradient state for this light
         return c.getGradientState()
     else:
-        # Single segment, return normal state
-        return c.getSegState(0)
+        # Return normal state for this specific segment
+        return c.getSegState(segment_id)
 
 
 def translateRange(value, leftMin, leftMax, rightMin, rightMax):
