@@ -397,7 +397,9 @@ def send_udp_gradient(ip, port, segment_start, colors, led_count):
                 buffer[3 + i*3 + 1] = color[1] # G
                 buffer[3 + i*3 + 2] = color[2] # B
         
-        # Send UDP packet
+        # Send UDP packet - ensure IP is a string, not hostname
+        if ":" in ip:
+            ip = ip.split(":")[0]  # Remove port if included
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.sendto(buffer, (ip, port))
         sock.close()
@@ -530,7 +532,37 @@ class WledDevice:
             
             seg_data = data['state']['seg']
             
-            if seg_id < len(seg_data) and seg_data[seg_id]:
+            # Handle special "all" case for single light mode
+            if seg_id == "all":
+                # Return state based on first valid segment
+                for i, seg in enumerate(seg_data):
+                    if i > 0 and seg:  # Skip segment 0, use first valid segment
+                        state['on'] = seg.get('on', False)
+                        state['bri'] = seg.get('bri', 1)
+                        
+                        if 'col' in seg and seg['col'] and len(seg['col']) > 0 and len(seg['col'][0]) >= 3:
+                            r = int(seg['col'][0][0]) + 1
+                            g = int(seg['col'][0][1]) + 1
+                            b = int(seg['col'][0][2]) + 1
+                            xy = convert_rgb_xy(r, g, b)
+                            
+                            gradient_points = [
+                                {"color": {"xy": {"x": xy[0], "y": xy[1]}}},
+                                {"color": {"xy": {"x": xy[0], "y": xy[1]}}}
+                            ]
+                        else:
+                            gradient_points = [
+                                {"color": {"xy": {"x": 0.3, "y": 0.3}}},
+                                {"color": {"xy": {"x": 0.3, "y": 0.3}}}
+                            ]
+                        
+                        state['gradient'] = {"points": gradient_points}
+                        state["colormode"] = "gradient"
+                        return state
+                
+                # No valid segments found
+                return {"on": False, "bri": 1, "gradient": {"points": []}, "colormode": "gradient"}
+            elif isinstance(seg_id, int) and seg_id < len(seg_data) and seg_data[seg_id]:
                 seg = seg_data[seg_id]
                 state['on'] = seg.get('on', False)
                 state['bri'] = seg.get('bri', 1)
