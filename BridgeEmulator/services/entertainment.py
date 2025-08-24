@@ -241,6 +241,10 @@ def entertainmentService(group, user):
                             wledLights[light.protocol_cfg["ip"]][light.protocol_cfg["segmentId"]]["color"] = [r, g, b]
                         elif proto == "hue" and int(light.protocol_cfg["id"]) in hueGroupLights:
                             hueGroupLights[int(light.protocol_cfg["id"])] = [r,g,b]
+                        elif proto == "homeassistant_ws":
+                            # Home Assistant lights via WebSocket - update directly for better performance
+                            from lights.protocols.homeassistant_ws import set_light as ha_set_light
+                            ha_set_light(light, {"bri": light.state["bri"], "xy": light.state["xy"], "on": light.state["on"]})
                         else:
                             if light not in non_UDP_lights:
                                 non_UDP_lights.append(light)
