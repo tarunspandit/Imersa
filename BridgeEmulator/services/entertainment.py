@@ -57,6 +57,7 @@ def get_hue_entertainment_group(light, groupname):
 
 YeelightConnections = {}
 udp_socket_pool = {}  # Socket pool to prevent creating 600+ sockets/second
+ha_last_update = {}  # Track last update time per HA light to rate limit
 
 def entertainmentService(group, user):
     logging.debug("User: " + user.username)
@@ -243,11 +244,23 @@ def entertainmentService(group, user):
                         elif proto == "hue" and int(light.protocol_cfg["id"]) in hueGroupLights:
                             hueGroupLights[int(light.protocol_cfg["id"])] = [r,g,b]
                         elif proto == "homeassistant_ws":
-                            # Batch Home Assistant lights for better performance
-                            haLights.append({
-                                "light": light,
-                                "data": {"bri": light.state["bri"], "xy": light.state["xy"], "on": light.state["on"]}
-                            })
+                            # Rate limit HA lights to ~10 updates/second max
+                            import time
+                            current_time = time.time()
+                            light_id = light.id_v1
+                            
+                            # Skip if updated less than 100ms ago (max 10 updates/second per light)
+                            if light_id in ha_last_update and (current_time - ha_last_update[light_id]) < 0.1:
+                                continue
+                                
+                            # Only update if significant change
+                            operation = skipSimilarFrames(light.id_v1, light.state["xy"], light.state["bri"])
+                            if operation > 0:
+                                ha_last_update[light_id] = current_time
+                                haLights.append({
+                                    "light": light,
+                                    "data": {"bri": light.state["bri"], "xy": light.state["xy"], "on": light.state["on"]}
+                                })
                         else:
                             if light not in non_UDP_lights:
                                 non_UDP_lights.append(light)
