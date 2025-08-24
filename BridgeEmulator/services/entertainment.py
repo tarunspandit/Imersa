@@ -261,15 +261,16 @@ def entertainmentService(group, user):
                                             "color": [r, g, b]
                                         })
                                     else:
-                                        # Device type 0 - single color, clear any existing gradient points
+                                        # Device type 0 - single color, replace with single point
+                                        # Use the latest color received
                                         wledLights[light.protocol_cfg["ip"]]["gradient_points"] = [{
-                                            "id": 0,
+                                            "id": -1,  # Use -1 to indicate single color mode
                                             "color": [r, g, b]
                                         }]
                                 else:
                                     # Non-gradient lights - single color for all
                                     wledLights[light.protocol_cfg["ip"]]["gradient_points"] = [{
-                                        "id": 0,
+                                        "id": -1,  # Use -1 to indicate single color mode
                                         "color": [r, g, b]
                                     }]
                             elif apiVersion == 2:
@@ -283,7 +284,7 @@ def entertainmentService(group, user):
                                 else:
                                     # Non-gradient lights: single color
                                     wledLights[light.protocol_cfg["ip"]]["gradient_points"] = [{
-                                        "id": 0,
+                                        "id": -1,  # Use -1 to indicate single color mode
                                         "color": [r, g, b]
                                     }]
                         elif proto == "hue" and int(light.protocol_cfg["id"]) in hueGroupLights:
@@ -359,6 +360,11 @@ def entertainmentService(group, user):
                                 # Sort gradient points by ID for proper ordering
                                 gradient_points.sort(key=lambda x: x["id"])
                                 
+                                # Debug log
+                                logging.debug(f"WLED gradient points count: {len(gradient_points)}")
+                                for idx, pt in enumerate(gradient_points):
+                                    logging.debug(f"  Point {idx}: id={pt['id']}, color={pt['color']}")
+                                
                                 if len(gradient_points) == 1:
                                     # Single color for all LEDs - NO GRADIENT
                                     color = gradient_points[0]["color"]
@@ -396,12 +402,18 @@ def entertainmentService(group, user):
                             else:
                                 # No gradient points, apply decay to previous colors
                                 if previous_colors:
+                                    # Find the average color to decay to (prevents gradient persistence)
+                                    avg_r = sum(pc[0] for pc in previous_colors) // len(previous_colors)
+                                    avg_g = sum(pc[1] for pc in previous_colors) // len(previous_colors)
+                                    avg_b = sum(pc[2] for pc in previous_colors) // len(previous_colors)
+                                    
                                     for led in range(ledCount):
                                         if led < len(previous_colors):
-                                            # Apply decay factor to previous colors
-                                            r = int(previous_colors[led][0] * decay_factor)
-                                            g = int(previous_colors[led][1] * decay_factor)
-                                            b = int(previous_colors[led][2] * decay_factor)
+                                            # Blend towards average color while decaying
+                                            blend_factor = 0.5  # How much to blend towards average
+                                            r = int((previous_colors[led][0] * (1 - blend_factor) + avg_r * blend_factor) * decay_factor)
+                                            g = int((previous_colors[led][1] * (1 - blend_factor) + avg_g * blend_factor) * decay_factor)
+                                            b = int((previous_colors[led][2] * (1 - blend_factor) + avg_b * blend_factor) * decay_factor)
                                             current_colors.append([r, g, b])
                                         else:
                                             current_colors.append([0, 0, 0])
@@ -411,8 +423,18 @@ def entertainmentService(group, user):
                                         current_colors.append([0, 0, 0])
                             
                             # Mix with previous colors for smooth transitions
-                            if previous_colors and gradient_points:
-                                mix_factor = 0.7  # How much of new color vs old (0.7 = 70% new, 30% old)
+                            # Only mix if we have actual gradient points (not during decay)
+                            if previous_colors and gradient_points and len(gradient_points) > 0:
+                                # Check if this is a single color update (id == -1)
+                                is_single_color = len(gradient_points) == 1 and gradient_points[0]["id"] == -1
+                                
+                                if is_single_color:
+                                    # For single colors, apply stronger mixing for instant response
+                                    mix_factor = 0.9  # 90% new color
+                                else:
+                                    # For gradients, use gentler mixing
+                                    mix_factor = 0.7  # 70% new color
+                                
                                 for led in range(min(ledCount, len(previous_colors), len(current_colors))):
                                     current_colors[led][0] = int(current_colors[led][0] * mix_factor + previous_colors[led][0] * (1 - mix_factor))
                                     current_colors[led][1] = int(current_colors[led][1] * mix_factor + previous_colors[led][1] * (1 - mix_factor))
