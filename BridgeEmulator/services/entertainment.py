@@ -238,6 +238,7 @@ def entertainmentService(group, user):
                                 wledLights[light.protocol_cfg["ip"]] = {
                                     "segments": light.protocol_cfg.get("segments", []),
                                     "segmentCount": light.protocol_cfg.get("segmentCount", 1),
+                                    "ledCount": light.protocol_cfg.get("ledCount", 100),  # Total LED count
                                     "udp_port": light.protocol_cfg["udp_port"],
                                     "gradient_points": []  # Store gradient points for interpolation
                                 }
@@ -323,40 +324,40 @@ def entertainmentService(group, user):
                             auth = {'username':bridgeConfig["config"]["mqtt"]["mqttUser"], 'password':bridgeConfig["config"]["mqtt"]["mqttPassword"]}
                         publish.multiple(mqttLights, hostname=bridgeConfig["config"]["mqtt"]["mqttServer"], port=bridgeConfig["config"]["mqtt"]["mqttPort"], auth=auth)
                     if len(wledLights) != 0:
-                        # Use WARLS but build it efficiently with gradient interpolation
+                        # Use WARLS with per-LED linear interpolation
                         for ip in wledLights.keys():
                             wled_data = wledLights[ip]
-                            segments = wled_data.get("segments", [])
                             gradient_points = wled_data.get("gradient_points", [])
                             udp_port = wled_data.get("udp_port", 21324)
+                            ledCount = wled_data.get("ledCount", 100)  # Get actual LED count
                             
-                            if segments and gradient_points:
+                            if gradient_points:
                                 # Sort gradient points by ID for proper ordering
                                 gradient_points.sort(key=lambda x: x["id"])
                                 
-                                # WARLS: Send RGB for every LED with gradient interpolation
-                                total_leds = sum(seg["len"] for seg in segments)
-                                num_segments = len(segments)
-                                
                                 # Pre-allocate the exact size we need
-                                udpdata = bytearray(2 + total_leds * 3)  # header + RGB per LED
+                                udpdata = bytearray(2 + ledCount * 3)  # header + RGB per LED
                                 udpdata[0] = 1  # WARLS mode
                                 udpdata[1] = 1  # 1 second timeout
                                 
-                                # Interpolate colors across all segments
-                                segment_colors = []
+                                # Linear interpolation across ALL LEDs
+                                idx = 2
                                 
                                 if len(gradient_points) == 1:
-                                    # Single color for all segments
-                                    for _ in range(num_segments):
-                                        segment_colors.append(gradient_points[0]["color"])
+                                    # Single color for all LEDs
+                                    color = gradient_points[0]["color"]
+                                    for led in range(ledCount):
+                                        udpdata[idx] = color[0]
+                                        udpdata[idx+1] = color[1]
+                                        udpdata[idx+2] = color[2]
+                                        idx += 3
                                 else:
-                                    # Interpolate between gradient points
-                                    for seg_idx in range(num_segments):
+                                    # Linear smooth interpolation between gradient points
+                                    for led in range(ledCount):
                                         # Calculate position in gradient (0.0 to 1.0)
-                                        position = seg_idx / max(1, num_segments - 1)
+                                        position = led / max(1, ledCount - 1)
                                         
-                                        # Find surrounding gradient points
+                                        # Map position to gradient points
                                         scaled_pos = position * (len(gradient_points) - 1)
                                         lower_idx = int(scaled_pos)
                                         upper_idx = min(lower_idx + 1, len(gradient_points) - 1)
@@ -368,27 +369,18 @@ def entertainmentService(group, user):
                                         lower_color = gradient_points[lower_idx]["color"]
                                         upper_color = gradient_points[upper_idx]["color"]
                                         
-                                        # Interpolate RGB values
-                                        interpolated_color = [
-                                            int(lower_color[0] + (upper_color[0] - lower_color[0]) * factor),
-                                            int(lower_color[1] + (upper_color[1] - lower_color[1]) * factor),
-                                            int(lower_color[2] + (upper_color[2] - lower_color[2]) * factor)
-                                        ]
-                                        segment_colors.append(interpolated_color)
-                                
-                                # Fill in LED colors based on interpolated segment colors
-                                idx = 2
-                                for seg_idx, segment in enumerate(segments):
-                                    seg_color = segment_colors[seg_idx] if seg_idx < len(segment_colors) else [0, 0, 0]
-                                    
-                                    # Fill this segment's LEDs with interpolated color
-                                    for _ in range(segment["len"]):
-                                        udpdata[idx] = seg_color[0]
-                                        udpdata[idx+1] = seg_color[1]
-                                        udpdata[idx+2] = seg_color[2]
+                                        # Linear interpolation for this specific LED
+                                        r = int(lower_color[0] + (upper_color[0] - lower_color[0]) * factor)
+                                        g = int(lower_color[1] + (upper_color[1] - lower_color[1]) * factor)
+                                        b = int(lower_color[2] + (upper_color[2] - lower_color[2]) * factor)
+                                        
+                                        # Clamp values to 0-255
+                                        udpdata[idx] = max(0, min(255, r))
+                                        udpdata[idx+1] = max(0, min(255, g))
+                                        udpdata[idx+2] = max(0, min(255, b))
                                         idx += 3
                                 
-                                # Send optimized packet
+                                # Send optimized packet with all LED values
                                 if ip not in udp_socket_pool:
                                     udp_socket_pool[ip] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                                 udp_socket_pool[ip].sendto(udpdata, (ip.split(":")[0], udp_port))
