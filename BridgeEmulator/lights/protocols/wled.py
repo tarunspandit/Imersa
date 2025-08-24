@@ -52,23 +52,22 @@ def discover(detectedLights, device_ips):
             x = WledDevice(device[0], device[1])
             logging.info("<WLED> Found device: %s with %d segments" %
                          (device[1], x.segmentCount))
-            modelid = "LST002"  # Gradient Strip
-            segmentid = 0
-            for _ in range(1, x.segmentCount+1):
-                lights.append({"protocol": "wled",
-                               "name": x.name + "_seg" + str(segmentid),
-                               "modelid": modelid,
-                               "protocol_cfg": {
-                                   "ip": x.ip,
-                                   "ledCount": x.segments[segmentid]["len"],
-                                   "mdns_name": device[1],
-                                   "mac": x.mac,
-                                   "segmentId": segmentid,
-                                   "segment_start": x.segments[segmentid]["start"],
-                                   "udp_port": x.udpPort
-                               }
-                               })
-                segmentid = segmentid + 1
+            # Treat entire WLED strip as one gradient light
+            modelid = "LCX002"  # Gradient Strip
+            total_leds = sum(seg["len"] for seg in x.segments)
+            lights.append({"protocol": "wled",
+                           "name": x.name,
+                           "modelid": modelid,
+                           "protocol_cfg": {
+                               "ip": x.ip,
+                               "ledCount": total_leds,
+                               "mdns_name": device[1],
+                               "mac": x.mac,
+                               "segments": x.segments,  # Store all segments
+                               "segmentCount": x.segmentCount,
+                               "udp_port": x.udpPort
+                           }
+                           })
             for light in lights:
                 detectedLights.append(light)
         except:
@@ -83,7 +82,10 @@ def set_light(light, data):
         c = WledDevice(ip, light.protocol_cfg['mdns_name'])
         Connections[ip] = c
 
-    if "lights" in data:
+    if "gradient" in data:
+        # Handle gradient data - distribute colors across segments
+        send_gradient_data(c, light, data)
+    elif "lights" in data:
         # We ignore the segment count of hue provides atm
         destructured_data = data["lights"][list(data["lights"].keys())[0]]
         send_light_data(c, light, destructured_data)
@@ -91,36 +93,83 @@ def set_light(light, data):
         send_light_data(c, light, data)
 
 
-def send_light_data(c, light, data):
+def send_gradient_data(c, light, data):
+    """Send gradient data to WLED by distributing colors across segments"""
     state = {}
-    # Always turn on the segment and handle the on/off at light level
-    seg = {
-        "id": light.protocol_cfg['segmentId'],
-        "on": True
-    }
+    segments = []
+    
+    gradient_points = data.get("gradient", {}).get("points", [])
+    num_segments = light.protocol_cfg.get("segmentCount", 1)
+    
+    if gradient_points:
+        # Distribute gradient points across segments
+        # We'll interpolate colors if we have fewer points than segments
+        for seg_idx in range(num_segments):
+            # Calculate which gradient point this segment should use
+            point_idx = min(int(seg_idx * len(gradient_points) / num_segments), len(gradient_points) - 1)
+            point = gradient_points[point_idx]
+            
+            xy = point.get("color", {}).get("xy", {})
+            color = convert_xy(xy.get("x", 0.5), xy.get("y", 0.5), 255)
+            
+            seg = {
+                "id": seg_idx,
+                "on": data.get("on", True),
+                "bri": data.get("bri", 254),
+                "col": [[color[0], color[1], color[2]]]
+            }
+            segments.append(seg)
+    
+    # Apply other properties like on/off and brightness
     for k, v in data.items():
         if k == "on":
-            # Handle on/off at light level
-            if v:
-                seg["on"] = True
-            else:
-                seg["on"] = False
+            for seg in segments:
+                seg["on"] = v
         elif k == "bri":
-            seg["bri"] = v+1
-        elif k == "ct":
-            kelvin = round(translateRange(v, 153, 500, 6500, 2000))
-            color = kelvinToRgb(kelvin)
-            seg["col"] = [[color[0], color[1], color[2]]]
-        elif k == "xy":
-            color = convert_xy(v[0], v[1], 255)
-            seg["col"] = [[color[0], color[1], color[2]]]
-        elif k == "alert" and v != "none":
-            state = c.getSegState(light.protocol_cfg['segmentId'])
-            c.setBriSeg(0, light.protocol_cfg['segmentId'])
-            sleep(0.6)
-            c.setBriSeg(state["bri"], light.protocol_cfg['segmentId'])
-            return
-    state["seg"] = [seg]
+            for seg in segments:
+                seg["bri"] = v + 1
+    
+    state["seg"] = segments
+    c.sendJson(state)
+
+
+def send_light_data(c, light, data):
+    state = {}
+    segments = []
+    
+    # Apply to all segments for single color
+    num_segments = light.protocol_cfg.get("segmentCount", 1)
+    
+    for seg_idx in range(num_segments):
+        seg = {
+            "id": seg_idx,
+            "on": True
+        }
+        
+        for k, v in data.items():
+            if k == "on":
+                seg["on"] = v
+            elif k == "bri":
+                seg["bri"] = v + 1
+            elif k == "ct":
+                kelvin = round(translateRange(v, 153, 500, 6500, 2000))
+                color = kelvinToRgb(kelvin)
+                seg["col"] = [[color[0], color[1], color[2]]]
+            elif k == "xy":
+                color = convert_xy(v[0], v[1], 255)
+                seg["col"] = [[color[0], color[1], color[2]]]
+            elif k == "alert" and v != "none":
+                # Flash all segments
+                for alert_seg in range(num_segments):
+                    c.setBriSeg(0, alert_seg)
+                sleep(0.6)
+                for alert_seg in range(num_segments):
+                    c.setBriSeg(data.get("bri", 254), alert_seg)
+                return
+        
+        segments.append(seg)
+    
+    state["seg"] = segments
     c.sendJson(state)
 
 def get_light_state(light):
@@ -130,7 +179,15 @@ def get_light_state(light):
     else:
         c = WledDevice(ip, light.protocol_cfg['mdns_name'])
         Connections[ip] = c
-    return c.getSegState(light.protocol_cfg['segmentId'])
+    
+    # Get state for all segments and combine for gradient
+    num_segments = light.protocol_cfg.get("segmentCount", 1)
+    if num_segments > 1:
+        # Return gradient state combining all segments
+        return c.getGradientState()
+    else:
+        # Single segment, return normal state
+        return c.getSegState(0)
 
 
 def translateRange(value, leftMin, leftMax, rightMin, rightMax):
@@ -201,6 +258,34 @@ class WledDevice:
         b = int(seg['col'][0][2])+1
         state['xy'] = convert_rgb_xy(r, g, b)
         state["colormode"] = "xy"
+        return state
+    
+    def getGradientState(self):
+        """Get combined state for gradient strip with all segments"""
+        state = {}
+        data = self.getLightState()['state']
+        segments = data['seg']
+        
+        # Use first segment for on/off and brightness
+        state['on'] = segments[0]['on'] if segments else False
+        state['bri'] = segments[0]['bri'] if segments else 0
+        
+        # Build gradient points from all segments
+        gradient_points = []
+        for seg in segments:
+            r = int(seg['col'][0][0]) + 1
+            g = int(seg['col'][0][1]) + 1
+            b = int(seg['col'][0][2]) + 1
+            xy = convert_rgb_xy(r, g, b)
+            
+            gradient_points.append({
+                "color": {
+                    "xy": {"x": xy[0], "y": xy[1]}
+                }
+            })
+        
+        state['gradient'] = {"points": gradient_points}
+        state["colormode"] = "gradient"
         return state
 
     def setRGBSeg(self, r, g, b, seg):
