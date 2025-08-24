@@ -56,6 +56,7 @@ def get_hue_entertainment_group(light, groupname):
     return int(out)
 
 YeelightConnections = {}
+udp_socket_pool = {}  # Socket pool to prevent creating 600+ sockets/second
 
 def entertainmentService(group, user):
     logging.debug("User: " + user.username)
@@ -257,14 +258,18 @@ def entertainmentService(group, user):
                             udpmsg = bytearray()
                             for light in nativeLights[ip].keys():
                                 udpmsg += bytes([light]) + bytes([nativeLights[ip][light][0]]) + bytes([nativeLights[ip][light][1]]) + bytes([nativeLights[ip][light][2]])
-                            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) # UDP
-                            sock.sendto(udpmsg, (ip.split(":")[0], 2100))
+                            # Reuse socket from pool instead of creating new one
+                            if ip not in udp_socket_pool:
+                                udp_socket_pool[ip] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                            udp_socket_pool[ip].sendto(udpmsg, (ip.split(":")[0], 2100))
                     if len(esphomeLights) != 0:
                         for ip in esphomeLights.keys():
                             udpmsg = bytearray()
                             udpmsg += bytes([0]) + bytes([esphomeLights[ip]["color"][0]]) + bytes([esphomeLights[ip]["color"][1]]) + bytes([esphomeLights[ip]["color"][2]]) + bytes([esphomeLights[ip]["color"][3]])
-                            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) # UDP
-                            sock.sendto(udpmsg, (ip.split(":")[0], 2100))
+                            # Reuse socket from pool instead of creating new one
+                            if ip not in udp_socket_pool:
+                                udp_socket_pool[ip] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                            udp_socket_pool[ip].sendto(udpmsg, (ip.split(":")[0], 2100))
                     if len(mqttLights) != 0:
                         auth = None
                         if bridgeConfig["config"]["mqtt"]["mqttUser"] != "" and bridgeConfig["config"]["mqtt"]["mqttPassword"] != "":
@@ -279,8 +284,10 @@ def entertainmentService(group, user):
                                 start_seg = wledLights[ip][segments]["start"].to_bytes(2,"big")
                                 color = bytes(wledLights[ip][segments]["color"] * int(wledLights[ip][segments]["ledCount"]))
                                 udpdata = udphead+start_seg+color
-                                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                                sock.sendto(udpdata, (ip.split(":")[0], wledLights[ip][segments]["udp_port"]))
+                                # Reuse socket from pool instead of creating new one
+                                if ip not in udp_socket_pool:
+                                    udp_socket_pool[ip] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                                udp_socket_pool[ip].sendto(udpdata, (ip.split(":")[0], wledLights[ip][segments]["udp_port"]))
                     if len(hueGroupLights) != 0:
                         h.send(hueGroupLights, hueGroup)
                     if len(non_UDP_lights) != 0:
@@ -315,6 +322,13 @@ def entertainmentService(group, user):
     bridgeConfig["groups"][group.id_v1].stream["active"] = False
     for light in group.lights:
          bridgeConfig["lights"][light().id_v1].state["mode"] = "homeautomation"
+    # Clean up socket pool
+    for sock in udp_socket_pool.values():
+        try:
+            sock.close()
+        except:
+            pass
+    udp_socket_pool.clear()
     logging.info("Entertainment service stopped")
 
 def enableMusic(ip, host_ip):
