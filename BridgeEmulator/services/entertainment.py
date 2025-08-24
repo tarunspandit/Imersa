@@ -240,18 +240,26 @@ def entertainmentService(group, user):
                                     "colors": {}
                                 }
                             
-                            # Handle gradient strips - store color for appropriate segment
+                            # For WLED gradient strips, we need to handle multiple segments
                             if light.modelid in ["LCX001", "LCX002", "LCX003", "915005987201", "LCX004"]:
-                                # For gradient strips, determine which segment this color belongs to
-                                if apiVersion == 2 and data[i] < light.protocol_cfg.get("segmentCount", 1):
-                                    segment_id = data[i]  # Direct segment mapping in v2
-                                else:
-                                    # For v1 or fallback, distribute across segments
-                                    total_segments = light.protocol_cfg.get("segmentCount", 1)
-                                    light_id = data[i+1] * 256 + data[i+2] if apiVersion == 1 else data[i]
-                                    segment_id = light_id % total_segments
+                                # For gradient strips, this single color data point should be applied to all segments
+                                # The entertainment client will send multiple data points for true gradient effects
+                                total_segments = light.protocol_cfg.get("segmentCount", 1)
                                 
-                                wledLights[light.protocol_cfg["ip"]]["colors"][segment_id] = [r, g, b]
+                                if apiVersion == 2:
+                                    # In v2, data[i] might indicate which segment, but for gradient strips
+                                    # we should apply to all segments unless specifically targeting one
+                                    if data[i] < total_segments:
+                                        segment_id = data[i]
+                                        wledLights[light.protocol_cfg["ip"]]["colors"][segment_id] = [r, g, b]
+                                    else:
+                                        # Apply to all segments if index is out of range
+                                        for seg_id in range(total_segments):
+                                            wledLights[light.protocol_cfg["ip"]]["colors"][seg_id] = [r, g, b]
+                                else:
+                                    # For v1, apply to all segments to ensure they light up
+                                    for seg_id in range(total_segments):
+                                        wledLights[light.protocol_cfg["ip"]]["colors"][seg_id] = [r, g, b]
                             else:
                                 # Single color for all segments
                                 for seg_id in range(light.protocol_cfg.get("segmentCount", 1)):
@@ -320,6 +328,18 @@ def entertainmentService(group, user):
                                         if ip not in udp_socket_pool:
                                             udp_socket_pool[ip] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                                         udp_socket_pool[ip].sendto(udpdata, (ip.split(":")[0], udp_port))
+                            elif segments:
+                                # Fallback: if no colors stored, send a default color to all segments
+                                default_color = [255, 255, 255]  # White fallback
+                                for seg_idx, segment in enumerate(segments):
+                                    udphead = bytes([wled_udpmode, wled_secstowait])
+                                    start_seg = segment["start"].to_bytes(2, "big")
+                                    color = bytes(default_color * segment["len"])
+                                    udpdata = udphead + start_seg + color
+                                    
+                                    if ip not in udp_socket_pool:
+                                        udp_socket_pool[ip] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                                    udp_socket_pool[ip].sendto(udpdata, (ip.split(":")[0], udp_port))
                     if len(hueGroupLights) != 0:
                         h.send(hueGroupLights, hueGroup)
                     if len(haLights) != 0:
