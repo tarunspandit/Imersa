@@ -323,36 +323,65 @@ def entertainmentService(group, user):
                             auth = {'username':bridgeConfig["config"]["mqtt"]["mqttUser"], 'password':bridgeConfig["config"]["mqtt"]["mqttPassword"]}
                         publish.multiple(mqttLights, hostname=bridgeConfig["config"]["mqtt"]["mqttServer"], port=bridgeConfig["config"]["mqtt"]["mqttPort"], auth=auth)
                     if len(wledLights) != 0:
-                        # Use WARLS but build it efficiently 
+                        # Use WARLS but build it efficiently with gradient interpolation
                         for ip in wledLights.keys():
                             wled_data = wledLights[ip]
                             segments = wled_data.get("segments", [])
-                            colors = wled_data.get("colors", {})
+                            gradient_points = wled_data.get("gradient_points", [])
                             udp_port = wled_data.get("udp_port", 21324)
                             
-                            if segments and colors:
-                                # WARLS: Send RGB for every LED, but build it smart
+                            if segments and gradient_points:
+                                # Sort gradient points by ID for proper ordering
+                                gradient_points.sort(key=lambda x: x["id"])
+                                
+                                # WARLS: Send RGB for every LED with gradient interpolation
                                 total_leds = sum(seg["len"] for seg in segments)
+                                num_segments = len(segments)
                                 
                                 # Pre-allocate the exact size we need
                                 udpdata = bytearray(2 + total_leds * 3)  # header + RGB per LED
                                 udpdata[0] = 1  # WARLS mode
                                 udpdata[1] = 1  # 1 second timeout
                                 
-                                # Fill in LED colors based on segments
+                                # Interpolate colors across all segments
+                                segment_colors = []
+                                
+                                if len(gradient_points) == 1:
+                                    # Single color for all segments
+                                    for _ in range(num_segments):
+                                        segment_colors.append(gradient_points[0]["color"])
+                                else:
+                                    # Interpolate between gradient points
+                                    for seg_idx in range(num_segments):
+                                        # Calculate position in gradient (0.0 to 1.0)
+                                        position = seg_idx / max(1, num_segments - 1)
+                                        
+                                        # Find surrounding gradient points
+                                        scaled_pos = position * (len(gradient_points) - 1)
+                                        lower_idx = int(scaled_pos)
+                                        upper_idx = min(lower_idx + 1, len(gradient_points) - 1)
+                                        
+                                        # Calculate interpolation factor
+                                        factor = scaled_pos - lower_idx
+                                        
+                                        # Get colors to interpolate between
+                                        lower_color = gradient_points[lower_idx]["color"]
+                                        upper_color = gradient_points[upper_idx]["color"]
+                                        
+                                        # Interpolate RGB values
+                                        interpolated_color = [
+                                            int(lower_color[0] + (upper_color[0] - lower_color[0]) * factor),
+                                            int(lower_color[1] + (upper_color[1] - lower_color[1]) * factor),
+                                            int(lower_color[2] + (upper_color[2] - lower_color[2]) * factor)
+                                        ]
+                                        segment_colors.append(interpolated_color)
+                                
+                                # Fill in LED colors based on interpolated segment colors
                                 idx = 2
                                 for seg_idx, segment in enumerate(segments):
-                                    # Get color for this segment (use last known or black)
-                                    if seg_idx in colors:
-                                        seg_color = colors[seg_idx]
-                                    elif colors:
-                                        # Use nearest available color
-                                        nearest = min(colors.keys(), key=lambda x: abs(x - seg_idx))
-                                        seg_color = colors[nearest]
-                                    else:
-                                        seg_color = [0, 0, 0]
+                                    seg_color = segment_colors[seg_idx] if seg_idx < len(segment_colors) else [0, 0, 0]
                                     
-                                    # Fill this segment's LEDs
+                                    # Fill this segment's LEDs with interpolated color
                                     for _ in range(segment["len"]):
                                         udpdata[idx] = seg_color[0]
                                         udpdata[idx+1] = seg_color[1]
