@@ -145,6 +145,7 @@ def entertainmentService(group, user):
                         light = None
                         r,g,b = 0,0,0
                         bri = 0
+                        gradient_segment_id = None  # Track segment ID for gradient strips
                         if apiVersion == 1:
                             if (data[i+1] * 256 + data[i+2]) in channels:
                                 channels[data[i+1] * 256 + data[i+2]] += 1
@@ -156,6 +157,7 @@ def entertainmentService(group, user):
                                 light = lights_v1[data[i+1] * 256 + data[i+2]]
                             elif data[i] == 1:  # Type of device Gradient Strip
                                 light = findGradientStrip(group)
+                                gradient_segment_id = data[i+1] * 256 + data[i+2]  # Save segment ID for gradient strips
                             if data[14] == 0: #rgb colorspace
                                 r = int((data[i+3] * 256 + data[i+4]) / 256)
                                 g = int((data[i+5] * 256 + data[i+6]) / 256)
@@ -245,30 +247,26 @@ def entertainmentService(group, user):
                             
                             if apiVersion == 1:
                                 if light.modelid in ["LCX001", "LCX002", "LCX003", "915005987201", "LCX004"]:
-                                    # For gradient strips in v1 API, check the device type from earlier
-                                    if data[i] == 1:  # Device type 1 = gradient strip
-                                        # Segment ID is in the next two bytes
-                                        segment_id = data[i+1] * 256 + data[i+2]
-                                        if segment_id < total_segments:
-                                            wledLights[light.protocol_cfg["ip"]]["colors"][segment_id] = [r, g, b]
-                                    elif data[i] == 0:  # Device type 0 = regular light or all segments
-                                        # Check if this is a gradient strip being addressed as a whole
-                                        if light == findGradientStrip(group):
-                                            # Apply to all segments
+                                    # For gradient strips, use the saved segment ID
+                                    if gradient_segment_id is not None:
+                                        # This is a gradient strip with specific segment addressing
+                                        if gradient_segment_id < total_segments:
+                                            wledLights[light.protocol_cfg["ip"]]["colors"][gradient_segment_id] = [r, g, b]
+                                        else:
+                                            # Segment ID out of range, apply to all
                                             for seg_id in range(total_segments):
                                                 wledLights[light.protocol_cfg["ip"]]["colors"][seg_id] = [r, g, b]
-                                        else:
-                                            # Single segment/light
-                                            light_id = data[i+1] * 256 + data[i+2]
-                                            if light_id < total_segments:
-                                                wledLights[light.protocol_cfg["ip"]]["colors"][light_id] = [r, g, b]
+                                    else:
+                                        # No specific segment ID, apply to all segments
+                                        for seg_id in range(total_segments):
+                                            wledLights[light.protocol_cfg["ip"]]["colors"][seg_id] = [r, g, b]
                                 else:
-                                    # Non-gradient lights
+                                    # Non-gradient lights - apply to all segments
                                     for seg_id in range(total_segments):
                                         wledLights[light.protocol_cfg["ip"]]["colors"][seg_id] = [r, g, b]
                             elif apiVersion == 2:
                                 if light.modelid in ["LCX001", "LCX002", "LCX003", "915005987201", "LCX004"]:
-                                    # For v2 API, data[i] is the segment index
+                                    # For v2 API, data[i] contains the segment index
                                     segment_id = data[i]
                                     if segment_id < total_segments:
                                         wledLights[light.protocol_cfg["ip"]]["colors"][segment_id] = [r, g, b]
