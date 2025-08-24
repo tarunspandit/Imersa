@@ -181,3 +181,7 @@ def logout():
 @core.route('/wled-settings')
 def wled_settings():
     return render_template('wled_settings.html')
+
+@core.route('/wled-segments')
+def wled_segments():
+    return render_template('wled_segments.html')

@@ -334,20 +334,22 @@ def entertainmentService(group, user):
                             auth = {'username':bridgeConfig["config"]["mqtt"]["mqttUser"], 'password':bridgeConfig["config"]["mqtt"]["mqttPassword"]}
                         publish.multiple(mqttLights, hostname=bridgeConfig["config"]["mqtt"]["mqttServer"], port=bridgeConfig["config"]["mqtt"]["mqttPort"], auth=auth)
                     if len(wledLights) != 0:
-                        # Use WARLS with per-LED linear interpolation and decay
-                        # Check gradient mode from config
-                        gradient_mode = "sparse"  # Default to sparse
-                        if "wled" in bridgeConfig["config"]:
-                            gradient_mode = bridgeConfig["config"]["wled"].get("gradient_mode", "sparse")
-                        logging.info(f"WLED gradient mode: {gradient_mode}")
-                        
+                        # Process each WLED device and its segments
                         for ip in wledLights.keys():
-                            wled_data = wledLights[ip]
-                            gradient_points = wled_data.get("gradient_points", [])
-                            udp_port = wled_data.get("udp_port", 21324)
-                            ledCount = wled_data.get("ledCount", 100)  # Get actual LED count
-                            previous_colors = wled_data.get("previous_colors")
-                            decay_factor = wled_data.get("decay_factor", 0.85)
+                            wled_device = wledLights[ip]
+                            udp_port = wled_device.get("udp_port", 21324)
+                            
+                            # Process each segment separately
+                            for segment_id, segment_data in wled_device.get("segments", {}).items():
+                                gradient_points = segment_data.get("gradient_points", [])
+                                ledCount = segment_data.get("ledCount", 30)
+                                previous_colors = segment_data.get("previous_colors")
+                                decay_factor = segment_data.get("decay_factor", 0.85)
+                                modelid = segment_data.get("modelid", "LCG002")
+                                
+                                # Check if this is a gradient-capable model
+                                gradient_models = ["LCX001", "LCX002", "LCX003", "LCX004", "915005987201"]
+                                is_gradient_light = modelid in gradient_models
                             
                             # Pre-allocate the exact size we need
                             udpdata = bytearray(2 + ledCount * 3)  # header + RGB per LED
