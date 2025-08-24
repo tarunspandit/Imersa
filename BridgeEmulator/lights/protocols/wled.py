@@ -65,7 +65,8 @@ def discover(detectedLights, device_ips):
                                "mac": x.mac,
                                "segments": x.segments,  # Store all segments
                                "segmentCount": x.segmentCount,
-                               "udp_port": x.udpPort
+                               "udp_port": x.udpPort,
+                               "points_capable": x.segmentCount  # Number of gradient points supported
                            }
                            })
             for light in lights:
