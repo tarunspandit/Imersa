@@ -58,7 +58,6 @@ def discover(detectedLights, device_ips):
             except Exception as e:
                 logging.debug("<WLED> ip %s is unknown device", ip)
 
-    lights = []
     for device in discovered_lights:
         try:
             x = WledDevice(device[0], device[1])
@@ -87,7 +86,7 @@ def discover(detectedLights, device_ips):
                         
                     # Default model ID for segments - can be changed in GUI
                     modelid = "LST002"  # Default Hue Lightstrip Plus model
-                    lights.append({"protocol": "wled",
+                    detectedLights.append({"protocol": "wled",
                                    "name": f"{x.name} Segment {seg_idx}",  # Use actual segment number
                                    "modelid": modelid,
                                    "protocol_cfg": {
@@ -115,7 +114,7 @@ def discover(detectedLights, device_ips):
                 if not use_segments and x.segmentCount > 1:
                     logging.info(f"<WLED> Segments disabled - using segment 0 (entire strip) as single light")
                 
-                lights.append({"protocol": "wled",
+                detectedLights.append({"protocol": "wled",
                                "name": x.name,
                                "modelid": modelid,
                                "protocol_cfg": {
@@ -131,9 +130,6 @@ def discover(detectedLights, device_ips):
                                    "wled_name": x.name
                                }
                                })
-            
-            for light in lights:
-                detectedLights.append(light)
         except Exception as e:
             logging.error(f"<WLED> Error processing device {device}: {e}")
             continue
@@ -349,55 +345,95 @@ class WledDevice:
         self.udpPort = self.state['info']['udpport']
 
     def getLightState(self):
-        with urllib.request.urlopen(self.url + '/json') as resp:
-            data = json.loads(resp.read())
-            return data
+        try:
+            with urllib.request.urlopen(self.url + '/json', timeout=5) as resp:
+                data = json.loads(resp.read())
+                return data
+        except Exception as e:
+            logging.error(f"<WLED> Error getting light state from {self.url}: {e}")
+            # Return minimal default state to avoid crashes
+            return {
+                'info': {'leds': {'count': 0}, 'mac': '000000000000', 'udpport': 21324},
+                'state': {'seg': []}
+            }
 
     def getSegState(self, seg):
-        state = {}
-        data = self.getLightState()['state']
-        seg = data['seg'][seg]
-        state['bri'] = seg['bri']
-        state['on'] = seg['on']
-        # Weird division by zero when a color is 0
-        r = int(seg['col'][0][0])+1
-        g = int(seg['col'][0][1])+1
-        b = int(seg['col'][0][2])+1
-        state['xy'] = convert_rgb_xy(r, g, b)
-        state["colormode"] = "xy"
-        return state
+        try:
+            state = {}
+            data = self.getLightState()['state']
+            if 'seg' not in data or seg >= len(data['seg']):
+                logging.warning(f"<WLED> Segment {seg} not found in WLED state")
+                return {"on": False, "bri": 1, "xy": [0.3, 0.3], "colormode": "xy"}
+                
+            seg_data = data['seg'][seg]
+            state['bri'] = seg_data.get('bri', 1)
+            state['on'] = seg_data.get('on', False)
+            
+            # Weird division by zero when a color is 0
+            if 'col' in seg_data and len(seg_data['col']) > 0 and len(seg_data['col'][0]) >= 3:
+                r = int(seg_data['col'][0][0])+1
+                g = int(seg_data['col'][0][1])+1
+                b = int(seg_data['col'][0][2])+1
+                state['xy'] = convert_rgb_xy(r, g, b)
+            else:
+                state['xy'] = [0.3, 0.3]  # Default white-ish color
+                
+            state["colormode"] = "xy"
+            return state
+        except Exception as e:
+            logging.error(f"<WLED> Error getting segment {seg} state: {e}")
+            return {"on": False, "bri": 1, "xy": [0.3, 0.3], "colormode": "xy"}
     
     def getSegmentGradientState(self, seg_id):
         """Get gradient state for a specific segment"""
-        state = {}
-        data = self.getLightState()['state']
-        
-        if seg_id < len(data['seg']):
-            seg = data['seg'][seg_id]
-            state['on'] = seg['on']
-            state['bri'] = seg['bri']
+        try:
+            state = {}
+            data = self.getLightState()
             
-            # Create gradient points from segment's current color
-            # For single segment gradient, we'll create 2 points with the same color
-            r = int(seg['col'][0][0]) + 1
-            g = int(seg['col'][0][1]) + 1
-            b = int(seg['col'][0][2]) + 1
-            xy = convert_rgb_xy(r, g, b)
+            # Check if we got valid data
+            if not data or 'state' not in data or 'seg' not in data['state']:
+                logging.warning(f"<WLED> No valid segment data from {self.url}")
+                return {"on": False, "bri": 1, "gradient": {"points": []}, "colormode": "gradient"}
             
-            gradient_points = [
-                {"color": {"xy": {"x": xy[0], "y": xy[1]}}},
-                {"color": {"xy": {"x": xy[0], "y": xy[1]}}}
-            ]
+            seg_data = data['state']['seg']
             
-            state['gradient'] = {"points": gradient_points}
-            state["colormode"] = "gradient"
-        else:
-            # Fallback if segment doesn't exist
-            state = self.getSegState(0)
-            state["colormode"] = "gradient"
-            state['gradient'] = {"points": []}
-        
-        return state
+            if seg_id < len(seg_data) and seg_data[seg_id]:
+                seg = seg_data[seg_id]
+                state['on'] = seg.get('on', False)
+                state['bri'] = seg.get('bri', 1)
+                
+                # Create gradient points from segment's current color
+                # For single segment gradient, we'll create 2 points with the same color
+                if 'col' in seg and seg['col'] and len(seg['col']) > 0 and len(seg['col'][0]) >= 3:
+                    r = int(seg['col'][0][0]) + 1
+                    g = int(seg['col'][0][1]) + 1
+                    b = int(seg['col'][0][2]) + 1
+                    xy = convert_rgb_xy(r, g, b)
+                    
+                    gradient_points = [
+                        {"color": {"xy": {"x": xy[0], "y": xy[1]}}},
+                        {"color": {"xy": {"x": xy[0], "y": xy[1]}}}
+                    ]
+                else:
+                    # Default white-ish gradient if no color data
+                    gradient_points = [
+                        {"color": {"xy": {"x": 0.3, "y": 0.3}}},
+                        {"color": {"xy": {"x": 0.3, "y": 0.3}}}
+                    ]
+                
+                state['gradient'] = {"points": gradient_points}
+                state["colormode"] = "gradient"
+            else:
+                # Fallback if segment doesn't exist
+                fallback_state = self.getSegState(0)
+                state = fallback_state.copy()
+                state["colormode"] = "gradient"
+                state['gradient'] = {"points": []}
+            
+            return state
+        except Exception as e:
+            logging.error(f"<WLED> Error getting segment {seg_id} gradient state: {e}")
+            return {"on": False, "bri": 1, "gradient": {"points": []}, "colormode": "gradient"}
 
     def setRGBSeg(self, r, g, b, seg):
         state = {"seg": [{"id": seg, "col": [[r, g, b]]}]}
@@ -412,9 +448,14 @@ class WledDevice:
         self.sendJson(state)
 
     def sendJson(self, data):
-        req = urllib.request.Request(self.url + "/json")
-        req.add_header('Content-Type', 'application/json; charset=utf-8')
-        jsondata = json.dumps(data)
-        jsondataasbytes = jsondata.encode('utf-8')
-        req.add_header('Content-Length', len(jsondataasbytes))
-        response = urllib.request.urlopen(req, jsondataasbytes)
+        try:
+            req = urllib.request.Request(self.url + "/json")
+            req.add_header('Content-Type', 'application/json; charset=utf-8')
+            jsondata = json.dumps(data)
+            jsondataasbytes = jsondata.encode('utf-8')
+            req.add_header('Content-Length', len(jsondataasbytes))
+            response = urllib.request.urlopen(req, jsondataasbytes, timeout=5)
+            return response
+        except Exception as e:
+            logging.error(f"<WLED> Error sending JSON to {self.url}: {e}")
+            return None
