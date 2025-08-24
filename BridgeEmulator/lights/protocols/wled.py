@@ -55,36 +55,61 @@ def discover(detectedLights, device_ips):
             
             # Create a separate light for each segment
             if x.segmentCount > 1:
-                # Multiple segments - create a light for each
+                # Multiple segments - create a light for each (skip segment 0 as it's the entire strip)
                 for seg_idx, segment in enumerate(x.segments):
+                    # Log segment details for debugging
+                    seg_start = segment.get("start", 0)
+                    seg_stop = segment.get("stop", 0)
+                    seg_len = segment.get("len", 0)
+                    logging.info(f"<WLED> Segment {seg_idx}: start={seg_start}, stop={seg_stop}, len={seg_len}")
+                    
+                    # Skip segment 0 (it's the entire strip) when we have multiple segments
+                    if seg_idx == 0:
+                        logging.info(f"<WLED> Skipping segment 0 (main segment covering entire strip)")
+                        continue
+                    
+                    # Skip segments with 0 LEDs
+                    if seg_len == 0:
+                        logging.info(f"<WLED> Skipping segment {seg_idx} with 0 LEDs")
+                        continue
+                        
                     # Default model ID for segments - can be changed in GUI
                     modelid = "LST002"  # Default Hue Lightstrip Plus model
                     lights.append({"protocol": "wled",
-                                   "name": f"{x.name} Segment {seg_idx + 1}",
+                                   "name": f"{x.name} Segment {seg_idx}",  # Use actual segment number
                                    "modelid": modelid,
                                    "protocol_cfg": {
                                        "ip": x.ip,
-                                       "ledCount": segment["len"],
+                                       "ledCount": seg_len,
                                        "mdns_name": device[1],
                                        "mac": x.mac,
                                        "segment_id": seg_idx,  # Which segment this light controls
+                                       "segment_start": seg_start,  # Starting LED index
+                                       "segment_stop": seg_stop,  # Ending LED index
                                        "total_segments": x.segmentCount,
                                        "udp_port": x.udpPort,
                                        "wled_name": x.name  # Original WLED device name
                                    }
                                    })
             else:
-                # Single segment - treat as one light
+                # Single segment (or only segment 0) - treat as one light
                 modelid = "LCX002"  # Default gradient strip model for single segment
+                segment = x.segments[0] if x.segments else {}
+                seg_start = segment.get("start", 0)
+                seg_stop = segment.get("stop", x.ledCount)
+                seg_len = segment.get("len", x.ledCount)
+                
                 lights.append({"protocol": "wled",
                                "name": x.name,
                                "modelid": modelid,
                                "protocol_cfg": {
                                    "ip": x.ip,
-                                   "ledCount": x.segments[0]["len"] if x.segments else x.ledCount,
+                                   "ledCount": seg_len,
                                    "mdns_name": device[1],
                                    "mac": x.mac,
                                    "segment_id": 0,
+                                   "segment_start": seg_start,
+                                   "segment_stop": seg_stop,
                                    "total_segments": 1,
                                    "udp_port": x.udpPort,
                                    "wled_name": x.name
@@ -125,6 +150,7 @@ def send_gradient_to_segment(c, light, data):
     """Send gradient data to a specific WLED segment with linear interpolation"""
     segment_id = light.protocol_cfg.get('segment_id', 0)
     led_count = light.protocol_cfg.get('ledCount', 30)
+    segment_start = light.protocol_cfg.get('segment_start', 0)
     
     gradient_points = data.get("gradient", {}).get("points", [])
     
@@ -132,7 +158,7 @@ def send_gradient_to_segment(c, light, data):
         # Linear interpolation across all LEDs in this segment
         colors = []
         for led_idx in range(led_count):
-            # Calculate position (0.0 to 1.0) of this LED
+            # Calculate position (0.0 to 1.0) of this LED within the segment
             position = led_idx / max(1, led_count - 1)
             
             # Find which two gradient points we're between
@@ -160,7 +186,7 @@ def send_gradient_to_segment(c, light, data):
         
         # Send via UDP for smooth gradient
         if hasattr(c, 'udpPort') and c.udpPort:
-            send_udp_gradient(c.ip, c.udpPort, segment_id, colors, led_count)
+            send_udp_gradient(c.ip, c.udpPort, segment_start, colors, led_count)
     else:
         # Fallback to single color if not enough gradient points
         send_segment_data(c, light, data)
@@ -197,19 +223,34 @@ def send_segment_data(c, light, data):
     state = {"seg": [seg]}
     c.sendJson(state)
 
-def send_udp_gradient(ip, port, segment_id, colors, led_count):
-    """Send gradient colors via UDP using WARLS protocol"""
+def send_udp_gradient(ip, port, segment_start, colors, led_count):
+    """Send gradient colors via UDP using DRGB protocol for specific segment position"""
     try:
-        # WARLS protocol: 0x01 (protocol) + 0x02 (wait 2 frames) + RGB data
-        buffer = bytearray(2 + led_count * 3)
-        buffer[0] = 0x01  # WARLS protocol
-        buffer[1] = 0x02  # Wait 2 frames
-        
-        # Fill in RGB values
-        for i, color in enumerate(colors[:led_count]):
-            buffer[2 + i*3] = color[0]     # R
-            buffer[2 + i*3 + 1] = color[1] # G
-            buffer[2 + i*3 + 2] = color[2] # B
+        if segment_start == 0:
+            # For the first segment (or segments starting at 0), use WARLS
+            # WARLS protocol: 0x01 (protocol) + 0x02 (wait 2 frames) + RGB data
+            buffer = bytearray(2 + led_count * 3)
+            buffer[0] = 0x01  # WARLS protocol
+            buffer[1] = 0x02  # Wait 2 frames
+            
+            # Fill in RGB values
+            for i, color in enumerate(colors[:led_count]):
+                buffer[2 + i*3] = color[0]     # R
+                buffer[2 + i*3 + 1] = color[1] # G
+                buffer[2 + i*3 + 2] = color[2] # B
+        else:
+            # For other segments, use DRGB with offset
+            # DRGB protocol: 0x04 + offset (2 bytes) + RGB data
+            buffer = bytearray(3 + led_count * 3)
+            buffer[0] = 0x04  # DRGB protocol
+            buffer[1] = (segment_start >> 8) & 0xFF  # Offset high byte
+            buffer[2] = segment_start & 0xFF  # Offset low byte
+            
+            # Fill in RGB values
+            for i, color in enumerate(colors[:led_count]):
+                buffer[3 + i*3] = color[0]     # R
+                buffer[3 + i*3 + 1] = color[1] # G
+                buffer[3 + i*3 + 2] = color[2] # B
         
         # Send UDP packet
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
