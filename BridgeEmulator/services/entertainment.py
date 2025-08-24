@@ -243,33 +243,43 @@ def entertainmentService(group, user):
                             # Handle WLED gradient strips similar to native gradient strips
                             total_segments = light.protocol_cfg.get("segmentCount", 1)
                             
-                            if light.modelid in ["LCX001", "LCX002", "LCX003", "915005987201", "LCX004"]:
-                                if apiVersion == 1:
-                                    # For gradient strips in v1 API
-                                    if data[i] == 1:  # Type 1 = gradient strip with individual segment address
+                            if apiVersion == 1:
+                                if light.modelid in ["LCX001", "LCX002", "LCX003", "915005987201", "LCX004"]:
+                                    # For gradient strips in v1 API, check the device type from earlier
+                                    if data[i] == 1:  # Device type 1 = gradient strip
+                                        # Segment ID is in the next two bytes
                                         segment_id = data[i+1] * 256 + data[i+2]
                                         if segment_id < total_segments:
                                             wledLights[light.protocol_cfg["ip"]]["colors"][segment_id] = [r, g, b]
-                                            logging.debug(f"WLED gradient v1: segment {segment_id} = RGB({r},{g},{b})")
-                                    elif data[i] == 0:  # Type 0 = apply to all segments
-                                        for seg_id in range(total_segments):
-                                            wledLights[light.protocol_cfg["ip"]]["colors"][seg_id] = [r, g, b]
-                                        logging.debug(f"WLED gradient v1: all {total_segments} segments = RGB({r},{g},{b})")
-                                elif apiVersion == 2:
+                                    elif data[i] == 0:  # Device type 0 = regular light or all segments
+                                        # Check if this is a gradient strip being addressed as a whole
+                                        if light == findGradientStrip(group):
+                                            # Apply to all segments
+                                            for seg_id in range(total_segments):
+                                                wledLights[light.protocol_cfg["ip"]]["colors"][seg_id] = [r, g, b]
+                                        else:
+                                            # Single segment/light
+                                            light_id = data[i+1] * 256 + data[i+2]
+                                            if light_id < total_segments:
+                                                wledLights[light.protocol_cfg["ip"]]["colors"][light_id] = [r, g, b]
+                                else:
+                                    # Non-gradient lights
+                                    for seg_id in range(total_segments):
+                                        wledLights[light.protocol_cfg["ip"]]["colors"][seg_id] = [r, g, b]
+                            elif apiVersion == 2:
+                                if light.modelid in ["LCX001", "LCX002", "LCX003", "915005987201", "LCX004"]:
                                     # For v2 API, data[i] is the segment index
                                     segment_id = data[i]
                                     if segment_id < total_segments:
                                         wledLights[light.protocol_cfg["ip"]]["colors"][segment_id] = [r, g, b]
-                                        logging.debug(f"WLED gradient v2: segment {segment_id} = RGB({r},{g},{b})")
                                     else:
-                                        # If segment ID is out of range, apply to all
+                                        # Apply to all segments if out of range
                                         for seg_id in range(total_segments):
                                             wledLights[light.protocol_cfg["ip"]]["colors"][seg_id] = [r, g, b]
-                                        logging.debug(f"WLED gradient v2: all segments (id {segment_id} >= {total_segments})")
-                            else:
-                                # Non-gradient lights: apply same color to all segments
-                                for seg_id in range(total_segments):
-                                    wledLights[light.protocol_cfg["ip"]]["colors"][seg_id] = [r, g, b]
+                                else:
+                                    # Non-gradient lights: apply same color to all segments
+                                    for seg_id in range(total_segments):
+                                        wledLights[light.protocol_cfg["ip"]]["colors"][seg_id] = [r, g, b]
                         elif proto == "hue" and int(light.protocol_cfg["id"]) in hueGroupLights:
                             hueGroupLights[int(light.protocol_cfg["id"])] = [r,g,b]
                         elif proto == "homeassistant_ws":
