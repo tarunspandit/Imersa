@@ -15,17 +15,21 @@ briTolerange = 16 # new frames will be ignored if the brightness change is small
 lastAppliedFrame = {}
 YeelightConnections = {}
 
-def skipSimilarFrames(light, color, brightness):
+def skipSimilarFrames(light, color, brightness, is_ha_light=False):
     if light not in lastAppliedFrame: # check if light exist in dictionary
         lastAppliedFrame[light] = {"xy": [0,0], "bri": 0}
 
-    if lastAppliedFrame[light]["xy"][0] + cieTolerance < color[0] or color[0] < lastAppliedFrame[light]["xy"][0] - cieTolerance:
+    # Use more aggressive filtering for HA lights to reduce ZHA command flood
+    color_tolerance = 0.08 if is_ha_light else cieTolerance  # Larger tolerance for HA
+    bri_tolerance = 35 if is_ha_light else briTolerange      # Larger tolerance for HA
+
+    if lastAppliedFrame[light]["xy"][0] + color_tolerance < color[0] or color[0] < lastAppliedFrame[light]["xy"][0] - color_tolerance:
         lastAppliedFrame[light]["xy"] = color
         return 2
-    if lastAppliedFrame[light]["xy"][1] + cieTolerance < color[1] or color[1] < lastAppliedFrame[light]["xy"][1] - cieTolerance:
+    if lastAppliedFrame[light]["xy"][1] + color_tolerance < color[1] or color[1] < lastAppliedFrame[light]["xy"][1] - color_tolerance:
         lastAppliedFrame[light]["xy"] = color
         return 2
-    if lastAppliedFrame[light]["bri"] + briTolerange < brightness or brightness < lastAppliedFrame[light]["bri"] - briTolerange:
+    if lastAppliedFrame[light]["bri"] + bri_tolerance < brightness or brightness < lastAppliedFrame[light]["bri"] - bri_tolerance:
         lastAppliedFrame[light]["bri"] = brightness
         return 1
     return 0
@@ -249,12 +253,12 @@ def entertainmentService(group, user):
                             current_time = time.time()
                             light_id = light.id_v1
                             
-                            # Skip if updated less than 100ms ago (max 10 updates/second per light)
-                            if light_id in ha_last_update and (current_time - ha_last_update[light_id]) < 0.1:
+                            # Skip if updated less than 200ms ago (max 5 updates/second for ZHA)
+                            if light_id in ha_last_update and (current_time - ha_last_update[light_id]) < 0.2:
                                 continue
                                 
-                            # Only update if significant change
-                            operation = skipSimilarFrames(light.id_v1, light.state["xy"], light.state["bri"])
+                            # Only update if significant change (use HA-specific tolerances)
+                            operation = skipSimilarFrames(light.id_v1, light.state["xy"], light.state["bri"], is_ha_light=True)
                             if operation > 0:
                                 ha_last_update[light_id] = current_time
                                 haLights.append({
