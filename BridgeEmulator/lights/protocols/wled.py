@@ -105,33 +105,68 @@ def discover(detectedLights, device_ips):
                                    })
             else:
                 # Either: single segment, only segment 0, or segments disabled - treat as one light
-                # Always use segment 0 which is the entire strip
+                # Since segment 0 doesn't work, we'll create a single light that controls ALL individual segments
                 modelid = "LCX002"  # Default gradient strip model
-                segment = x.segments[0] if x.segments else {}
-                seg_start = segment.get("start", 0)
-                seg_stop = segment.get("stop", x.ledCount)
-                seg_len = segment.get("len", x.ledCount)
                 
                 if not use_segments and x.segmentCount > 1:
-                    logging.info(f"<WLED> Segments disabled - using segment 0 (entire strip) as single light")
-                
-                detectedLights.append({"protocol": "wled",
-                               "name": x.name,
-                               "modelid": modelid,
-                               "protocol_cfg": {
-                                   "ip": x.ip,
-                                   "ledCount": seg_len,
-                                   "mdns_name": device[1],
-                                   "mac": x.mac,
-                                   "segment_id": 0,
-                                   "segment_start": seg_start,
-                                   "segment_stop": seg_stop,
-                                   "total_segments": 1,
-                                   "udp_port": x.udpPort,
-                                   "wled_name": x.name,
-                                   "points_capable": 5  # Fixed gradient points for manual interpolation
-                               }
-                               })
+                    logging.info(f"<WLED> Segments disabled - creating single light that controls all individual segments")
+                    
+                    # Collect all non-zero segments to control as one unit
+                    individual_segments = []
+                    total_leds = 0
+                    for seg_idx, segment in enumerate(x.segments):
+                        if seg_idx == 0:  # Skip segment 0 since it doesn't work
+                            continue
+                        seg_len = segment.get("len", 0)
+                        if seg_len > 0:
+                            individual_segments.append({
+                                "id": seg_idx,
+                                "start": segment.get("start", 0),
+                                "stop": segment.get("stop", 0),
+                                "len": seg_len
+                            })
+                            total_leds += seg_len
+                    
+                    detectedLights.append({"protocol": "wled",
+                                   "name": x.name,
+                                   "modelid": modelid,
+                                   "protocol_cfg": {
+                                       "ip": x.ip,
+                                       "ledCount": total_leds,  # Total LEDs across all segments
+                                       "mdns_name": device[1],
+                                       "mac": x.mac,
+                                       "segment_id": "all",  # Special flag to indicate we control all segments
+                                       "individual_segments": individual_segments,  # List of segments to control
+                                       "total_segments": len(individual_segments),
+                                       "udp_port": x.udpPort,
+                                       "wled_name": x.name,
+                                       "points_capable": 5  # Fixed gradient points for manual interpolation
+                                   }
+                                   })
+                else:
+                    # Single segment device - use segment 0
+                    segment = x.segments[0] if x.segments else {}
+                    seg_start = segment.get("start", 0)
+                    seg_stop = segment.get("stop", x.ledCount)
+                    seg_len = segment.get("len", x.ledCount)
+                    
+                    detectedLights.append({"protocol": "wled",
+                                   "name": x.name,
+                                   "modelid": modelid,
+                                   "protocol_cfg": {
+                                       "ip": x.ip,
+                                       "ledCount": seg_len,
+                                       "mdns_name": device[1],
+                                       "mac": x.mac,
+                                       "segment_id": 0,
+                                       "segment_start": seg_start,
+                                       "segment_stop": seg_stop,
+                                       "total_segments": 1,
+                                       "udp_port": x.udpPort,
+                                       "wled_name": x.name,
+                                       "points_capable": 5  # Fixed gradient points for manual interpolation
+                                   }
+                                   })
         except Exception as e:
             logging.error(f"<WLED> Error processing device {device}: {e}")
             continue
@@ -163,79 +198,175 @@ def set_light(light, data):
 def send_gradient_to_segment(c, light, data):
     """Send gradient data to a specific WLED segment with linear interpolation"""
     segment_id = light.protocol_cfg.get('segment_id', 0)
-    led_count = light.protocol_cfg.get('ledCount', 30)
-    segment_start = light.protocol_cfg.get('segment_start', 0)
-    
     gradient_points = data.get("gradient", {}).get("points", [])
     
-    if gradient_points and len(gradient_points) >= 2:
-        # Linear interpolation across all LEDs in this segment
-        colors = []
-        for led_idx in range(led_count):
-            # Calculate position (0.0 to 1.0) of this LED within the segment
-            position = led_idx / max(1, led_count - 1)
-            
-            # Find which two gradient points we're between
-            segment_pos = position * (len(gradient_points) - 1)
-            lower_idx = int(segment_pos)
-            upper_idx = min(lower_idx + 1, len(gradient_points) - 1)
-            blend_factor = segment_pos - lower_idx
-            
-            # Get colors from gradient points
-            lower_point = gradient_points[lower_idx]
-            upper_point = gradient_points[upper_idx]
-            
-            lower_xy = lower_point.get("color", {}).get("xy", {})
-            upper_xy = upper_point.get("color", {}).get("xy", {})
-            
-            lower_color = convert_xy(lower_xy.get("x", 0.5), lower_xy.get("y", 0.5), 255)
-            upper_color = convert_xy(upper_xy.get("x", 0.5), upper_xy.get("y", 0.5), 255)
-            
-            # Linear interpolation between colors
-            r = int(lower_color[0] + (upper_color[0] - lower_color[0]) * blend_factor)
-            g = int(lower_color[1] + (upper_color[1] - lower_color[1]) * blend_factor)
-            b = int(lower_color[2] + (upper_color[2] - lower_color[2]) * blend_factor)
-            
-            colors.append([r, g, b])
+    if segment_id == "all":
+        # Special case: distribute gradient across all individual segments
+        individual_segments = light.protocol_cfg.get('individual_segments', [])
+        logging.info(f"<WLED> Single mode gradient - distributing across {len(individual_segments)} segments")
         
-        # Send via UDP for smooth gradient
-        if hasattr(c, 'udpPort') and c.udpPort:
-            send_udp_gradient(c.ip, c.udpPort, segment_start, colors, led_count)
+        if gradient_points and len(gradient_points) >= 2:
+            # Calculate gradient colors for each individual segment
+            for seg_info in individual_segments:
+                seg_id = seg_info["id"]
+                seg_start = seg_info["start"]
+                seg_len = seg_info["len"]
+                
+                # Calculate this segment's position in the overall strip (0.0 to 1.0)
+                total_leds = light.protocol_cfg.get('ledCount', 100)
+                segment_position_start = seg_start / total_leds
+                segment_position_end = (seg_start + seg_len) / total_leds
+                
+                # Interpolate colors for this specific segment
+                colors = []
+                for led_idx in range(seg_len):
+                    # Position within the entire strip
+                    led_position = segment_position_start + (led_idx / seg_len) * (segment_position_end - segment_position_start)
+                    
+                    # Find gradient points to interpolate between
+                    scaled_pos = led_position * (len(gradient_points) - 1)
+                    lower_idx = int(scaled_pos)
+                    upper_idx = min(lower_idx + 1, len(gradient_points) - 1)
+                    blend_factor = scaled_pos - lower_idx
+                    
+                    # Get colors from gradient points
+                    lower_point = gradient_points[lower_idx]
+                    upper_point = gradient_points[upper_idx]
+                    
+                    lower_xy = lower_point.get("color", {}).get("xy", {})
+                    upper_xy = upper_point.get("color", {}).get("xy", {})
+                    
+                    lower_color = convert_xy(lower_xy.get("x", 0.5), lower_xy.get("y", 0.5), 255)
+                    upper_color = convert_xy(upper_xy.get("x", 0.5), upper_xy.get("y", 0.5), 255)
+                    
+                    # Linear interpolation between colors
+                    r = int(lower_color[0] + (upper_color[0] - lower_color[0]) * blend_factor)
+                    g = int(lower_color[1] + (upper_color[1] - lower_color[1]) * blend_factor)
+                    b = int(lower_color[2] + (upper_color[2] - lower_color[2]) * blend_factor)
+                    
+                    colors.append([r, g, b])
+                
+                # Send UDP gradient to this specific segment
+                send_udp_gradient(c.ip, c.udpPort, seg_start, colors, seg_len)
+        else:
+            # Fallback to single color across all segments
+            send_segment_data(c, light, data)
     else:
-        # Fallback to single color if not enough gradient points
-        send_segment_data(c, light, data)
+        # Normal case: single segment gradient
+        led_count = light.protocol_cfg.get('ledCount', 30)
+        segment_start = light.protocol_cfg.get('segment_start', 0)
+        
+        if gradient_points and len(gradient_points) >= 2:
+            # Linear interpolation across all LEDs in this segment
+            colors = []
+            for led_idx in range(led_count):
+                # Calculate position (0.0 to 1.0) of this LED within the segment
+                position = led_idx / max(1, led_count - 1)
+                
+                # Find which two gradient points we're between
+                segment_pos = position * (len(gradient_points) - 1)
+                lower_idx = int(segment_pos)
+                upper_idx = min(lower_idx + 1, len(gradient_points) - 1)
+                blend_factor = segment_pos - lower_idx
+                
+                # Get colors from gradient points
+                lower_point = gradient_points[lower_idx]
+                upper_point = gradient_points[upper_idx]
+                
+                lower_xy = lower_point.get("color", {}).get("xy", {})
+                upper_xy = upper_point.get("color", {}).get("xy", {})
+                
+                lower_color = convert_xy(lower_xy.get("x", 0.5), lower_xy.get("y", 0.5), 255)
+                upper_color = convert_xy(upper_xy.get("x", 0.5), upper_xy.get("y", 0.5), 255)
+                
+                # Linear interpolation between colors
+                r = int(lower_color[0] + (upper_color[0] - lower_color[0]) * blend_factor)
+                g = int(lower_color[1] + (upper_color[1] - lower_color[1]) * blend_factor)
+                b = int(lower_color[2] + (upper_color[2] - lower_color[2]) * blend_factor)
+                
+                colors.append([r, g, b])
+            
+            # Send via UDP for smooth gradient
+            if hasattr(c, 'udpPort') and c.udpPort:
+                send_udp_gradient(c.ip, c.udpPort, segment_start, colors, led_count)
+        else:
+            # Fallback to single color if not enough gradient points
+            send_segment_data(c, light, data)
 
 
 def send_segment_data(c, light, data):
-    """Send data to a specific WLED segment"""
+    """Send data to a specific WLED segment or all segments"""
     segment_id = light.protocol_cfg.get('segment_id', 0)
     
-    seg = {
-        "id": segment_id,
-        "on": True
-    }
+    logging.info(f"<WLED> Sending segment data to {c.ip} segment {segment_id}: {data}")
     
-    for k, v in data.items():
-        if k == "on":
-            seg["on"] = v
-        elif k == "bri":
-            seg["bri"] = v + 1
-        elif k == "ct":
-            kelvin = round(translateRange(v, 153, 500, 6500, 2000))
-            color = kelvinToRgb(kelvin)
-            seg["col"] = [[color[0], color[1], color[2]]]
-        elif k == "xy":
-            color = convert_xy(v[0], v[1], 255)
-            seg["col"] = [[color[0], color[1], color[2]]]
-        elif k == "alert" and v != "none":
-            # Flash this segment
-            c.setBriSeg(0, segment_id)
-            sleep(0.6)
-            c.setBriSeg(data.get("bri", 254), segment_id)
-            return
-    
-    state = {"seg": [seg]}
-    c.sendJson(state)
+    if segment_id == "all":
+        # Special case: send same data to all individual segments
+        individual_segments = light.protocol_cfg.get('individual_segments', [])
+        logging.info(f"<WLED> Single mode - sending to all {len(individual_segments)} segments")
+        
+        segments = []
+        for seg_info in individual_segments:
+            seg = {
+                "id": seg_info["id"],
+                "on": True
+            }
+            
+            for k, v in data.items():
+                if k == "on":
+                    seg["on"] = v
+                elif k == "bri":
+                    seg["bri"] = v + 1
+                elif k == "ct":
+                    kelvin = round(translateRange(v, 153, 500, 6500, 2000))
+                    color = kelvinToRgb(kelvin)
+                    seg["col"] = [[color[0], color[1], color[2]]]
+                elif k == "xy":
+                    color = convert_xy(v[0], v[1], 255)
+                    seg["col"] = [[color[0], color[1], color[2]]]
+            
+            segments.append(seg)
+        
+        state = {"seg": segments}
+        logging.info(f"<WLED> Sending JSON state to all segments: {state}")
+        result = c.sendJson(state)
+        if result:
+            logging.info(f"<WLED> Successfully sent to all segments on {c.ip}")
+        else:
+            logging.error(f"<WLED> Failed to send to all segments on {c.ip}")
+    else:
+        # Normal case: send to specific segment
+        seg = {
+            "id": segment_id,
+            "on": True
+        }
+        
+        for k, v in data.items():
+            if k == "on":
+                seg["on"] = v
+            elif k == "bri":
+                seg["bri"] = v + 1
+            elif k == "ct":
+                kelvin = round(translateRange(v, 153, 500, 6500, 2000))
+                color = kelvinToRgb(kelvin)
+                seg["col"] = [[color[0], color[1], color[2]]]
+            elif k == "xy":
+                color = convert_xy(v[0], v[1], 255)
+                seg["col"] = [[color[0], color[1], color[2]]]
+            elif k == "alert" and v != "none":
+                # Flash this segment
+                c.setBriSeg(0, segment_id)
+                sleep(0.6)
+                c.setBriSeg(data.get("bri", 254), segment_id)
+                return
+        
+        state = {"seg": [seg]}
+        logging.info(f"<WLED> Sending JSON state: {state}")
+        result = c.sendJson(state)
+        if result:
+            logging.info(f"<WLED> Successfully sent to {c.ip}")
+        else:
+            logging.error(f"<WLED> Failed to send to {c.ip}")
 
 def send_udp_gradient(ip, port, segment_start, colors, led_count):
     """Send gradient colors via UDP using DRGB protocol for specific segment position"""
