@@ -101,6 +101,7 @@ def entertainmentService(group, user):
     frameID = 1
     initMatchBytes = 0
     host_ip = bridgeConfig["config"]["ipaddress"]
+    wledLights = {}  # Persistent WLED state across frames
     p.stdout.read(1) # read one byte so the init function will correctly detect the frameBites
     try:
         while bridgeConfig["groups"][group.id_v1].stream["active"]:
@@ -125,7 +126,9 @@ def entertainmentService(group, user):
                 nativeLights = {}
                 esphomeLights = {}
                 mqttLights = []
-                wledLights = {}
+                # Don't reset wledLights completely, just clear gradient points
+                for ip in list(wledLights.keys()):
+                    wledLights[ip]["gradient_points"] = []
                 haLights = []  # Batch Home Assistant lights
                 non_UDP_lights = []
                 if data[:9].decode('utf-8') == "HueStream":
@@ -252,17 +255,17 @@ def entertainmentService(group, user):
                                 if light.modelid in ["LCX001", "LCX002", "LCX003", "915005987201", "LCX004"]:
                                     # For gradient strips, collect gradient points
                                     if gradient_segment_id is not None:
-                                        # Store this as a gradient point
+                                        # Store this as a gradient point from device type 1
                                         wledLights[light.protocol_cfg["ip"]]["gradient_points"].append({
                                             "id": gradient_segment_id,
                                             "color": [r, g, b]
                                         })
                                     else:
-                                        # No specific segment ID, this is the base color
-                                        wledLights[light.protocol_cfg["ip"]]["gradient_points"].append({
+                                        # Device type 0 - single color, clear any existing gradient points
+                                        wledLights[light.protocol_cfg["ip"]]["gradient_points"] = [{
                                             "id": 0,
                                             "color": [r, g, b]
-                                        })
+                                        }]
                                 else:
                                     # Non-gradient lights - single color for all
                                     wledLights[light.protocol_cfg["ip"]]["gradient_points"] = [{
@@ -344,15 +347,24 @@ def entertainmentService(group, user):
                             current_colors = []
                             
                             if gradient_points:
+                                # Deduplicate gradient points (sometimes we get duplicates)
+                                unique_points = []
+                                seen_ids = set()
+                                for point in gradient_points:
+                                    if point["id"] not in seen_ids:
+                                        unique_points.append(point)
+                                        seen_ids.add(point["id"])
+                                gradient_points = unique_points
+                                
                                 # Sort gradient points by ID for proper ordering
                                 gradient_points.sort(key=lambda x: x["id"])
                                 
                                 if len(gradient_points) == 1:
-                                    # Single color for all LEDs
+                                    # Single color for all LEDs - NO GRADIENT
                                     color = gradient_points[0]["color"]
                                     for led in range(ledCount):
                                         current_colors.append([color[0], color[1], color[2]])
-                                else:
+                                elif len(gradient_points) > 1:
                                     # Linear smooth interpolation between gradient points
                                     for led in range(ledCount):
                                         # Calculate position in gradient (0.0 to 1.0)
@@ -363,19 +375,24 @@ def entertainmentService(group, user):
                                         lower_idx = int(scaled_pos)
                                         upper_idx = min(lower_idx + 1, len(gradient_points) - 1)
                                         
-                                        # Calculate interpolation factor
-                                        factor = scaled_pos - lower_idx
-                                        
-                                        # Get colors to interpolate between
-                                        lower_color = gradient_points[lower_idx]["color"]
-                                        upper_color = gradient_points[upper_idx]["color"]
-                                        
-                                        # Linear interpolation for this specific LED
-                                        r = int(lower_color[0] + (upper_color[0] - lower_color[0]) * factor)
-                                        g = int(lower_color[1] + (upper_color[1] - lower_color[1]) * factor)
-                                        b = int(lower_color[2] + (upper_color[2] - lower_color[2]) * factor)
-                                        
-                                        current_colors.append([r, g, b])
+                                        if lower_idx == upper_idx:
+                                            # Same index, use the color directly
+                                            color = gradient_points[lower_idx]["color"]
+                                            current_colors.append([color[0], color[1], color[2]])
+                                        else:
+                                            # Calculate interpolation factor
+                                            factor = scaled_pos - lower_idx
+                                            
+                                            # Get colors to interpolate between
+                                            lower_color = gradient_points[lower_idx]["color"]
+                                            upper_color = gradient_points[upper_idx]["color"]
+                                            
+                                            # Linear interpolation for this specific LED
+                                            r = int(lower_color[0] + (upper_color[0] - lower_color[0]) * factor)
+                                            g = int(lower_color[1] + (upper_color[1] - lower_color[1]) * factor)
+                                            b = int(lower_color[2] + (upper_color[2] - lower_color[2]) * factor)
+                                            
+                                            current_colors.append([r, g, b])
                             else:
                                 # No gradient points, apply decay to previous colors
                                 if previous_colors:
@@ -416,8 +433,6 @@ def entertainmentService(group, user):
                             
                             # Store current colors for next frame
                             wledLights[ip]["previous_colors"] = current_colors
-                            # Clear gradient points for next frame
-                            wledLights[ip]["gradient_points"] = []
                             
                             # Send optimized packet with all LED values
                             if ip not in udp_socket_pool:
