@@ -471,10 +471,10 @@ class Light():
                     # for gradient lights
                     gradientIndex = index
                     for x in range(self.protocol_cfg["points_capable"]):
+                        if gradientIndex >= len(palette["color"]):
+                            gradientIndex = 0
                         points.append(palette["color"][gradientIndex])
                         gradientIndex += 1
-                        if gradientIndex == len(palette["color"]):
-                            gradientIndex = 0
                     self.setV2State(
                         {"gradient": {"points": points}, "transitiontime": transition})
                 else:
