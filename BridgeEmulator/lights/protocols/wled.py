@@ -99,7 +99,8 @@ def discover(detectedLights, device_ips):
                                        "segment_stop": seg_stop,  # Ending LED index
                                        "total_segments": x.segmentCount,
                                        "udp_port": x.udpPort,
-                                       "wled_name": x.name  # Original WLED device name
+                                       "wled_name": x.name,  # Original WLED device name
+                                       "points_capable": seg_len  # Number of gradient points this light supports
                                    }
                                    })
             else:
@@ -127,7 +128,8 @@ def discover(detectedLights, device_ips):
                                    "segment_stop": seg_stop,
                                    "total_segments": 1,
                                    "udp_port": x.udpPort,
-                                   "wled_name": x.name
+                                   "wled_name": x.name,
+                                   "points_capable": seg_len  # Number of gradient points this light supports
                                }
                                })
         except Exception as e:
