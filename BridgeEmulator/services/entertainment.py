@@ -321,51 +321,47 @@ def entertainmentService(group, user):
                             auth = {'username':bridgeConfig["config"]["mqtt"]["mqttUser"], 'password':bridgeConfig["config"]["mqtt"]["mqttPassword"]}
                         publish.multiple(mqttLights, hostname=bridgeConfig["config"]["mqtt"]["mqttServer"], port=bridgeConfig["config"]["mqtt"]["mqttPort"], auth=auth)
                     if len(wledLights) != 0:
-                        # Use WARLS (mode 1) - same as Hyperion/HyperHDR
+                        # Use NOTIFIER_CALL mode for best performance
                         for ip in wledLights.keys():
                             wled_data = wledLights[ip]
                             segments = wled_data.get("segments", [])
                             colors = wled_data.get("colors", {})
                             udp_port = wled_data.get("udp_port", 21324)
                             
-                            if segments and colors:
-                                # Fill in missing colors by interpolation
-                                if len(colors) < len(segments):
-                                    color_keys = sorted(colors.keys())
-                                    for seg_idx in range(len(segments)):
-                                        if seg_idx not in colors:
-                                            if color_keys:  # Only if we have at least one color
-                                                if seg_idx < color_keys[0]:
-                                                    colors[seg_idx] = colors[color_keys[0]]
-                                                elif seg_idx > color_keys[-1]:
-                                                    colors[seg_idx] = colors[color_keys[-1]]
-                                                else:
-                                                    # Interpolate between colors
-                                                    for i in range(len(color_keys) - 1):
-                                                        if color_keys[i] < seg_idx < color_keys[i+1]:
-                                                            c1 = colors[color_keys[i]]
-                                                            c2 = colors[color_keys[i+1]]
-                                                            ratio = (seg_idx - color_keys[i]) / (color_keys[i+1] - color_keys[i])
-                                                            colors[seg_idx] = [
-                                                                int(c1[0] + (c2[0] - c1[0]) * ratio),
-                                                                int(c1[1] + (c2[1] - c1[1]) * ratio),
-                                                                int(c1[2] + (c2[2] - c1[2]) * ratio)
-                                                            ]
-                                                            break
+                            if colors:  # Only send if we have color data
+                                # Use DRGB mode for targeted updates - much faster
+                                # Format: [2][timeout][index_high][index_low][R][G][B]...
+                                udpdata = bytearray([2, 1])  # DRGB mode, 1 second timeout
                                 
-                                # Build WARLS packet exactly like Hyperion does
-                                # [1][timeout][R][G][B][R][G][B]... for all LEDs
-                                udpdata = bytearray([1, 2])  # WARLS mode, 2 second timeout
+                                # Only send the segments we have colors for
+                                for seg_idx in sorted(colors.keys()):
+                                    if seg_idx < len(segments):
+                                        segment = segments[seg_idx]
+                                        seg_color = colors[seg_idx]
+                                        
+                                        # For gradient effect, set color at key points in the segment
+                                        # WLED will interpolate between them
+                                        segment_start = segment["start"]
+                                        segment_len = segment["len"]
+                                        
+                                        if segment_len > 0:
+                                            # Set start of segment
+                                            udpdata.extend(segment_start.to_bytes(2, 'big'))
+                                            udpdata.extend(seg_color)
+                                            
+                                            # Set middle of segment for better gradient
+                                            if segment_len > 10:
+                                                mid_point = segment_start + segment_len // 2
+                                                udpdata.extend(mid_point.to_bytes(2, 'big'))
+                                                udpdata.extend(seg_color)
+                                            
+                                            # Set end of segment
+                                            end_point = segment_start + segment_len - 1
+                                            if end_point != segment_start:
+                                                udpdata.extend(end_point.to_bytes(2, 'big'))
+                                                udpdata.extend(seg_color)
                                 
-                                # Add RGB for each LED based on its segment
-                                for seg_idx, segment in enumerate(segments):
-                                    seg_color = colors.get(seg_idx, [0, 0, 0])
-                                    # Add this segment's color for all its LEDs
-                                    led_data = bytes(seg_color) * segment["len"]
-                                    udpdata.extend(led_data)
-                                
-                                # Send UDP packet (WARLS has 490 LED limit per packet)
-                                # If more than 490 LEDs, would need multiple packets
+                                # Send compact packet - much smaller and faster
                                 if ip not in udp_socket_pool:
                                     udp_socket_pool[ip] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                                 udp_socket_pool[ip].sendto(bytes(udpdata), (ip.split(":")[0], udp_port))
