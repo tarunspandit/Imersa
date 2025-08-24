@@ -321,36 +321,26 @@ def entertainmentService(group, user):
                             auth = {'username':bridgeConfig["config"]["mqtt"]["mqttUser"], 'password':bridgeConfig["config"]["mqtt"]["mqttPassword"]}
                         publish.multiple(mqttLights, hostname=bridgeConfig["config"]["mqtt"]["mqttServer"], port=bridgeConfig["config"]["mqtt"]["mqttPort"], auth=auth)
                     if len(wledLights) != 0:
-                        wled_udpmode = 2 #DRGB mode - allows individual LED control
-                        wled_secstowait = 2
+                        # Use WLED's WARLS protocol for better performance
                         for ip in wledLights.keys():
                             wled_data = wledLights[ip]
                             segments = wled_data.get("segments", [])
                             colors = wled_data.get("colors", {})
                             udp_port = wled_data.get("udp_port", 21324)
                             
-                            if segments:
-                                # Build complete UDP packet with all segment data
-                                udpdata = bytes([wled_udpmode, wled_secstowait])
-                                
-                                # For gradient strips, interpolate colors across all segments
+                            if segments and colors:
+                                # Interpolate missing colors
                                 if len(colors) > 0 and len(colors) < len(segments):
-                                    # We have some colors but not for all segments - interpolate
                                     color_keys = sorted(colors.keys())
                                     for seg_idx in range(len(segments)):
                                         if seg_idx not in colors:
-                                            # Find nearest colored segments and interpolate
                                             if seg_idx < color_keys[0]:
-                                                # Before first color, use first color
                                                 colors[seg_idx] = colors[color_keys[0]]
                                             elif seg_idx > color_keys[-1]:
-                                                # After last color, use last color
                                                 colors[seg_idx] = colors[color_keys[-1]]
                                             else:
-                                                # Between two colors, interpolate
                                                 for i in range(len(color_keys) - 1):
                                                     if color_keys[i] < seg_idx < color_keys[i+1]:
-                                                        # Linear interpolation between two colors
                                                         c1 = colors[color_keys[i]]
                                                         c2 = colors[color_keys[i+1]]
                                                         ratio = (seg_idx - color_keys[i]) / (color_keys[i+1] - color_keys[i])
@@ -361,21 +351,20 @@ def entertainmentService(group, user):
                                                         ]
                                                         break
                                 
-                                # For each segment, add its LED data
+                                # Build WARLS packet: 
+                                # Byte 0: Protocol (1 for WARLS)
+                                # Byte 1: Timeout in seconds
+                                # Rest: RGB data for all LEDs in order
+                                udpdata = bytes([1, 2])  # WARLS protocol, 2 second timeout
+                                
+                                # Add RGB data for each LED based on its segment
                                 for seg_idx, segment in enumerate(segments):
-                                    # Get color for this segment
-                                    if seg_idx in colors:
-                                        seg_color = colors[seg_idx]
-                                    else:
-                                        seg_color = [255, 255, 255]  # White fallback (shouldn't happen now)
-                                    
-                                    # Add all LEDs in this segment with the segment's color
-                                    for led_idx in range(segment["start"], segment["start"] + segment["len"]):
-                                        # DRGB format: index (2 bytes) + RGB (3 bytes)
-                                        udpdata += led_idx.to_bytes(2, "big")
+                                    seg_color = colors.get(seg_idx, [0, 0, 0])
+                                    # Repeat segment color for all LEDs in that segment
+                                    for _ in range(segment["len"]):
                                         udpdata += bytes(seg_color)
                                 
-                                # Send complete packet with all segment data
+                                # Send UDP packet
                                 if ip not in udp_socket_pool:
                                     udp_socket_pool[ip] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                                 udp_socket_pool[ip].sendto(udpdata, (ip.split(":")[0], udp_port))
