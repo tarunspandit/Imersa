@@ -25,7 +25,7 @@ BridgeEmulator/cert.pem
 *.webp
 BridgeEmulator/flaskUI/templates/index.html
 
-
+ha_core_zha
 
 # Claude Flow generated files
 .claude/settings.local.json
