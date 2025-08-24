@@ -252,17 +252,14 @@ def entertainmentService(group, user):
                                         # This is a gradient strip with specific segment addressing
                                         if gradient_segment_id < total_segments:
                                             wledLights[light.protocol_cfg["ip"]]["colors"][gradient_segment_id] = [r, g, b]
-                                            logging.info(f"WLED gradient: segment {gradient_segment_id} = RGB({r},{g},{b})")
                                         else:
                                             # Segment ID out of range, apply to all
                                             for seg_id in range(total_segments):
                                                 wledLights[light.protocol_cfg["ip"]]["colors"][seg_id] = [r, g, b]
-                                            logging.info(f"WLED gradient: all segments (id {gradient_segment_id} >= {total_segments}) = RGB({r},{g},{b})")
                                     else:
                                         # No specific segment ID, apply to all segments
                                         for seg_id in range(total_segments):
                                             wledLights[light.protocol_cfg["ip"]]["colors"][seg_id] = [r, g, b]
-                                        logging.info(f"WLED gradient: all segments (no ID) = RGB({r},{g},{b})")
                                 else:
                                     # Non-gradient lights - apply to all segments
                                     for seg_id in range(total_segments):
@@ -336,16 +333,41 @@ def entertainmentService(group, user):
                                 # Build complete UDP packet with all segment data
                                 udpdata = bytes([wled_udpmode, wled_secstowait])
                                 
-                                logging.info(f"WLED UDP: IP={ip}, segments={len(segments)}, colors={colors}")
+                                # For gradient strips, interpolate colors across all segments
+                                if len(colors) > 0 and len(colors) < len(segments):
+                                    # We have some colors but not for all segments - interpolate
+                                    color_keys = sorted(colors.keys())
+                                    for seg_idx in range(len(segments)):
+                                        if seg_idx not in colors:
+                                            # Find nearest colored segments and interpolate
+                                            if seg_idx < color_keys[0]:
+                                                # Before first color, use first color
+                                                colors[seg_idx] = colors[color_keys[0]]
+                                            elif seg_idx > color_keys[-1]:
+                                                # After last color, use last color
+                                                colors[seg_idx] = colors[color_keys[-1]]
+                                            else:
+                                                # Between two colors, interpolate
+                                                for i in range(len(color_keys) - 1):
+                                                    if color_keys[i] < seg_idx < color_keys[i+1]:
+                                                        # Linear interpolation between two colors
+                                                        c1 = colors[color_keys[i]]
+                                                        c2 = colors[color_keys[i+1]]
+                                                        ratio = (seg_idx - color_keys[i]) / (color_keys[i+1] - color_keys[i])
+                                                        colors[seg_idx] = [
+                                                            int(c1[0] + (c2[0] - c1[0]) * ratio),
+                                                            int(c1[1] + (c2[1] - c1[1]) * ratio),
+                                                            int(c1[2] + (c2[2] - c1[2]) * ratio)
+                                                        ]
+                                                        break
                                 
                                 # For each segment, add its LED data
                                 for seg_idx, segment in enumerate(segments):
-                                    # Get color for this segment (use white if not set)
+                                    # Get color for this segment
                                     if seg_idx in colors:
                                         seg_color = colors[seg_idx]
                                     else:
-                                        seg_color = [255, 255, 255]  # White fallback
-                                        logging.info(f"WLED UDP: segment {seg_idx} using white fallback")
+                                        seg_color = [255, 255, 255]  # White fallback (shouldn't happen now)
                                     
                                     # Add all LEDs in this segment with the segment's color
                                     for led_idx in range(segment["start"], segment["start"] + segment["len"]):
