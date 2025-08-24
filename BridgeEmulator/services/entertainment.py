@@ -238,59 +238,33 @@ def entertainmentService(group, user):
                                 c.command("set_rgb", [(r * 65536) + (g * 256) + b, "smooth", 200])
                                 #c.command("set_rgb", [(r * 65536) + (g * 256) + b, "sudden", 0])
                         elif proto == "wled":
-                            if light.protocol_cfg["ip"] not in wledLights:
-                                wledLights[light.protocol_cfg["ip"]] = {
-                                    "segments": light.protocol_cfg.get("segments", []),
-                                    "segmentCount": light.protocol_cfg.get("segmentCount", 1),
-                                    "ledCount": light.protocol_cfg.get("ledCount", 100),  # Total LED count
-                                    "udp_port": light.protocol_cfg["udp_port"],
-                                    "gradient_points": [],  # Store gradient points for interpolation
-                                    "previous_colors": None,  # Store previous frame for decay
-                                    "decay_factor": 0.85  # How fast colors decay (0.85 = 15% decay per frame)
-                                }
+                            # Each WLED light now represents a single segment
+                            segment_id = light.protocol_cfg.get("segment_id", 0)
+                            segment_start = light.protocol_cfg.get("segment_start", 0)
+                            led_count = light.protocol_cfg.get("ledCount", 30)
+                            udp_port = light.protocol_cfg.get("udp_port", 21324)
                             
-                            # Handle WLED gradient strips
-                            total_segments = light.protocol_cfg.get("segmentCount", 1)
-                            
-                            if apiVersion == 1:
+                            # Send directly to this segment via UDP for immediate response
+                            try:
+                                from lights.protocols.wled import send_udp_gradient
+                                
+                                # For gradient-capable lights, interpolate gradient
                                 if light.modelid in ["LCX001", "LCX002", "LCX003", "915005987201", "LCX004"]:
-                                    # For gradient strips, collect gradient points
-                                    if gradient_segment_id is not None:
-                                        # Store this as a gradient point from device type 1
-                                        wledLights[light.protocol_cfg["ip"]]["gradient_points"].append({
-                                            "id": gradient_segment_id,
-                                            "color": [r, g, b]
-                                        })
-                                        logging.debug(f"Added gradient point: id={gradient_segment_id}, color=[{r},{g},{b}]")
+                                    if gradient_segment_id is not None and apiVersion == 1:
+                                        # Entertainment mode is sending gradient data - use it directly
+                                        colors = [[r, g, b]] * led_count
                                     else:
-                                        # Device type 0 - only replace if we don't have gradient points yet
-                                        # This prevents overwriting gradient data
-                                        if len(wledLights[light.protocol_cfg["ip"]]["gradient_points"]) == 0:
-                                            wledLights[light.protocol_cfg["ip"]]["gradient_points"] = [{
-                                                "id": -1,  # Use -1 to indicate single color mode
-                                                "color": [r, g, b]
-                                            }]
-                                            logging.debug(f"Set single color mode: color=[{r},{g},{b}]")
-                                else:
-                                    # Non-gradient lights - single color for all
-                                    wledLights[light.protocol_cfg["ip"]]["gradient_points"] = [{
-                                        "id": -1,  # Use -1 to indicate single color mode
-                                        "color": [r, g, b]
-                                    }]
-                            elif apiVersion == 2:
-                                if light.modelid in ["LCX001", "LCX002", "LCX003", "915005987201", "LCX004"]:
-                                    # For v2 API, data[i] contains the segment index
-                                    segment_id = data[i]
-                                    wledLights[light.protocol_cfg["ip"]]["gradient_points"].append({
-                                        "id": segment_id,
-                                        "color": [r, g, b]
-                                    })
+                                        # Single color for this segment
+                                        colors = [[r, g, b]] * led_count
                                 else:
                                     # Non-gradient lights: single color
-                                    wledLights[light.protocol_cfg["ip"]]["gradient_points"] = [{
-                                        "id": -1,  # Use -1 to indicate single color mode
-                                        "color": [r, g, b]
-                                    }]
+                                    colors = [[r, g, b]] * led_count
+                                
+                                # Send UDP data directly to this segment
+                                send_udp_gradient(light.protocol_cfg["ip"], udp_port, segment_start, colors, led_count)
+                                
+                            except Exception as e:
+                                logging.error(f"Error sending WLED UDP data to {light.protocol_cfg['ip']}: {e}")
                         elif proto == "hue" and int(light.protocol_cfg["id"]) in hueGroupLights:
                             hueGroupLights[int(light.protocol_cfg["id"])] = [r,g,b]
                         elif proto == "homeassistant_ws":
@@ -333,181 +307,7 @@ def entertainmentService(group, user):
                         if bridgeConfig["config"]["mqtt"]["mqttUser"] != "" and bridgeConfig["config"]["mqtt"]["mqttPassword"] != "":
                             auth = {'username':bridgeConfig["config"]["mqtt"]["mqttUser"], 'password':bridgeConfig["config"]["mqtt"]["mqttPassword"]}
                         publish.multiple(mqttLights, hostname=bridgeConfig["config"]["mqtt"]["mqttServer"], port=bridgeConfig["config"]["mqtt"]["mqttPort"], auth=auth)
-                    if len(wledLights) != 0:
-                        # Process each WLED device and its segments
-                        for ip in wledLights.keys():
-                            wled_device = wledLights[ip]
-                            udp_port = wled_device.get("udp_port", 21324)
-                            
-                            # Process each segment separately
-                            for segment_id, segment_data in wled_device.get("segments", {}).items():
-                                gradient_points = segment_data.get("gradient_points", [])
-                                ledCount = segment_data.get("ledCount", 30)
-                                previous_colors = segment_data.get("previous_colors")
-                                decay_factor = segment_data.get("decay_factor", 0.85)
-                                modelid = segment_data.get("modelid", "LCG002")
-                                
-                                # Check if this is a gradient-capable model
-                                gradient_models = ["LCX001", "LCX002", "LCX003", "LCX004", "915005987201"]
-                                is_gradient_light = modelid in gradient_models
-                            
-                            # Pre-allocate the exact size we need
-                            udpdata = bytearray(2 + ledCount * 3)  # header + RGB per LED
-                            udpdata[0] = 1  # WARLS mode
-                            udpdata[1] = 1  # 1 second timeout
-                            
-                            # Build current frame colors
-                            current_colors = []
-                            
-                            if gradient_points:
-                                # Deduplicate gradient points (sometimes we get duplicates)
-                                unique_points = []
-                                seen_ids = set()
-                                for point in gradient_points:
-                                    if point["id"] not in seen_ids:
-                                        unique_points.append(point)
-                                        seen_ids.add(point["id"])
-                                gradient_points = unique_points
-                                
-                                # Sort gradient points by ID for proper ordering
-                                gradient_points.sort(key=lambda x: x["id"])
-                                
-                                # Debug log
-                                logging.info(f"WLED gradient points count: {len(gradient_points)}, mode: {gradient_mode}")
-                                for idx, pt in enumerate(gradient_points):
-                                    logging.info(f"  Point {idx}: id={pt['id']}, color={pt['color']}")
-                                
-                                if len(gradient_points) == 1:
-                                    # Single color for all LEDs - NO GRADIENT
-                                    color = gradient_points[0]["color"]
-                                    for led in range(ledCount):
-                                        current_colors.append([color[0], color[1], color[2]])
-                                elif len(gradient_points) > 1:
-                                    if gradient_mode == "sparse":
-                                        # SPARSE MODE: Entertainment only sends a few colors (e.g., segments 2 and 3 out of 6)
-                                        # We need to create a gradient from first color to last color across entire strip
-                                        
-                                        # Get the first and last colors (ignore segment IDs for sparse mode)
-                                        first_color = gradient_points[0]["color"]
-                                        last_color = gradient_points[-1]["color"]
-                                        
-                                        # If we have middle colors, include them in the gradient
-                                        if len(gradient_points) == 2:
-                                            # Simple gradient from first to last
-                                            for led in range(ledCount):
-                                                position = led / max(1, ledCount - 1)
-                                                r = int(first_color[0] + (last_color[0] - first_color[0]) * position)
-                                                g = int(first_color[1] + (last_color[1] - first_color[1]) * position)
-                                                b = int(first_color[2] + (last_color[2] - first_color[2]) * position)
-                                                current_colors.append([r, g, b])
-                                        else:
-                                            # Multiple colors - spread them evenly across the strip
-                                            for led in range(ledCount):
-                                                position = led / max(1, ledCount - 1)
-                                                
-                                                # Map position to gradient points (evenly distributed)
-                                                scaled_pos = position * (len(gradient_points) - 1)
-                                                lower_idx = int(scaled_pos)
-                                                upper_idx = min(lower_idx + 1, len(gradient_points) - 1)
-                                                factor = scaled_pos - lower_idx
-                                                
-                                                lower_color = gradient_points[lower_idx]["color"]
-                                                upper_color = gradient_points[upper_idx]["color"]
-                                                
-                                                r = int(lower_color[0] + (upper_color[0] - lower_color[0]) * factor)
-                                                g = int(lower_color[1] + (upper_color[1] - lower_color[1]) * factor)
-                                                b = int(lower_color[2] + (upper_color[2] - lower_color[2]) * factor)
-                                                current_colors.append([r, g, b])
-                                    else:
-                                        # FULL MODE: Original implementation - use segment IDs as positions
-                                        for led in range(ledCount):
-                                            # Calculate position in gradient (0.0 to 1.0)
-                                            position = led / max(1, ledCount - 1)
-                                            
-                                            # Map position to gradient points
-                                            scaled_pos = position * (len(gradient_points) - 1)
-                                            lower_idx = int(scaled_pos)
-                                            upper_idx = min(lower_idx + 1, len(gradient_points) - 1)
-                                            
-                                            if lower_idx == upper_idx:
-                                                # Same index, use the color directly
-                                                color = gradient_points[lower_idx]["color"]
-                                                current_colors.append([color[0], color[1], color[2]])
-                                            else:
-                                                # Calculate interpolation factor
-                                                factor = scaled_pos - lower_idx
-                                                
-                                                # Get colors to interpolate between
-                                                lower_color = gradient_points[lower_idx]["color"]
-                                                upper_color = gradient_points[upper_idx]["color"]
-                                                
-                                                # Linear interpolation for this specific LED
-                                                r = int(lower_color[0] + (upper_color[0] - lower_color[0]) * factor)
-                                                g = int(lower_color[1] + (upper_color[1] - lower_color[1]) * factor)
-                                                b = int(lower_color[2] + (upper_color[2] - lower_color[2]) * factor)
-                                                
-                                                current_colors.append([r, g, b])
-                            else:
-                                # No gradient points, apply decay to previous colors
-                                if previous_colors:
-                                    # Find the average color to decay to (prevents gradient persistence)
-                                    avg_r = sum(pc[0] for pc in previous_colors) // len(previous_colors)
-                                    avg_g = sum(pc[1] for pc in previous_colors) // len(previous_colors)
-                                    avg_b = sum(pc[2] for pc in previous_colors) // len(previous_colors)
-                                    
-                                    for led in range(ledCount):
-                                        if led < len(previous_colors):
-                                            # Blend towards average color while decaying
-                                            blend_factor = 0.5  # How much to blend towards average
-                                            r = int((previous_colors[led][0] * (1 - blend_factor) + avg_r * blend_factor) * decay_factor)
-                                            g = int((previous_colors[led][1] * (1 - blend_factor) + avg_g * blend_factor) * decay_factor)
-                                            b = int((previous_colors[led][2] * (1 - blend_factor) + avg_b * blend_factor) * decay_factor)
-                                            current_colors.append([r, g, b])
-                                        else:
-                                            current_colors.append([0, 0, 0])
-                                else:
-                                    # No previous colors, all black
-                                    for led in range(ledCount):
-                                        current_colors.append([0, 0, 0])
-                            
-                            # Mix with previous colors for smooth transitions
-                            # Only mix if we have actual gradient points (not during decay)
-                            if previous_colors and gradient_points and len(gradient_points) > 0:
-                                # Check if this is a single color update (id == -1)
-                                is_single_color = len(gradient_points) == 1 and gradient_points[0]["id"] == -1
-                                
-                                if is_single_color:
-                                    # For single colors, apply stronger mixing for instant response
-                                    mix_factor = 0.9  # 90% new color
-                                else:
-                                    # For gradients, use gentler mixing
-                                    mix_factor = 0.7  # 70% new color
-                                
-                                for led in range(min(ledCount, len(previous_colors), len(current_colors))):
-                                    current_colors[led][0] = int(current_colors[led][0] * mix_factor + previous_colors[led][0] * (1 - mix_factor))
-                                    current_colors[led][1] = int(current_colors[led][1] * mix_factor + previous_colors[led][1] * (1 - mix_factor))
-                                    current_colors[led][2] = int(current_colors[led][2] * mix_factor + previous_colors[led][2] * (1 - mix_factor))
-                            
-                            # Fill UDP packet with final colors
-                            idx = 2
-                            for led in range(ledCount):
-                                if led < len(current_colors):
-                                    udpdata[idx] = max(0, min(255, current_colors[led][0]))
-                                    udpdata[idx+1] = max(0, min(255, current_colors[led][1]))
-                                    udpdata[idx+2] = max(0, min(255, current_colors[led][2]))
-                                else:
-                                    udpdata[idx] = 0
-                                    udpdata[idx+1] = 0
-                                    udpdata[idx+2] = 0
-                                idx += 3
-                            
-                            # Store current colors for next frame
-                            wledLights[ip]["previous_colors"] = current_colors
-                            
-                            # Send optimized packet with all LED values
-                            if ip not in udp_socket_pool:
-                                udp_socket_pool[ip] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                            udp_socket_pool[ip].sendto(udpdata, (ip.split(":")[0], udp_port))
+                    # WLED processing is now handled per-light above - no batch processing needed
                     if len(hueGroupLights) != 0:
                         h.send(hueGroupLights, hueGroup)
                     if len(haLights) != 0:
