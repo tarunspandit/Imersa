@@ -53,7 +53,7 @@ def discover(detectedLights, device_ips):
             logging.info("<WLED> Found device: %s with %d segments" %
                          (device[1], x.segmentCount))
             # Treat entire WLED strip as one gradient light
-            modelid = "LCX002"  # Gradient Strip
+            modelid = "LCX002"  # Default gradient strip model
             total_leds = sum(seg["len"] for seg in x.segments)
             lights.append({"protocol": "wled",
                            "name": x.name,
