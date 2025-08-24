@@ -58,7 +58,7 @@ def discover(detectedLights, device_ips):
                 # Multiple segments - create a light for each
                 for seg_idx, segment in enumerate(x.segments):
                     # Default model ID for segments - can be changed in GUI
-                    modelid = "LCG002"  # Default Hue Go model
+                    modelid = "LST002"  # Default Hue Lightstrip Plus model
                     lights.append({"protocol": "wled",
                                    "name": f"{x.name} Segment {seg_idx + 1}",
                                    "modelid": modelid,

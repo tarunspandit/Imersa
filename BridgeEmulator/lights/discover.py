@@ -201,7 +201,9 @@ def is_light_matching(lightObj: Light.Light, light: Dict) -> bool:
     if protocol in ["hue", "deconz"]:
         return lightObj.protocol_cfg["uniqueid"] == light["protocol_cfg"]["uniqueid"] and lightObj.modelid == light["modelid"]
     if protocol == "wled":
+        # For WLED, also check segment_id to allow multiple segments per device
         return (lightObj.protocol_cfg["mac"] == light["protocol_cfg"]["mac"] and
+                lightObj.protocol_cfg.get("segment_id", 0) == light["protocol_cfg"].get("segment_id", 0) and
                 lightObj.modelid == light["modelid"])
     if protocol == "homeassistant_ws":
         return lightObj.protocol_cfg["entity_id"] == light["protocol_cfg"]["entity_id"] and lightObj.modelid == light["modelid"]
