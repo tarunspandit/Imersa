@@ -240,7 +240,9 @@ def entertainmentService(group, user):
                                     "segmentCount": light.protocol_cfg.get("segmentCount", 1),
                                     "ledCount": light.protocol_cfg.get("ledCount", 100),  # Total LED count
                                     "udp_port": light.protocol_cfg["udp_port"],
-                                    "gradient_points": []  # Store gradient points for interpolation
+                                    "gradient_points": [],  # Store gradient points for interpolation
+                                    "previous_colors": None,  # Store previous frame for decay
+                                    "decay_factor": 0.85  # How fast colors decay (0.85 = 15% decay per frame)
                                 }
                             
                             # Handle WLED gradient strips
@@ -324,33 +326,32 @@ def entertainmentService(group, user):
                             auth = {'username':bridgeConfig["config"]["mqtt"]["mqttUser"], 'password':bridgeConfig["config"]["mqtt"]["mqttPassword"]}
                         publish.multiple(mqttLights, hostname=bridgeConfig["config"]["mqtt"]["mqttServer"], port=bridgeConfig["config"]["mqtt"]["mqttPort"], auth=auth)
                     if len(wledLights) != 0:
-                        # Use WARLS with per-LED linear interpolation
+                        # Use WARLS with per-LED linear interpolation and decay
                         for ip in wledLights.keys():
                             wled_data = wledLights[ip]
                             gradient_points = wled_data.get("gradient_points", [])
                             udp_port = wled_data.get("udp_port", 21324)
                             ledCount = wled_data.get("ledCount", 100)  # Get actual LED count
+                            previous_colors = wled_data.get("previous_colors")
+                            decay_factor = wled_data.get("decay_factor", 0.85)
+                            
+                            # Pre-allocate the exact size we need
+                            udpdata = bytearray(2 + ledCount * 3)  # header + RGB per LED
+                            udpdata[0] = 1  # WARLS mode
+                            udpdata[1] = 1  # 1 second timeout
+                            
+                            # Build current frame colors
+                            current_colors = []
                             
                             if gradient_points:
                                 # Sort gradient points by ID for proper ordering
                                 gradient_points.sort(key=lambda x: x["id"])
                                 
-                                # Pre-allocate the exact size we need
-                                udpdata = bytearray(2 + ledCount * 3)  # header + RGB per LED
-                                udpdata[0] = 1  # WARLS mode
-                                udpdata[1] = 1  # 1 second timeout
-                                
-                                # Linear interpolation across ALL LEDs
-                                idx = 2
-                                
                                 if len(gradient_points) == 1:
                                     # Single color for all LEDs
                                     color = gradient_points[0]["color"]
                                     for led in range(ledCount):
-                                        udpdata[idx] = color[0]
-                                        udpdata[idx+1] = color[1]
-                                        udpdata[idx+2] = color[2]
-                                        idx += 3
+                                        current_colors.append([color[0], color[1], color[2]])
                                 else:
                                     # Linear smooth interpolation between gradient points
                                     for led in range(ledCount):
@@ -374,16 +375,54 @@ def entertainmentService(group, user):
                                         g = int(lower_color[1] + (upper_color[1] - lower_color[1]) * factor)
                                         b = int(lower_color[2] + (upper_color[2] - lower_color[2]) * factor)
                                         
-                                        # Clamp values to 0-255
-                                        udpdata[idx] = max(0, min(255, r))
-                                        udpdata[idx+1] = max(0, min(255, g))
-                                        udpdata[idx+2] = max(0, min(255, b))
-                                        idx += 3
-                                
-                                # Send optimized packet with all LED values
-                                if ip not in udp_socket_pool:
-                                    udp_socket_pool[ip] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                                udp_socket_pool[ip].sendto(udpdata, (ip.split(":")[0], udp_port))
+                                        current_colors.append([r, g, b])
+                            else:
+                                # No gradient points, apply decay to previous colors
+                                if previous_colors:
+                                    for led in range(ledCount):
+                                        if led < len(previous_colors):
+                                            # Apply decay factor to previous colors
+                                            r = int(previous_colors[led][0] * decay_factor)
+                                            g = int(previous_colors[led][1] * decay_factor)
+                                            b = int(previous_colors[led][2] * decay_factor)
+                                            current_colors.append([r, g, b])
+                                        else:
+                                            current_colors.append([0, 0, 0])
+                                else:
+                                    # No previous colors, all black
+                                    for led in range(ledCount):
+                                        current_colors.append([0, 0, 0])
+                            
+                            # Mix with previous colors for smooth transitions
+                            if previous_colors and gradient_points:
+                                mix_factor = 0.7  # How much of new color vs old (0.7 = 70% new, 30% old)
+                                for led in range(min(ledCount, len(previous_colors), len(current_colors))):
+                                    current_colors[led][0] = int(current_colors[led][0] * mix_factor + previous_colors[led][0] * (1 - mix_factor))
+                                    current_colors[led][1] = int(current_colors[led][1] * mix_factor + previous_colors[led][1] * (1 - mix_factor))
+                                    current_colors[led][2] = int(current_colors[led][2] * mix_factor + previous_colors[led][2] * (1 - mix_factor))
+                            
+                            # Fill UDP packet with final colors
+                            idx = 2
+                            for led in range(ledCount):
+                                if led < len(current_colors):
+                                    udpdata[idx] = max(0, min(255, current_colors[led][0]))
+                                    udpdata[idx+1] = max(0, min(255, current_colors[led][1]))
+                                    udpdata[idx+2] = max(0, min(255, current_colors[led][2]))
+                                else:
+                                    udpdata[idx] = 0
+                                    udpdata[idx+1] = 0
+                                    udpdata[idx+2] = 0
+                                idx += 3
+                            
+                            # Store current colors for next frame
+                            wledLights[ip]["previous_colors"] = current_colors
+                            # Clear gradient points for next frame
+                            wledLights[ip]["gradient_points"] = []
+                            
+                            # Send optimized packet with all LED values
+                            if ip not in udp_socket_pool:
+                                udp_socket_pool[ip] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                            udp_socket_pool[ip].sendto(udpdata, (ip.split(":")[0], udp_port))
                     if len(hueGroupLights) != 0:
                         h.send(hueGroupLights, hueGroup)
                     if len(haLights) != 0:
