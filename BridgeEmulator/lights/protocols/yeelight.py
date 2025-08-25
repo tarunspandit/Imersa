@@ -11,7 +11,7 @@ Connections = {}
 
 
 class YeelightTCP:
-    def __init__(self, ip, port=55443, timeout=3.0):
+    def __init__(self, ip, port=55443, timeout=5.0):
         self.ip = ip
         self.port = int(port)
         self.timeout = timeout
@@ -49,7 +49,7 @@ class YeelightTCP:
                 if not b:
                     break
                 chunks += b
-                if b.endswith(b"\r\n") or b.endswith(b"\n"):
+                if b"\r\n" in chunks or b"\n" in chunks:
                     break
             self._id += 1
             # yeelight returns JSON per line

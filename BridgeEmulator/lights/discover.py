@@ -127,12 +127,11 @@ def manualAddLight(ip: str, protocol: str, config: Dict = {}) -> None:
     name = config.get("lightName", "New Light")
     if protocol == "auto":
         detectedLights = []
-        # Include yeelight IP-probe discovery in auto mode (no multicast)
-        for discover_func in [yeelight.discover, native_multi.discover, tasmota.discover, shelly.discover, esphome.discover]:
-            try:
-                discover_func(detectedLights, [ip])
-            except Exception as e:
-                logging.debug(f"Auto manual-add discover error from {discover_func.__name__}: {e}")
+        # Auto (single-IP): Prioritize Yeelight only to avoid probing other protocols/ports
+        try:
+            yeelight.discover(detectedLights, [ip])
+        except Exception as e:
+            logging.debug(f"Auto manual-add Yeelight discovery error: {e}")
         if detectedLights:
             for light in detectedLights:
                 logging.info(f"Found light {light['protocol']} {light['name']}")
@@ -153,6 +152,20 @@ def manualAddLight(ip: str, protocol: str, config: Dict = {}) -> None:
                     logging.info(f"Manual add auto: {ip} is not a Yeelight or LAN control disabled")
             except Exception as e:
                 logging.info(f"Manual add auto failed for {ip}: {e}")
+                # Optional fallback through python-yeelight lib if available
+                try:
+                    import yeelight as _yeelight
+                    b = _yeelight.Bulb(ip)
+                    props = b.get_properties()
+                    if props and ("power" in props or "bg_power" in props) and ("bright" in props or "bg_bright" in props):
+                        mdl = "LCT015" if props.get("color_mode") in ["1", "3"] else "LTW001"
+                        lname = props.get("name") if props.get("name") else f"Yeelight {ip}"
+                        logging.info(f"Found light yeelight via library {lname}")
+                        addNewLight(mdl, lname, "yeelight", {"ip": ip, "id": ip, "backlight": False, "model": props.get("model", "")})
+                    else:
+                        logging.info(f"Manual add auto (library) rejected for {ip}: not a Yeelight or LAN control disabled")
+                except Exception as ee:
+                    logging.info(f"Manual add auto library fallback failed for {ip}: {ee}")
     else:
         config["ip"] = ip
         # Enrich Yeelight config (where possible) so it works without multicast discovery
@@ -176,7 +189,25 @@ def manualAddLight(ip: str, protocol: str, config: Dict = {}) -> None:
                     name = props.get("name") if props.get("name") else f"Yeelight {ip}"
             except Exception as e:
                 logging.info(f"Manual add failed for Yeelight {ip}: {e}")
-                return
+                # Try python-yeelight as last resort
+                try:
+                    import yeelight as _yeelight
+                    b = _yeelight.Bulb(ip)
+                    props = b.get_properties()
+                    if not props or ("power" not in props and "bg_power" not in props) or ("bright" not in props and "bg_bright" not in props):
+                        logging.info(f"Manual add (library) rejected for {ip}: not a Yeelight or LAN control disabled")
+                        return
+                    mdl = "LCT015" if props.get("color_mode") in ["1", "3"] else "LTW001"
+                    if modelid == "LCT015":
+                        modelid = mdl
+                    config.setdefault("id", ip)
+                    config.setdefault("backlight", False)
+                    config.setdefault("model", props.get("model", ""))
+                    if name == "New Light":
+                        name = props.get("name") if props.get("name") else f"Yeelight {ip}"
+                except Exception as ee:
+                    logging.info(f"Manual add (library) failed for Yeelight {ip}: {ee}")
+                    return
         addNewLight(modelid, name, protocol, config)
 
 def discoveryEvent() -> None:
