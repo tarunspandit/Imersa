@@ -467,9 +467,11 @@ class Light():
         
         if is_wled_gradient:
             # For WLED gradient models, do smooth high-frequency gradient scrolling
+            logging.info(f"Starting smooth gradient animation for WLED {self.name} with modelid {self.modelid}")
             import time
             import socket
             from lights.protocols import wled
+            from functions.colors import convert_xy
             
             points_capable = self.protocol_cfg.get("points_capable", 5)
             palette_length = len(palette["color"])
@@ -477,8 +479,13 @@ class Light():
             frame_rate = 30  # 30 fps for smooth animation
             frame_duration = 1.0 / frame_rate
             last_frame_time = 0
-            gradient_offset = 0.0
-            scroll_speed = self.dynamics.get("speed", 1.0) * 0.5  # Adjust scroll speed based on dynamics speed
+            
+            # Dynamic scene speed: 1.0 = slowest, higher values = faster
+            # The speed affects how fast the gradient scrolls
+            speed_value = self.dynamics.get("speed", 1.0)
+            # Convert to pixels per second (scale so speed 1 = ~10 pixels/sec, speed 10 = ~100 pixels/sec)
+            scroll_speed = speed_value * 10.0
+            logging.info(f"Gradient animation speed: {speed_value}, scroll_speed: {scroll_speed} pixels/sec")
             
             # Get WLED connection info
             ip = self.protocol_cfg["ip"]
@@ -497,58 +504,51 @@ class Light():
             # Create UDP socket for high-frequency updates
             udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             
+            # Pre-calculate the base gradient pattern (without scrolling)
+            base_gradient = []
+            for led_idx in range(led_count):
+                # Map LED position to gradient position (0.0 to 1.0)
+                gradient_pos = led_idx / max(led_count - 1, 1)
+                
+                # Map gradient position to palette colors
+                palette_pos = gradient_pos * palette_length
+                palette_idx = int(palette_pos)
+                palette_frac = palette_pos - palette_idx
+                
+                if palette_idx >= palette_length - 1:
+                    # Use last color
+                    color = palette["color"][-1]
+                    rgb = convert_xy(color["xy"]["x"], color["xy"]["y"], current_brightness)
+                    base_gradient.append((int(rgb[0]), int(rgb[1]), int(rgb[2])))
+                else:
+                    # Interpolate between palette colors
+                    color1 = palette["color"][palette_idx]
+                    color2 = palette["color"][palette_idx + 1]
+                    
+                    rgb1 = convert_xy(color1["xy"]["x"], color1["xy"]["y"], current_brightness)
+                    rgb2 = convert_xy(color2["xy"]["x"], color2["xy"]["y"], current_brightness)
+                    
+                    r = int(rgb1[0] + (rgb2[0] - rgb1[0]) * palette_frac)
+                    g = int(rgb1[1] + (rgb2[1] - rgb1[1]) * palette_frac)
+                    b = int(rgb1[2] + (rgb2[2] - rgb1[2]) * palette_frac)
+                    
+                    base_gradient.append((r, g, b))
+            
+            frame_count = 0
             while self.dynamics["status"] == "dynamic_palette":
                 current_time = time.time()
                 
                 # Only send frame if enough time has passed
                 if current_time - last_frame_time >= frame_duration:
-                    # Calculate gradient position based on time for smooth scrolling
-                    gradient_offset = (current_time - start_time) * scroll_speed
+                    # Calculate how many pixels to shift based on elapsed time and speed
+                    elapsed_time = current_time - start_time
+                    pixel_offset = int(elapsed_time * scroll_speed) % led_count
                     
-                    # Create gradient points with smooth offset
-                    points = []
-                    for x in range(points_capable):
-                        # Use floating point offset for smoother animation
-                        palette_index = int((gradient_offset + x * (palette_length / points_capable))) % palette_length
-                        points.append(palette["color"][palette_index])
+                    # Create scrolled gradient by rotating the base gradient
+                    led_colors = base_gradient[pixel_offset:] + base_gradient[:pixel_offset]
                     
-                    # Convert gradient to LED colors for smooth animation
-                    from functions.colors import convert_xy
-                    led_colors = []
-                    
-                    # Calculate colors for each LED based on gradient
-                    for led_idx in range(led_count):
-                        # Map LED position to gradient position (0.0 to 1.0)
-                        gradient_pos = led_idx / max(led_count - 1, 1)
-                        
-                        # Find which two gradient points this LED falls between
-                        segment_size = 1.0 / (points_capable - 1) if points_capable > 1 else 1.0
-                        segment_idx = min(int(gradient_pos / segment_size), points_capable - 2) if points_capable > 1 else 0
-                        segment_offset = (gradient_pos % segment_size) / segment_size if segment_size > 0 else 0
-                        
-                        if segment_idx >= points_capable - 1 or points_capable == 1:
-                            # Use last color (with current brightness)
-                            color = points[-1]
-                            rgb = convert_xy(color["xy"]["x"], color["xy"]["y"], current_brightness)
-                            led_colors.append((int(rgb[0]), int(rgb[1]), int(rgb[2])))
-                        else:
-                            # Interpolate between two gradient points
-                            color1 = points[segment_idx]
-                            color2 = points[segment_idx + 1]
-                            
-                            # Get RGB values for interpolation (use current brightness)
-                            rgb1 = convert_xy(color1["xy"]["x"], color1["xy"]["y"], current_brightness)
-                            rgb2 = convert_xy(color2["xy"]["x"], color2["xy"]["y"], current_brightness)
-                            
-                            # Interpolate RGB values
-                            r = int(rgb1[0] + (rgb2[0] - rgb1[0]) * segment_offset)
-                            g = int(rgb1[1] + (rgb2[1] - rgb1[1]) * segment_offset)
-                            b = int(rgb1[2] + (rgb2[2] - rgb1[2]) * segment_offset)
-                            
-                            led_colors.append((r, g, b))
-                        
                     # Send UDP update to WLED using DNRGB protocol
-                    udpdata = bytearray(4 + led_count * 3)
+                    udpdata = bytearray(3 + led_count * 3)  # DNRGB header is only 3 bytes
                     udpdata[0] = 4  # DNRGB protocol
                     udpdata[1] = 2  # 2 second timeout for streaming
                     udpdata[2] = segment_id * 60  # Start index for this segment
@@ -563,8 +563,11 @@ class Light():
                     # Send the UDP packet
                     try:
                         udp_socket.sendto(udpdata, (ip, 21324))
-                    except:
-                        pass  # Ignore send errors during animation
+                        frame_count += 1
+                        if frame_count % 30 == 0:  # Log every second
+                            logging.debug(f"Sent frame {frame_count}, offset: {pixel_offset}/{led_count}")
+                    except Exception as e:
+                        logging.error(f"Error sending UDP gradient animation: {e}")
                     
                     last_frame_time = current_time
                 
@@ -573,6 +576,7 @@ class Light():
             
             # Clean up socket
             udp_socket.close()
+            logging.info(f"Stopped smooth gradient animation for {self.name}, sent {frame_count} frames")
             
         else:
             # Original implementation for non-WLED or non-gradient lights
