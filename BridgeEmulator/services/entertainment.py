@@ -11,8 +11,8 @@ import time
 logging = logManager.logger.get_logger(__name__)
 bridgeConfig = configManager.bridgeConfig.yaml_config
 
-cieTolerance = 0.03  # new frames will be ignored if the color change is smaller than this value
-briTolerange = 16    # new frames will be ignored if the brightness change is smaller than this value
+cieTolerance = 0.01  # tighter tolerance for higher responsiveness
+briTolerange = 8     # tighter brightness threshold for higher responsiveness
 lastAppliedFrame = {}
 YeelightConnections = {}
 udp_socket_pool = {}  # Socket pool to prevent creating 600+ sockets/second
@@ -263,9 +263,9 @@ def entertainmentService(group, user):
                                 c = YeelightConnections[ip]
                                 op = skipSimilarFrames(light.id_v1, light.state["xy"], light.state["bri"])
                                 if op == 1:
-                                    c.command("set_bright", [int(light.state["bri"] / 2.55), "smooth", 200])
+                                    c.command("set_bright", [int(light.state["bri"] / 2.55), "smooth", 30])
                                 elif op == 2:
-                                    c.command("set_rgb", [(r * 65536) + (g * 256) + b, "smooth", 200])
+                                    c.command("set_rgb", [(r * 65536) + (g * 256) + b, "smooth", 30])
 
 
                             # WLED (Realtime UDP 21324, DNRGB)
@@ -394,9 +394,9 @@ def entertainmentService(group, user):
                                 c = YeelightConnections[ip]
                                 op = skipSimilarFrames(light.id_v1, light.state["xy"], light.state["bri"])
                                 if op == 1:
-                                    c.command("set_bright", [int(light.state["bri"] / 2.55), "smooth", 200])
+                                    c.command("set_bright", [int(light.state["bri"] / 2.55), "smooth", 30])
                                 elif op == 2:
-                                    c.command("set_rgb", [(r * 65536) + (g * 256) + b, "smooth", 200])
+                                    c.command("set_rgb", [(r * 65536) + (g * 256) + b, "smooth", 30])
 
 
                             elif proto == "wled":
