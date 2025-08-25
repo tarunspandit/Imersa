@@ -124,9 +124,9 @@ def entertainmentService(group, user):
                 nativeLights = {}
                 esphomeLights = {}
                 mqttLights = []
-                # Don't reset wledLights completely, just clear gradient points
+                # Don't reset wledLights completely, prepare for new frame
                 for ip in list(wledLights.keys()):
-                    wledLights[ip]["gradient_points"] = []
+                    wledLights[ip]["lights"] = []  # Clear lights list for new frame
                 haLights = []  # Batch Home Assistant lights
                 non_UDP_lights = []
                 if data[:9].decode('utf-8') == "HueStream":
@@ -359,6 +359,15 @@ def entertainmentService(group, user):
                             # Initialize pixel array with black
                             pixel_colors = [[0, 0, 0] for _ in range(total_leds)]
                             
+                            # Collect all gradient points from all lights for this device
+                            all_gradient_points = []
+                            for light_data in lights_list:
+                                if light_data.get("gradient_points"):
+                                    all_gradient_points.extend(light_data["gradient_points"])
+                            
+                            # Sort gradient points by ID for consistent ordering
+                            all_gradient_points.sort(key=lambda x: x["id"])
+                            
                             # Process each light (segment) for this WLED device
                             for light_data in lights_list:
                                 light = light_data["light"]
@@ -367,7 +376,8 @@ def entertainmentService(group, user):
                                 led_count = light_data["led_count"]
                                 is_gradient = light_data["is_gradient"]
                                 base_color = light_data["color"]
-                                gradient_points = light_data.get("gradient_points", [])
+                                # Use all collected gradient points for gradient models
+                                gradient_points = all_gradient_points if is_gradient else light_data.get("gradient_points", [])
                                 
                                 # Process this light's pixels
                                 if is_gradient and gradient_points:
