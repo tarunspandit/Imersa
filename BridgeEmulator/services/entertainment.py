@@ -496,6 +496,16 @@ def entertainmentService(group, user):
 
                             pixel_colors = [[0, 0, 0] for _ in range(total_leds)]
 
+                            # Collect all gradient points from all lights for this WLED device
+                            all_gradient_points = []
+                            for entry in lights_list:
+                                if entry["is_gradient"] and entry.get("gradient_points"):
+                                    all_gradient_points.extend(entry["gradient_points"])
+                            
+                            # Sort all gradient points by ID for consistent ordering
+                            all_gradient_points.sort(key=lambda x: x["id"])
+                            logging.debug(f"WLED {ip}: Collected {len(all_gradient_points)} gradient points: {all_gradient_points}")
+
                             # paint segments
                             for entry in lights_list:
                                 seg_start = entry["segment_start"]
@@ -503,10 +513,11 @@ def entertainmentService(group, user):
                                 led_count = entry["led_count"]
                                 is_grad = entry["is_gradient"]
                                 base_color = entry["color"]
-                                gpts = entry.get("gradient_points", [])
+                                
+                                # Use all collected gradient points for gradient models
+                                gpts = all_gradient_points if is_grad else []
 
                                 if is_grad and gpts:
-                                    gpts.sort(key=lambda x: x["id"])
                                     if len(gpts) == 1:
                                         color = gpts[0]["color"]
                                         for led_idx in range(seg_start, min(seg_stop, total_leds)):
