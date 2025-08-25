@@ -2,18 +2,87 @@ import logManager
 import yeelight
 from functions.colors import convert_rgb_xy, convert_xy
 from time import sleep
+import socket
+import time
+
 
 logging = logManager.logger.get_logger(__name__)
 Connections = {}
 
 
+def _parse_headers(resp: bytes):
+    try:
+        text = resp.decode(errors='ignore')
+        headers = {}
+        for line in text.split("\r\n"):
+            if ":" in line:
+                k, v = line.split(":", 1)
+                headers[k.strip().lower()] = v.strip()
+        return headers
+    except Exception:
+        return {}
+
+
+def _ssdp_discover(timeout=1.5, retries=2):
+    """Perform Yeelight LAN SSDP-like discovery per spec on 239.255.255.250:1982."""
+    MCAST_GRP = ("239.255.255.250", 1982)
+    request = ("M-SEARCH * HTTP/1.1\r\n"
+               "HOST: 239.255.255.250:1982\r\n"
+               "MAN: \"ssdp:discover\"\r\n"
+               "ST: wifi_bulb\r\n\r\n").encode()
+    found = {}
+    # Use a single UDP socket to send and receive replies
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.settimeout(timeout)
+    try:
+        for _ in range(retries):
+            try:
+                sock.sendto(request, MCAST_GRP)
+            except Exception:
+                # Best-effort; continue to receive in case
+                pass
+            t_end = time.time() + timeout
+            while time.time() < t_end:
+                try:
+                    data, addr = sock.recvfrom(2048)
+                except socket.timeout:
+                    break
+                headers = _parse_headers(data)
+                loc = headers.get('location', '')
+                yeelink = loc.startswith('yeelight://')
+                if not yeelink:
+                    continue
+                # Extract IP from location
+                try:
+                    ip_port = loc.replace('yeelight://', '').split('/')[0]
+                    ip = ip_port.split(':')[0]
+                except Exception:
+                    continue
+                dev_id = headers.get('id', ip)
+                found[dev_id] = {
+                    'ip': ip,
+                    'id': dev_id,
+                    'model': headers.get('model', ''),
+                    'name': headers.get('name', ''),
+                    'support': headers.get('support', ''),
+                    'has_bg': any(k in headers for k in ['bg_power', 'bg_lmode', 'bg_bright'])
+                }
+    finally:
+        try:
+            sock.close()
+        except Exception:
+            pass
+    return list(found.values())
+
+
 def discover(detectedLights, device_ips=None):
     """Discover Yeelight bulbs.
 
-    Primary path uses multicast discovery via python-yeelight. As a fallback,
-    when device_ips are provided (e.g., results of a TCP port scan on 55443),
-    probe each IP directly to build a minimal light entry so users can add by IP
-    even when multicast is blocked.
+    Order:
+      1) LAN SSDP-like discovery per spec (UDP multicast 239.255.255.250:1982)
+      2) python-yeelight discovery as secondary path
+      3) Direct IP probes (when device_ips provided)
     """
     logging.debug("Yeelight: <discover> invoked!")
 
@@ -27,12 +96,34 @@ def discover(detectedLights, device_ips=None):
             if "ip" in l.get("protocol_cfg", {}):
                 known_ips.add(l["protocol_cfg"]["ip"].split(":")[0])
 
-    # Multicast discovery first
+    # 1) Yeelight SSDP-like discovery
+    md = []
     try:
-        md = yeelight.discover_bulbs()
+        ssdp = _ssdp_discover()
+        for dev in ssdp:
+            md.append({
+                'ip': dev['ip'],
+                'capabilities': {
+                    'id': dev['id'],
+                    'model': dev['model'],
+                    'name': dev['name'],
+                    # Derive basic feature flags from support list
+                    'rgb': 'set_rgb' in dev['support'],
+                    'ct': 'set_ct_abx' in dev['support'],
+                    'xy': False  # Not explicit in Yeelight; keep False
+                },
+                'has_bg': dev['has_bg']
+            })
     except Exception as e:
-        logging.debug(f"Yeelight: multicast discovery failed: {e}")
-        md = []
+        logging.debug(f"Yeelight: SSDP discovery failed: {e}")
+
+    # 2) python-yeelight discovery if SSDP returned nothing
+    if not md:
+        try:
+            md = yeelight.discover_bulbs()
+        except Exception as e:
+            logging.debug(f"Yeelight: python-yeelight discovery failed: {e}")
+            md = []
 
     for light in md:
         try:
@@ -43,18 +134,19 @@ def discover(detectedLights, device_ips=None):
                 continue
             if dev_id in known_ids or ip in known_ips:
                 continue
-            logging.info("Found YeeLight: " + str(dev_id))
+            logging.info("Found YeeLight: " + str(dev_id if dev_id else ip))
             modelid = "LWB010"
             if cap.get("model") == "desklamp":
                 modelid = "LTW001"
-            elif cap.get("model") in ["ceiling10", "ceiling20", "ceiling4", "ceilb"]:
+            elif cap.get("model") in ["ceiling10", "ceiling20", "ceiling4", "ceilb"] or light.get('has_bg'):
+                # Add background as a separate light
                 detectedLights.append({
                     "protocol": "yeelight",
                     "name": (cap.get("name") + '-bg') if cap.get("name") not in [None, ""] else 'Yeelight ' + str(dev_id),
                     "modelid": "LCT015",
-                    "protocol_cfg": {"ip": ip, "id": str(dev_id) + "bg", "backlight": True, "model": cap.get("model")}
+                    "protocol_cfg": {"ip": ip, "id": (str(dev_id) + "bg") if dev_id else (ip + "-bg"), "backlight": True, "model": cap.get("model")}
                 })
-                modelid = "LWB010"  # second light must be CT only
+                modelid = "LWB010"  # main as CT-only to be safe
             elif cap.get("rgb"):
                 modelid = "LCT015"
             elif cap.get("ct"):
@@ -65,9 +157,10 @@ def discover(detectedLights, device_ips=None):
                 "protocol": "yeelight",
                 "name": cap.get("name") if cap.get("name") not in [None, ""] else 'Yeelight ' + str(dev_id),
                 "modelid": modelid,
-                "protocol_cfg": {"ip": ip, "id": str(dev_id), "backlight": False, "model": cap.get("model")}
+                "protocol_cfg": {"ip": ip, "id": str(dev_id) if dev_id else ip, "backlight": False, "model": cap.get("model")}
             })
-            known_ids.add(str(dev_id))
+            if dev_id:
+                known_ids.add(str(dev_id))
             known_ips.add(ip)
         except Exception as e:
             logging.debug(f"Yeelight: error parsing multicast discovery entry: {e}")
@@ -168,23 +261,40 @@ def get_light_state(light):
     prefix = ''
     if light.protocol_cfg.get("backlight"):
         prefix = "bg_"
-    if light_data[prefix + "power"] == "on": #powerstate
+    mode_key = "bg_lmode" if prefix else "color_mode"
+    power_key = prefix + "power"
+    bright_key = prefix + "bright"
+
+    if light_data.get(power_key) == "on":  # powerstate
         state['on'] = True
     else:
         state['on'] = False
 
-    state["bri"] = int(int(light_data[prefix + "bright"]) * 2.54)
+    try:
+        state["bri"] = int(int(light_data[bright_key]) * 2.54)
+    except Exception:
+        state["bri"] = state.get("bri", 128)
 
-    if light_data["color_mode"] == "1": #rgb mode
-        hex_rgb = "%06x" % int(light_data[prefix + "rgb"])
-        rgb=hex_to_rgb(hex_rgb)
-        state["xy"] = convert_rgb_xy(rgb[0],rgb[1],rgb[2])
-        state["colormode"] = "xy"
-    elif light_data["color_mode"] == "2": #ct mode
-        state["ct"] =  calculate_color_temp(light_data[prefix + "ct"])
-        state["colormode"] = "ct"
-    elif light_data["color_mode"] == "3": #hs mode
-        state["hue"] = int(light_data[prefix + "hue"] * 182)
-        state["sat"] = int(light_data[prefix + "sat"] * 2.54)
-        state["colormode"] = "hs"
+    lmode = light_data.get(mode_key)
+    if lmode == "1":  # rgb mode
+        try:
+            hex_rgb = "%06x" % int(light_data[prefix + "rgb"])
+            rgb = hex_to_rgb(hex_rgb)
+            state["xy"] = convert_rgb_xy(rgb[0], rgb[1], rgb[2])
+            state["colormode"] = "xy"
+        except Exception:
+            pass
+    elif lmode == "2":  # ct mode
+        try:
+            state["ct"] = calculate_color_temp(light_data[prefix + "ct"])
+            state["colormode"] = "ct"
+        except Exception:
+            pass
+    elif lmode == "3":  # hs mode
+        try:
+            state["hue"] = int(light_data[prefix + "hue"] * 182)
+            state["sat"] = int(light_data[prefix + "sat"] * 2.54)
+            state["colormode"] = "hs"
+        except Exception:
+            pass
     return state
