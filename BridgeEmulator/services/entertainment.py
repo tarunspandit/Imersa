@@ -41,7 +41,7 @@ def findGradientStrip(group):
     for light in group.lights:
         if light().modelid in ["LCX001", "LCX002", "LCX003", "915005987201", "LCX004"]:
             return light()
-    return "not found"
+    return None
 
 def get_hue_entertainment_group(light, groupname):
     group = requests.get("http://" + light.protocol_cfg["ip"] + "/api/" + light.protocol_cfg["hueUser"] + "/groups/", timeout=3)
@@ -54,8 +54,6 @@ def get_hue_entertainment_group(light, groupname):
             out = i
             logging.debug("Found Corresponding entertainment group with id " + out + " for light " + light.name)
     return int(out)
-
-YeelightConnections = {}
 udp_socket_pool = {}  # Socket pool to prevent creating 600+ sockets/second
 
 def entertainmentService(group, user):
