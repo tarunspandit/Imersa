@@ -129,14 +129,81 @@ def set_light(light, data):
         c = WledDevice(ip, light.protocol_cfg['mdns_name'])
         Connections[ip] = c
 
-    # For WLED, always use WARLS approach like entertainment mode
-    # Collect data for this specific light and send via WARLS
-    send_warls_data(light, data)
+    # For regular mode, use JSON API (persistent)
+    # Entertainment mode handles UDP streaming separately
+    is_gradient_model = light.modelid in ["LCX001", "LCX002", "LCX003", "915005987201", "LCX004", "LCX006"]
+    
+    if is_gradient_model and "gradient" in data:
+        send_gradient_json(c, light, data)
+    elif "lights" in data:
+        destructured_data = data["lights"][list(data["lights"].keys())[0]]
+        if is_gradient_model and "gradient" in destructured_data:
+            send_gradient_json(c, light, destructured_data)
+        else:
+            send_light_data(c, light, destructured_data)
+    else:
+        send_light_data(c, light, data)
 
+
+def send_gradient_json(c, light, data):
+    """Handle gradients using JSON API for persistent control"""
+    segment_id = light.protocol_cfg.get("segment_id", 0)
+    gradient_points = data.get("gradient", {}).get("points", [])
+    
+    if len(gradient_points) > 1:
+        # For multiple gradient points, use WLED's built-in gradient effect
+        # Convert first and last colors
+        first_point = gradient_points[0]
+        last_point = gradient_points[-1]
+        
+        first_xy = first_point.get("color", {}).get("xy", {"x": 0.5, "y": 0.5})
+        last_xy = last_point.get("color", {}).get("xy", {"x": 0.5, "y": 0.5})
+        
+        first_color = convert_xy(first_xy.get("x", 0.5), first_xy.get("y", 0.5), 255)
+        last_color = convert_xy(last_xy.get("x", 0.5), last_xy.get("y", 0.5), 255)
+        
+        # Use WLED's built-in gradient effect
+        json_state = {
+            "seg": [{
+                "id": segment_id,
+                "on": data.get("on", True),
+                "bri": data.get("bri", 254),
+                "fx": 1,  # Gradient effect
+                "col": [first_color, last_color, [0, 0, 0]]  # Primary, secondary colors
+            }]
+        }
+    else:
+        # Single color
+        if gradient_points:
+            point = gradient_points[0]
+            xy = point.get("color", {}).get("xy", {"x": 0.5, "y": 0.5})
+            color = convert_xy(xy.get("x", 0.5), xy.get("y", 0.5), 255)
+        else:
+            color = [255, 255, 255]  # Default white
+        
+        json_state = {
+            "seg": [{
+                "id": segment_id,
+                "on": data.get("on", True),
+                "bri": data.get("bri", 254),
+                "fx": 0,  # Solid color
+                "col": [[color[0], color[1], color[2]]]
+            }]
+        }
+    
+    c.sendJson(json_state)
 
 def send_warls_data(light, data):
     """Send data to WLED using the same approach as entertainment mode"""
     import socket
+    
+    # Get WLED device connection
+    ip = light.protocol_cfg['ip']
+    if ip in Connections:
+        c = Connections[ip]
+    else:
+        c = WledDevice(ip, light.protocol_cfg['mdns_name'])
+        Connections[ip] = c
     
     # Extract color data from various possible formats
     r, g, b = 0, 0, 0
@@ -233,7 +300,27 @@ def send_warls_data(light, data):
         udpdata[idx+2] = max(0, min(255, pixel_colors[led_idx][2]))   # Blue
         idx += 3
     
-    # Send WARLS data
+    # First, set the segment via JSON API to ensure proper state
+    segment_id = light.protocol_cfg.get("segment_id", 0)
+    json_state = {
+        "seg": [{
+            "id": segment_id,
+            "on": data.get("on", True),
+            "bri": data.get("bri", 254),
+            "fx": 0,  # Disable effects
+            "sx": 128,  # Default speed
+            "ix": 128,  # Default intensity
+            "col": [[r, g, b]]  # Set base color
+        }]
+    }
+    
+    # Send JSON state first
+    try:
+        c.sendJson(json_state)
+    except Exception as e:
+        logging.error(f"Failed to send JSON state to {ip}: {e}")
+    
+    # Then send WARLS/DNRGB data for precise pixel control
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.sendto(udpdata, (ip.split(":")[0], udp_port))
