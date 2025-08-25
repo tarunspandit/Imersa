@@ -507,11 +507,12 @@ class Light():
             # WLED palette format: "RRGGBB,RRGGBB,RRGGBB..."
             palette_string = ','.join(wled_colors[:16])
             
-            # Calculate speed for WLED (0-255, where 128 is medium)
-            # Hue dynamics speed: 1.0 = slowest, higher = faster
+            # Calculate speed for WLED (0-255, where higher = faster)
+            # Hue dynamics speed: 1 = extra slow, 12 = extreme
             speed_value = self.dynamics.get("speed", 1.0)
-            # Map to WLED speed: 1.0 -> 64 (slow), 5.0 -> 128 (medium), 10.0 -> 192 (fast)
-            wled_speed = min(255, int(speed_value * 25.6))
+            # Map exponentially: 1->20, 6->128, 12->255 for better feel
+            # Using exponential scaling for more natural speed progression
+            wled_speed = min(255, int(20 + (235 * ((speed_value - 1) / 11) ** 1.5)))
             
             # Get current brightness from tracked state
             from lights.protocols.wled import LightStates
