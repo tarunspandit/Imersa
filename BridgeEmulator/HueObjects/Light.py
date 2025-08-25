@@ -531,7 +531,8 @@ class Light():
             
             # Configure WLED to use palette effect
             try:
-                # Build custom palette with color stops
+                # Build custom palette with position and RGB values
+                # Format: [[position, R, G, B], ...]
                 palette_data = []
                 num_colors = min(len(wled_colors), 8)  # Limit to 8 colors
                 
@@ -540,29 +541,39 @@ class Light():
                         # Calculate position (0-255) for even distribution
                         if num_colors == 1:
                             # Single color - put at both ends for solid
-                            palette_data.extend([0, hex_color.upper(), 255, hex_color.upper()])
+                            r = int(hex_color[:2], 16)
+                            g = int(hex_color[2:4], 16)
+                            b = int(hex_color[4:6], 16)
+                            palette_data.append([0, r, g, b])
+                            palette_data.append([255, r, g, b])
                         else:
                             pos = int(i * 255 / (num_colors - 1))
-                            palette_data.extend([pos, hex_color.upper()])
+                            r = int(hex_color[:2], 16)
+                            g = int(hex_color[2:4], 16)
+                            b = int(hex_color[4:6], 16)
+                            palette_data.append([pos, r, g, b])
                 
-                # Build the JSON payload for WLED with Palette effect
-                seg_data = {
+                # Apply the Palette effect with inline custom palette
+                # For Palette effect: c1=128 (stretch), c2=0 (rotation=0), c3=16 (animate shift on)
+                seg_config = {
                     "fx": 65,  # Palette effect (index 65)
                     "sx": wled_speed,  # Effect speed (0-255)
                     "ix": 128,  # Intensity
-                    "pal": 6,  # Use default palette (will be overridden by custom)
-                    "palette": palette_data  # Custom palette definition
+                    "pal": palette_data,  # Custom palette data inline
+                    "c1": 128,  # Stretch/scale parameter
+                    "c2": 0,    # Rotation = 0
+                    "c3": 16    # Checkboxes - bit 4 set = animate shift enabled
                 }
                 
-                # Only add segment ID if it's not 0 (default segment)
+                # Only add segment ID if it's not 0
                 if segment_id != 0:
-                    seg_data["id"] = segment_id
+                    seg_config["id"] = segment_id
                 
                 wled_payload = {
                     "on": True,
                     "bri": current_brightness,
                     "live": False,  # Disable UDP/live mode to allow effect changes
-                    "seg": [seg_data]
+                    "seg": [seg_config]
                 }
                 
                 response = requests.post(
@@ -571,9 +582,9 @@ class Light():
                     timeout=3
                 )
                 
-                logging.info(f"WLED palette effect request sent - speed: {wled_speed}, palette: {palette_data}")
+                logging.info(f"WLED palette effect configured - speed: {wled_speed}, using custom palette")
                 if response.status_code == 200:
-                    logging.info("WLED palette effect successfully configured")
+                    logging.info("WLED palette effect successfully applied")
                 else:
                     logging.error(f"WLED API error: {response.status_code} - {response.text}")
                 
