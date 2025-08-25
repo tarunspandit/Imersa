@@ -468,6 +468,14 @@ class Light():
                 r = requests.post(f"http://{ip}/json/state", json=payload, timeout=3)
                 r.raise_for_status()
                 logging.info("Applied WLED Palette effect (speed=%d, pal=%d)", wled_speed, set_colors_pal_id)
+                # Pin rotation to zero explicitly
+                seg_patch = {"c2": 0}
+                if segment_id != 0:
+                    seg_patch["id"] = segment_id
+                requests.post(f"http://{ip}/json/state",
+              json={"seg": [seg_patch]},
+              timeout=3)
+
             except Exception as e:
                 logging.error("WLED API error applying effect: %s", e)
                 return
