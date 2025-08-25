@@ -140,19 +140,67 @@ def send_warls_data(light, data):
     
     # Extract color data from various possible formats
     r, g, b = 0, 0, 0
+    brightness = 255  # Default brightness
     
     if "lights" in data:
         destructured_data = data["lights"][list(data["lights"].keys())[0]]
         data = destructured_data
     
+    # Handle brightness first
+    if "bri" in data:
+        brightness = max(1, min(255, data["bri"]))
+    
     # Extract RGB values
     if "xy" in data:
-        color = convert_xy(data["xy"][0], data["xy"][1], 255)
+        color = convert_xy(data["xy"][0], data["xy"][1], brightness)
         r, g, b = color[0], color[1], color[2]
     elif "ct" in data:
+        # For color temperature, use JSON API instead of UDP for better compatibility
+        ip = light.protocol_cfg['ip']
+        if ip in Connections:
+            c = Connections[ip]
+        else:
+            c = WledDevice(ip, light.protocol_cfg['mdns_name'])
+            Connections[ip] = c
+        
+        segment_id = light.protocol_cfg.get("segment_id", 0)
+        
+        # Use the existing JSON-based method for CT
+        ct_data = {"ct": data["ct"]}
+        if "bri" in data:
+            ct_data["bri"] = data["bri"]
+        if "on" in data:
+            ct_data["on"] = data["on"]
+            
+        send_light_data(c, light, ct_data)
+        return  # Return early since we handled this via JSON API
+        
+        # Fallback to RGB conversion if JSON API fails
         kelvin = round(translateRange(data["ct"], 153, 500, 6500, 2000))
         color = kelvinToRgb(kelvin)
-        r, g, b = color[0], color[1], color[2]
+        # Apply brightness to color temperature
+        r = int(color[0] * brightness / 255)
+        g = int(color[1] * brightness / 255) 
+        b = int(color[2] * brightness / 255)
+    elif "bri" in data and ("xy" not in data and "ct" not in data):
+        # Brightness-only change - get current color from WLED state
+        ip = light.protocol_cfg['ip']
+        if ip in Connections:
+            c = Connections[ip]
+        else:
+            c = WledDevice(ip, light.protocol_cfg['mdns_name'])
+            Connections[ip] = c
+        
+        segment_id = light.protocol_cfg.get("segment_id", 0)
+        current_state = c.getSegState(segment_id)
+        if "xy" in current_state:
+            color = convert_xy(current_state["xy"][0], current_state["xy"][1], brightness)
+            r, g, b = color[0], color[1], color[2]
+    
+    # Handle on/off state
+    if "on" in data and not data["on"]:
+        # If turning off, set RGB to 0
+        r, g, b = 0, 0, 0
     
     # Get device info
     ip = light.protocol_cfg['ip']
