@@ -689,27 +689,65 @@ class YeelightConnection(object):
 
         self._host_ip = host_ip
 
+        # Determine advertised host IP preference from config if set
+        try:
+            music_cfg = bridgeConfig["config"].get("yeelight", {}).get("music", {})
+        except Exception:
+            music_cfg = {}
+        host_ip_override = music_cfg.get("host_ip") or None
+        require_music = bool(music_cfg.get("require", False))
+
+        # Listener: pick a port, prefer configured range (for Docker published ports)
         tempSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # Setup listener
         tempSock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         tempSock.settimeout(5)
 
-        tempSock.bind(("", 0))
-        port = tempSock.getsockname()[1]  # Get listener port
+        # Try configured port range first
+        chosen_port = None
+        pr = music_cfg.get("port_range") or music_cfg.get("ports")
+        if isinstance(pr, dict) and "start" in pr and "end" in pr and int(pr["start"]) <= int(pr["end"]):
+            start_p, end_p = int(pr["start"]), int(pr["end"])
+            for p in range(start_p, end_p + 1):
+                try:
+                    tempSock.bind(("", p))
+                    chosen_port = p
+                    break
+                except Exception:
+                    continue
+        elif isinstance(pr, (list, tuple)) and len(pr) == 2:
+            try:
+                start_p, end_p = int(pr[0]), int(pr[1])
+                for p in range(start_p, end_p + 1):
+                    try:
+                        tempSock.bind(("", p))
+                        chosen_port = p
+                        break
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
+        # Fallback to ephemeral port
+        if chosen_port is None:
+            tempSock.bind(("", 0))
+        port = tempSock.getsockname()[1]
 
         tempSock.listen(3)
 
         if not self._connected:
             self.connect(True)  # Basic connect for set_music
 
-        # Determine the best local IP to advertise (route to device)
-        local_host_ip = host_ip
-        try:
-            _tmp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            _tmp.connect((self._ip, 1))
-            local_host_ip = _tmp.getsockname()[0]
-            _tmp.close()
-        except Exception:
-            pass
+        # Determine the best local IP to advertise (route to device) or use config override
+        local_host_ip = host_ip_override or host_ip
+        # Only auto-detect when host_ip is not set to a concrete LAN IP
+        if not host_ip_override and (not host_ip or host_ip in ["0.0.0.0", "127.0.0.1"]):
+            try:
+                _tmp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                _tmp.connect((self._ip, 1))
+                local_host_ip = _tmp.getsockname()[0]
+                _tmp.close()
+            except Exception:
+                pass
 
         self.command("set_music", [1, local_host_ip, port])  # MAGIC
         self.disconnect()  # Disconnect from basic mode
@@ -731,16 +769,18 @@ class YeelightConnection(object):
                         except:
                             pass
         except Exception as e:
-            # Fallback: continue in non-music mode (maintain outbound TCP to device)
             try:
                 tempSock.close()
             except:
                 pass
-            self._music = False
-            self._connected = False
-            logging.info("Yeelight with IP %s couldn't enter music mode (%s). Falling back to non-music mode.", self._ip, e)
-            # Establish a normal outbound control connection lazily on first command
-            return
+            if require_music:
+                raise ConnectionError("Yeelight with IP {} doesn't want to connect in music mode: {}".format(self._ip, e))
+            else:
+                # Fallback: continue in non-music mode (maintain outbound TCP to device)
+                self._music = False
+                self._connected = False
+                logging.info("Yeelight with IP %s couldn't enter music mode (%s). Falling back to non-music mode.", self._ip, e)
+                return
 
         logging.info("Yeelight device with IP %s is now in music mode", self._ip)
 
