@@ -205,18 +205,20 @@ def send_warls_data(light, data):
         for led_idx in range(led_count):
             pixel_colors[led_idx] = [r, g, b]
     
-    # Build WARLS UDP packet - same format as entertainment mode
-    udpdata = bytearray(2 + led_count * 3)  # header + RGB per LED
-    udpdata[0] = 1  # WARLS mode
+    # Build WARLS UDP packet - correct protocol format
+    udpdata = bytearray(2 + led_count * 4)  # header + LED_INDEX,R,G,B per LED
+    udpdata[0] = 1  # WARLS protocol
     udpdata[1] = 1  # 1 second timeout
     
-    # Fill UDP packet with pixel data
+    # Fill UDP packet with WARLS format (LED_INDEX, R, G, B per LED)
     idx = 2
     for led_idx in range(led_count):
-        udpdata[idx] = max(0, min(255, pixel_colors[led_idx][0]))
-        udpdata[idx+1] = max(0, min(255, pixel_colors[led_idx][1]))
-        udpdata[idx+2] = max(0, min(255, pixel_colors[led_idx][2]))
-        idx += 3
+        actual_led_index = segment_start + led_idx  # Absolute LED position on strip
+        udpdata[idx] = actual_led_index  # LED index
+        udpdata[idx+1] = max(0, min(255, pixel_colors[led_idx][0]))  # Red
+        udpdata[idx+2] = max(0, min(255, pixel_colors[led_idx][1]))  # Green  
+        udpdata[idx+3] = max(0, min(255, pixel_colors[led_idx][2]))  # Blue
+        idx += 4
     
     # Send WARLS data
     try:

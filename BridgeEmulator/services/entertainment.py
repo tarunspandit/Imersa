@@ -351,10 +351,12 @@ def entertainmentService(group, user):
                             previous_colors = wled_data.get("previous_colors")
                             decay_factor = wled_data.get("decay_factor", 0.85)
                             
-                            # Pre-allocate pixel data for entire strip
-                            udpdata = bytearray(2 + total_leds * 3)  # header + RGB per LED
-                            udpdata[0] = 1  # WARLS mode
+                            # Pre-allocate pixel data for entire strip using DNRGB protocol
+                            udpdata = bytearray(4 + total_leds * 3)  # header + start_index + RGB per LED
+                            udpdata[0] = 4  # DNRGB protocol
                             udpdata[1] = 1  # 1 second timeout
+                            udpdata[2] = 0  # Start index (high byte) 
+                            udpdata[3] = 0  # Start index (low byte) - starting from LED 0
                             
                             # Initialize pixel array with black
                             pixel_colors = [[0, 0, 0] for _ in range(total_leds)]
@@ -418,12 +420,12 @@ def entertainmentService(group, user):
                                     pixel_colors[led_idx][1] = int(pixel_colors[led_idx][1] * mix_factor + previous_colors[led_idx][1] * (1 - mix_factor))
                                     pixel_colors[led_idx][2] = int(pixel_colors[led_idx][2] * mix_factor + previous_colors[led_idx][2] * (1 - mix_factor))
                             
-                            # Fill UDP packet with pixel data
-                            idx = 2
+                            # Fill UDP packet with pixel data using DNRGB format
+                            idx = 4  # Start after header and start index
                             for led_idx in range(total_leds):
-                                udpdata[idx] = max(0, min(255, pixel_colors[led_idx][0]))
-                                udpdata[idx+1] = max(0, min(255, pixel_colors[led_idx][1]))
-                                udpdata[idx+2] = max(0, min(255, pixel_colors[led_idx][2]))
+                                udpdata[idx] = max(0, min(255, pixel_colors[led_idx][0]))     # Red
+                                udpdata[idx+1] = max(0, min(255, pixel_colors[led_idx][1]))   # Green
+                                udpdata[idx+2] = max(0, min(255, pixel_colors[led_idx][2]))   # Blue
                                 idx += 3
                             
                             # Store current colors for next frame
