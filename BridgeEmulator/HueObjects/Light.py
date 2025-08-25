@@ -550,8 +550,8 @@ class Light():
                     "fx": 65,  # Palette effect (index 65)
                     "sx": wled_speed,  # Effect speed (0-255)
                     "ix": 128,  # Intensity
-                    "pal": 6,  # Use default palette (will be overridden by custom)
-                    "palette": palette_data  # Custom palette definition
+                    # "pal": 6,  # Use default palette (will be overridden by custom)
+                    # "palette": palette_data  # Custom palette definition
                 }
                 
                 # Only add segment ID if it's not 0 (default segment)
