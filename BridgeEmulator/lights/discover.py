@@ -129,11 +129,7 @@ def manualAddLight(ip: str, protocol: str, config: Dict = {}) -> None:
         detectedLights = []
         # Include yeelight IP-probe discovery in auto mode (no multicast)
         for discover_func in [yeelight.discover, native_multi.discover, tasmota.discover, shelly.discover, esphome.discover]:
-            try:
-                discover_func(detectedLights, [ip])
-            except TypeError:
-                # Some discover signatures require additional params; ignore here
-                discover_func(detectedLights, [ip])
+            discover_func(detectedLights, [ip])
         for light in detectedLights:
             logging.info(f"Found light {light['protocol']} {light['name']}")
             addNewLight(light["modelid"], light["name"], light["protocol"], light["protocol_cfg"])
@@ -144,11 +140,10 @@ def manualAddLight(ip: str, protocol: str, config: Dict = {}) -> None:
             try:
                 import yeelight as _yeelight
                 b = _yeelight.Bulb(ip)
-                props = {}
-                try:
-                    props = b.get_properties()
-                except Exception as e:
-                    logging.debug(f"Yeelight manual add probe failed for {ip}: {e}")
+                props = b.get_properties()
+                if not props or ("power" not in props and "bg_power" not in props) or "bright" not in props:
+                    logging.info(f"Manual add rejected for {ip}: not a Yeelight or LAN control disabled")
+                    return
                 # Choose a reasonable default modelid
                 mdl = "LCT015" if props.get("color_mode") in ["1", "3"] else "LTW001"
                 if modelid == "LCT015":
@@ -160,7 +155,8 @@ def manualAddLight(ip: str, protocol: str, config: Dict = {}) -> None:
                 if name == "New Light":
                     name = props.get("name") if props.get("name") else f"Yeelight {ip}"
             except Exception as e:
-                logging.debug(f"Yeelight manual add enrichment error: {e}")
+                logging.info(f"Manual add failed for Yeelight {ip}: {e}")
+                return
         addNewLight(modelid, name, protocol, config)
 
 def discoveryEvent() -> None:
