@@ -146,19 +146,36 @@ def send_warls_data(light, data):
         destructured_data = data["lights"][list(data["lights"].keys())[0]]
         data = destructured_data
     
-    # Handle brightness first
+    # Handle brightness - if not provided, get current brightness from WLED
     if "bri" in data:
         brightness = max(1, min(255, data["bri"]))
+    elif "xy" in data or "ct" in data:
+        # For color changes without brightness, preserve current brightness
+        ip = light.protocol_cfg['ip']
+        if ip in Connections:
+            c = Connections[ip]
+        else:
+            c = WledDevice(ip, light.protocol_cfg['mdns_name'])
+            Connections[ip] = c
+        
+        segment_id = light.protocol_cfg.get("segment_id", 0)
+        current_state = c.getSegState(segment_id)
+        brightness = current_state.get("bri", 255) if current_state else 255
     
     # Extract RGB values
     if "xy" in data:
-        color = convert_xy(data["xy"][0], data["xy"][1], brightness)
+        # For XY colors, use full brightness in conversion, then preserve current brightness
+        color = convert_xy(data["xy"][0], data["xy"][1], 255)
         r, g, b = color[0], color[1], color[2]
+        # Apply current brightness to the color
+        r = int(r * brightness / 255)
+        g = int(g * brightness / 255)
+        b = int(b * brightness / 255)
     elif "ct" in data:
-        # Convert color temperature to RGB and send via DNRGB UDP protocol
+        # Convert color temperature to RGB and apply current brightness
         kelvin = round(translateRange(data["ct"], 153, 500, 6500, 2000))
         color = kelvinToRgb(kelvin)
-        # Apply brightness to color temperature
+        # Apply current brightness to color temperature
         r = int(color[0] * brightness / 255)
         g = int(color[1] * brightness / 255) 
         b = int(color[2] * brightness / 255)
@@ -174,8 +191,16 @@ def send_warls_data(light, data):
         segment_id = light.protocol_cfg.get("segment_id", 0)
         current_state = c.getSegState(segment_id)
         if "xy" in current_state:
-            color = convert_xy(current_state["xy"][0], current_state["xy"][1], brightness)
-            r, g, b = color[0], color[1], color[2]
+            # Get the color at full brightness, then apply new brightness
+            color = convert_xy(current_state["xy"][0], current_state["xy"][1], 255)
+            r = int(color[0] * brightness / 255)
+            g = int(color[1] * brightness / 255)
+            b = int(color[2] * brightness / 255)
+        else:
+            # Fallback to white if no color info available
+            r = brightness
+            g = brightness  
+            b = brightness
     
     # Handle on/off state
     if "on" in data and not data["on"]:
