@@ -460,165 +460,48 @@ class Light():
         logging.debug("Start Dynamic scene play for " + self.name)
         if "dynamic_palette" in self.dynamics["status_values"]:
             self.dynamics["status"] = "dynamic_palette"
-        
-        # Check if this is a WLED gradient model that needs smooth animation
-        is_wled_gradient = (self.protocol == "wled" and 
-                           self.modelid in ["LCX002", "915005987201", "LCX004", "LCX006"])
-        
-        if is_wled_gradient:
-            # For WLED gradient models, do smooth high-frequency gradient scrolling
-            import time
-            import socket
-            from lights.protocols import wled
-            
-            points_capable = self.protocol_cfg.get("points_capable", 5)
-            palette_length = len(palette["color"])
-            start_time = time.time()
-            frame_rate = 30  # 30 fps for smooth animation
-            frame_duration = 1.0 / frame_rate
-            last_frame_time = 0
-            gradient_offset = 0.0
-            scroll_speed = self.dynamics.get("speed", 1.0) * 0.5  # Adjust scroll speed based on dynamics speed
-            
-            # Get WLED connection info
-            ip = self.protocol_cfg["ip"]
-            segment_id = self.protocol_cfg.get("segment_id", 0)
-            led_count = self.protocol_cfg.get("led_count", 60)
-            
-            # Get current brightness from light state or tracked state
-            from lights.protocols.wled import LightStates
-            state_key = f"{ip}_{segment_id}"
-            current_brightness = 255
-            if state_key in LightStates and "bri" in LightStates[state_key]:
-                current_brightness = LightStates[state_key]["bri"]
-            elif "bri" in self.state:
-                current_brightness = self.state["bri"]
-            
-            # Create UDP socket for high-frequency updates
-            udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            
-            while self.dynamics["status"] == "dynamic_palette":
-                current_time = time.time()
-                
-                # Only send frame if enough time has passed
-                if current_time - last_frame_time >= frame_duration:
-                    # Calculate gradient position based on time for smooth scrolling
-                    gradient_offset = (current_time - start_time) * scroll_speed
+        while self.dynamics["status"] == "dynamic_palette":
+            transition = int(30 / self.dynamics["speed"])
+            logging.debug("using transistiontime " + str(transition))
+            if self.modelid in ["LCT001", "LCT015", "LST002", "LCX002", "915005987201", "LCX004", "LCX006", "LCA005"]:
+                if index >= len(palette["color"]):
+                    index = 0
+                points = []
+                if self.modelid in ["LCX002", "915005987201", "LCX004", "LCX006"]:
+                    # for gradient lights - create smooth gradient loop animation
+                    points_capable = self.protocol_cfg.get("points_capable", 5)
+                    palette_length = len(palette["color"])
                     
-                    # Create gradient points with smooth offset
-                    points = []
+                    # Create gradient points by cycling through palette with offset
+                    # This creates a smooth loop effect by shifting the gradient pattern
                     for x in range(points_capable):
-                        # Use floating point offset for smoother animation
-                        palette_index = int((gradient_offset + x * (palette_length / points_capable))) % palette_length
+                        palette_index = (index + x) % palette_length
                         points.append(palette["color"][palette_index])
                     
-                    # Convert gradient to LED colors for smooth animation
-                    from functions.colors import convert_xy
-                    led_colors = []
-                    
-                    # Calculate colors for each LED based on gradient
-                    for led_idx in range(led_count):
-                        # Map LED position to gradient position (0.0 to 1.0)
-                        gradient_pos = led_idx / max(led_count - 1, 1)
-                        
-                        # Find which two gradient points this LED falls between
-                        segment_size = 1.0 / (points_capable - 1) if points_capable > 1 else 1.0
-                        segment_idx = min(int(gradient_pos / segment_size), points_capable - 2) if points_capable > 1 else 0
-                        segment_offset = (gradient_pos % segment_size) / segment_size if segment_size > 0 else 0
-                        
-                        if segment_idx >= points_capable - 1 or points_capable == 1:
-                            # Use last color (with current brightness)
-                            color = points[-1]
-                            rgb = convert_xy(color["xy"]["x"], color["xy"]["y"], current_brightness)
-                            led_colors.append((int(rgb[0]), int(rgb[1]), int(rgb[2])))
-                        else:
-                            # Interpolate between two gradient points
-                            color1 = points[segment_idx]
-                            color2 = points[segment_idx + 1]
-                            
-                            # Get RGB values for interpolation (use current brightness)
-                            rgb1 = convert_xy(color1["xy"]["x"], color1["xy"]["y"], current_brightness)
-                            rgb2 = convert_xy(color2["xy"]["x"], color2["xy"]["y"], current_brightness)
-                            
-                            # Interpolate RGB values
-                            r = int(rgb1[0] + (rgb2[0] - rgb1[0]) * segment_offset)
-                            g = int(rgb1[1] + (rgb2[1] - rgb1[1]) * segment_offset)
-                            b = int(rgb1[2] + (rgb2[2] - rgb1[2]) * segment_offset)
-                            
-                            led_colors.append((r, g, b))
-                        
-                    # Send UDP update to WLED using DNRGB protocol
-                    udpdata = bytearray(4 + led_count * 3)
-                    udpdata[0] = 4  # DNRGB protocol
-                    udpdata[1] = 2  # 2 second timeout for streaming
-                    udpdata[2] = segment_id * 60  # Start index for this segment
-                    
-                    # Add RGB data for each LED
-                    for i, (r, g, b) in enumerate(led_colors[:led_count]):
-                        base_idx = 3 + (i * 3)
-                        udpdata[base_idx] = r
-                        udpdata[base_idx + 1] = g
-                        udpdata[base_idx + 2] = b
-                    
-                    # Send the UDP packet
-                    try:
-                        udp_socket.sendto(udpdata, (ip, 21324))
-                    except:
-                        pass  # Ignore send errors during animation
-                    
-                    last_frame_time = current_time
-                
-                # Small sleep to prevent CPU spinning
-                sleep(0.001)
-            
-            # Clean up socket
-            udp_socket.close()
-            
-        else:
-            # Original implementation for non-WLED or non-gradient lights
-            while self.dynamics["status"] == "dynamic_palette":
-                transition = int(30 / self.dynamics["speed"])
-                logging.debug("using transistiontime " + str(transition))
-                if self.modelid in ["LCT001", "LCT015", "LST002", "LCX002", "915005987201", "LCX004", "LCX006", "LCA005"]:
+                    self.setV2State(
+                        {"gradient": {"points": points}, "transitiontime": transition})
+                else:
                     if index >= len(palette["color"]):
                         index = 0
-                    points = []
-                    if self.modelid in ["LCX002", "915005987201", "LCX004", "LCX006"]:
-                        # for gradient lights - create smooth gradient loop animation
-                        points_capable = self.protocol_cfg.get("points_capable", 5)
-                        palette_length = len(palette["color"])
-                        
-                        # Create gradient points by cycling through palette with offset
-                        # This creates a smooth loop effect by shifting the gradient pattern
-                        for x in range(points_capable):
-                            palette_index = (index + x) % palette_length
-                            points.append(palette["color"][palette_index])
-                        
-                        self.setV2State(
-                            {"gradient": {"points": points}, "transitiontime": transition})
-                    else:
-                        if index >= len(palette["color"]):
-                            index = 0
-                        lightState = palette["color"][index]
-                        # based on youtube videos, the transition is slow
-                        lightState["transitiontime"] = transition
-                        self.setV2State(lightState)
-                elif self.modelid == "LTW001":
-                    if index == len(palette["color_temperature"]):
-                        index = 0
-                    lightState = palette["color_temperature"][index]
+                    lightState = palette["color"][index]
+                    # based on youtube videos, the transition is slow
                     lightState["transitiontime"] = transition
                     self.setV2State(lightState)
-                else:
-                    if index == len(palette["dimming"]):
-                        index = 0
-                    lightState = palette["dimming"][index]
-                    lightState["transitiontime"] = transition
-                    self.setV2State(lightState)
-                sleep(transition / 10)
-                index += 1
-                logging.debug("Step forward dynamic scene " + self.name)
-        
+            elif self.modelid == "LTW001":
+                if index == len(palette["color_temperature"]):
+                    index = 0
+                lightState = palette["color_temperature"][index]
+                lightState["transitiontime"] = transition
+                self.setV2State(lightState)
+            else:
+                if index == len(palette["dimming"]):
+                    index = 0
+                lightState = palette["dimming"][index]
+                lightState["transitiontime"] = transition
+                self.setV2State(lightState)
+            sleep(transition / 10)
+            index += 1
+            logging.debug("Step forward dynamic scene " + self.name)
         logging.debug("Dynamic Scene " + self.name + " stopped.")
 
     def save(self):
