@@ -140,7 +140,6 @@ def send_warls_data(light, data):
     
     # Extract color data from various possible formats
     r, g, b = 0, 0, 0
-    w = 0  # White channel for DRGBW
     brightness = 255  # Default brightness
     
     if "lights" in data:
@@ -156,21 +155,33 @@ def send_warls_data(light, data):
         color = convert_xy(data["xy"][0], data["xy"][1], brightness)
         r, g, b = color[0], color[1], color[2]
     elif "ct" in data:
-        # For color temperature, use DRGBW protocol for proper white handling
+        # For color temperature, use JSON API instead of UDP for better compatibility
+        ip = light.protocol_cfg['ip']
+        if ip in Connections:
+            c = Connections[ip]
+        else:
+            c = WledDevice(ip, light.protocol_cfg['mdns_name'])
+            Connections[ip] = c
+        
+        segment_id = light.protocol_cfg.get("segment_id", 0)
+        
+        # Use the existing JSON-based method for CT
+        ct_data = {"ct": data["ct"]}
+        if "bri" in data:
+            ct_data["bri"] = data["bri"]
+        if "on" in data:
+            ct_data["on"] = data["on"]
+            
+        send_light_data(c, light, ct_data)
+        return  # Return early since we handled this via JSON API
+        
+        # Fallback to RGB conversion if JSON API fails
         kelvin = round(translateRange(data["ct"], 153, 500, 6500, 2000))
         color = kelvinToRgb(kelvin)
         # Apply brightness to color temperature
         r = int(color[0] * brightness / 255)
         g = int(color[1] * brightness / 255) 
         b = int(color[2] * brightness / 255)
-        
-        # Calculate white channel for RGBW strips
-        # Use minimum of RGB as white component for better white rendering
-        w = min(r, g, b)
-        r = max(0, r - w)
-        g = max(0, g - w) 
-        b = max(0, b - w)
-        logging.debug(f"CT: {data['ct']}, Kelvin: {kelvin}, Original RGB: ({color[0]}, {color[1]}, {color[2]}), Final RGBW: ({r}, {g}, {b}, {w})")
     elif "bri" in data and ("xy" not in data and "ct" not in data):
         # Brightness-only change - get current color from WLED state
         ip = light.protocol_cfg['ip']
@@ -255,40 +266,20 @@ def send_warls_data(light, data):
         for led_idx in range(led_count):
             pixel_colors[led_idx] = [r, g, b]
     
-    # Determine if we need DRGBW protocol for color temperature
-    use_drgbw = "ct" in data and 'w' in locals()
+    # Use DNRGB protocol for segments
+    udpdata = bytearray(4 + led_count * 3)  # header + start_index + RGB per LED
+    udpdata[0] = 4  # DNRGB protocol
+    udpdata[1] = 255  # No timeout - stay on UDP data until changed by another method
+    udpdata[2] = (segment_start >> 8) & 0xFF  # Start index high byte
+    udpdata[3] = segment_start & 0xFF  # Start index low byte
     
-    if use_drgbw:
-        # Use DRGBW protocol for color temperature with white channel
-        udpdata = bytearray(4 + led_count * 4)  # header + start_index + RGBW per LED
-        udpdata[0] = 5  # DRGBW protocol
-        udpdata[1] = 255  # No timeout - stay on UDP data until changed by another method
-        udpdata[2] = (segment_start >> 8) & 0xFF  # Start index high byte
-        udpdata[3] = segment_start & 0xFF  # Start index low byte
-        
-        # Fill UDP packet with DRGBW format (R,G,B,W per LED)
-        idx = 4
-        for led_idx in range(led_count):
-            udpdata[idx] = max(0, min(255, pixel_colors[led_idx][0]))     # Red
-            udpdata[idx+1] = max(0, min(255, pixel_colors[led_idx][1]))   # Green
-            udpdata[idx+2] = max(0, min(255, pixel_colors[led_idx][2]))   # Blue
-            udpdata[idx+3] = max(0, min(255, w))  # White channel
-            idx += 4
-    else:
-        # Use DNRGB protocol for segments
-        udpdata = bytearray(4 + led_count * 3)  # header + start_index + RGB per LED
-        udpdata[0] = 4  # DNRGB protocol
-        udpdata[1] = 255  # No timeout - stay on UDP data until changed by another method
-        udpdata[2] = (segment_start >> 8) & 0xFF  # Start index high byte
-        udpdata[3] = segment_start & 0xFF  # Start index low byte
-        
-        # Fill UDP packet with DNRGB format (R,G,B per LED)
-        idx = 4
-        for led_idx in range(led_count):
-            udpdata[idx] = max(0, min(255, pixel_colors[led_idx][0]))     # Red
-            udpdata[idx+1] = max(0, min(255, pixel_colors[led_idx][1]))   # Green
-            udpdata[idx+2] = max(0, min(255, pixel_colors[led_idx][2]))   # Blue
-            idx += 3
+    # Fill UDP packet with DNRGB format (R,G,B per LED)
+    idx = 4
+    for led_idx in range(led_count):
+        udpdata[idx] = max(0, min(255, pixel_colors[led_idx][0]))     # Red
+        udpdata[idx+1] = max(0, min(255, pixel_colors[led_idx][1]))   # Green
+        udpdata[idx+2] = max(0, min(255, pixel_colors[led_idx][2]))   # Blue
+        idx += 3
     
     # Send WARLS data
     try:
