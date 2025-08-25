@@ -141,7 +141,7 @@ def manualAddLight(ip: str, protocol: str, config: Dict = {}) -> None:
                 import yeelight as _yeelight
                 b = _yeelight.Bulb(ip)
                 props = b.get_properties()
-                if not props or ("power" not in props and "bg_power" not in props) or "bright" not in props:
+                if not props or ("power" not in props and "bg_power" not in props):
                     logging.info(f"Manual add rejected for {ip}: not a Yeelight or LAN control disabled")
                     return
                 # Choose a reasonable default modelid

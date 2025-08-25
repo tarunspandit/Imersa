@@ -82,7 +82,7 @@ def discover(detectedLights, device_ips=None):
                 b = yeelight.Bulb(ip)
                 props = b.get_properties()
                 # Validate this really looks like a Yeelight device
-                if not props or ("power" not in props and "bg_power" not in props) or "bright" not in props:
+                if not props or ("power" not in props and "bg_power" not in props):
                     logging.debug(f"Yeelight probe ignored {ip}: missing required properties {props}")
                     continue
                 name = props.get("name") if props.get("name") not in [None, ""] else f"Yeelight {ip}"
