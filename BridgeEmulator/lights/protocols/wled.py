@@ -221,7 +221,7 @@ def send_warls_data(light, data):
     # Use DNRGB protocol for segments
     udpdata = bytearray(4 + led_count * 3)  # header + start_index + RGB per LED
     udpdata[0] = 4  # DNRGB protocol
-    udpdata[1] = 1  # 1 second timeout
+    udpdata[1] = 255  # No timeout - stay on UDP data until changed by another method
     udpdata[2] = (segment_start >> 8) & 0xFF  # Start index high byte
     udpdata[3] = segment_start & 0xFF  # Start index low byte
     
