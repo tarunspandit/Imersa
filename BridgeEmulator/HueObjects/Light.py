@@ -460,48 +460,153 @@ class Light():
         logging.debug("Start Dynamic scene play for " + self.name)
         if "dynamic_palette" in self.dynamics["status_values"]:
             self.dynamics["status"] = "dynamic_palette"
-        while self.dynamics["status"] == "dynamic_palette":
-            transition = int(30 / self.dynamics["speed"])
-            logging.debug("using transistiontime " + str(transition))
-            if self.modelid in ["LCT001", "LCT015", "LST002", "LCX002", "915005987201", "LCX004", "LCX006", "LCA005"]:
-                if index >= len(palette["color"]):
-                    index = 0
-                points = []
-                if self.modelid in ["LCX002", "915005987201", "LCX004", "LCX006"]:
-                    # for gradient lights - create smooth gradient loop animation
-                    points_capable = self.protocol_cfg.get("points_capable", 5)
-                    palette_length = len(palette["color"])
-                    
-                    # Create gradient points by cycling through palette with offset
-                    # This creates a smooth loop effect by shifting the gradient pattern
-                    for x in range(points_capable):
-                        palette_index = (index + x) % palette_length
-                        points.append(palette["color"][palette_index])
-                    
-                    self.setV2State(
-                        {"gradient": {"points": points}, "transitiontime": transition})
-                else:
+        
+        # Check if this is a WLED gradient model that should use palette effect
+        is_wled_gradient = (self.protocol == "wled" and 
+                           self.modelid in ["LCX002", "915005987201", "LCX004", "LCX006"])
+        
+        if is_wled_gradient:
+            # Use WLED's palette effect for smooth gradient animation
+            import requests
+            import json
+            from functions.colors import convert_xy
+            
+            logging.info(f"Starting WLED palette effect for {self.name}")
+            
+            # Get WLED connection info
+            ip = self.protocol_cfg["ip"]
+            segment_id = self.protocol_cfg.get("segment_id", 0)
+            
+            # Convert Hue palette colors to WLED custom palette
+            wled_colors = []
+            for color in palette["color"]:
+                rgb = convert_xy(color["xy"]["x"], color["xy"]["y"], 255)
+                # WLED uses hex colors in format RRGGBB
+                hex_color = '{:02x}{:02x}{:02x}'.format(int(rgb[0]), int(rgb[1]), int(rgb[2]))
+                wled_colors.append(hex_color)
+            
+            # Create custom palette string (up to 16 colors)
+            # WLED palette format: "RRGGBB,RRGGBB,RRGGBB..."
+            palette_string = ','.join(wled_colors[:16])
+            
+            # Calculate speed for WLED (0-255, where 128 is medium)
+            # Hue dynamics speed: 1.0 = slowest, higher = faster
+            speed_value = self.dynamics.get("speed", 1.0)
+            # Map to WLED speed: 1.0 -> 64 (slow), 5.0 -> 128 (medium), 10.0 -> 192 (fast)
+            wled_speed = min(255, int(speed_value * 25.6))
+            
+            # Get current brightness from tracked state
+            from lights.protocols.wled import LightStates
+            state_key = f"{ip}_{segment_id}"
+            current_brightness = 255
+            if state_key in LightStates and "bri" in LightStates[state_key]:
+                current_brightness = LightStates[state_key]["bri"]
+            
+            # Configure WLED to use palette effect
+            try:
+                # Build the JSON payload for WLED with palette effect and custom colors
+                # Convert colors to RGB arrays for WLED
+                color_arrays = []
+                for hex_color in wled_colors[:3]:  # Use up to 3 colors for the gradient
+                    r = int(hex_color[:2], 16)
+                    g = int(hex_color[2:4], 16)
+                    b = int(hex_color[4:6], 16)
+                    color_arrays.append([r, g, b])
+                
+                # Ensure we have at least 2 colors for a gradient
+                if len(color_arrays) < 2:
+                    color_arrays.append([255, 0, 0])  # Add red as fallback
+                if len(color_arrays) < 2:
+                    color_arrays.append([0, 255, 0])  # Add green as second fallback
+                
+                wled_payload = {
+                    "on": True,
+                    "bri": current_brightness,
+                    "seg": [{
+                        "id": segment_id,
+                        "fx": 37,  # Palette effect ID
+                        "sx": wled_speed,  # Effect speed (0-255)
+                        "ix": 128,  # Intensity (medium)
+                        "col": color_arrays,  # Set the colors for gradient
+                        "pal": 0  # Use default palette (will be overridden by col)
+                    }]
+                }
+                
+                response = requests.post(
+                    f"http://{ip}/json/state",
+                    json=wled_payload,
+                    timeout=3
+                )
+                
+                logging.info(f"WLED palette effect configured with speed {wled_speed} and {len(color_arrays)} colors")
+                
+            except Exception as e:
+                logging.error(f"Failed to configure WLED palette effect: {e}")
+            
+            # Keep the dynamic scene active but don't send continuous updates
+            # WLED will handle the animation internally
+            while self.dynamics["status"] == "dynamic_palette":
+                sleep(1)  # Just check status periodically
+            
+            # When dynamic scene stops, restore previous state
+            try:
+                # Turn off the effect
+                wled_payload = {
+                    "seg": [{
+                        "id": segment_id,
+                        "fx": 0  # Back to solid effect
+                    }]
+                }
+                requests.post(f"http://{ip}/json/state", json=wled_payload, timeout=3)
+                logging.info(f"WLED palette effect stopped for {self.name}")
+            except:
+                pass
+                
+        else:
+            # Original implementation for non-WLED or non-gradient lights
+            while self.dynamics["status"] == "dynamic_palette":
+                transition = int(30 / self.dynamics["speed"])
+                logging.debug("using transistiontime " + str(transition))
+                if self.modelid in ["LCT001", "LCT015", "LST002", "LCX002", "915005987201", "LCX004", "LCX006", "LCA005"]:
                     if index >= len(palette["color"]):
                         index = 0
-                    lightState = palette["color"][index]
-                    # based on youtube videos, the transition is slow
+                    points = []
+                    if self.modelid in ["LCX002", "915005987201", "LCX004", "LCX006"]:
+                        # for gradient lights - create smooth gradient loop animation
+                        points_capable = self.protocol_cfg.get("points_capable", 5)
+                        palette_length = len(palette["color"])
+                        
+                        # Create gradient points by cycling through palette with offset
+                        # This creates a smooth loop effect by shifting the gradient pattern
+                        for x in range(points_capable):
+                            palette_index = (index + x) % palette_length
+                            points.append(palette["color"][palette_index])
+                        
+                        self.setV2State(
+                            {"gradient": {"points": points}, "transitiontime": transition})
+                    else:
+                        if index >= len(palette["color"]):
+                            index = 0
+                        lightState = palette["color"][index]
+                        # based on youtube videos, the transition is slow
+                        lightState["transitiontime"] = transition
+                        self.setV2State(lightState)
+                elif self.modelid == "LTW001":
+                    if index == len(palette["color_temperature"]):
+                        index = 0
+                    lightState = palette["color_temperature"][index]
                     lightState["transitiontime"] = transition
                     self.setV2State(lightState)
-            elif self.modelid == "LTW001":
-                if index == len(palette["color_temperature"]):
-                    index = 0
-                lightState = palette["color_temperature"][index]
-                lightState["transitiontime"] = transition
-                self.setV2State(lightState)
-            else:
-                if index == len(palette["dimming"]):
-                    index = 0
-                lightState = palette["dimming"][index]
-                lightState["transitiontime"] = transition
-                self.setV2State(lightState)
-            sleep(transition / 10)
-            index += 1
-            logging.debug("Step forward dynamic scene " + self.name)
+                else:
+                    if index == len(palette["dimming"]):
+                        index = 0
+                    lightState = palette["dimming"][index]
+                    lightState["transitiontime"] = transition
+                    self.setV2State(lightState)
+                sleep(transition / 10)
+                index += 1
+                logging.debug("Step forward dynamic scene " + self.name)
+        
         logging.debug("Dynamic Scene " + self.name + " stopped.")
 
     def save(self):
