@@ -129,10 +129,29 @@ def manualAddLight(ip: str, protocol: str, config: Dict = {}) -> None:
         detectedLights = []
         # Include yeelight IP-probe discovery in auto mode (no multicast)
         for discover_func in [yeelight.discover, native_multi.discover, tasmota.discover, shelly.discover, esphome.discover]:
-            discover_func(detectedLights, [ip])
-        for light in detectedLights:
-            logging.info(f"Found light {light['protocol']} {light['name']}")
-            addNewLight(light["modelid"], light["name"], light["protocol"], light["protocol_cfg"])
+            try:
+                discover_func(detectedLights, [ip])
+            except Exception as e:
+                logging.debug(f"Auto manual-add discover error from {discover_func.__name__}: {e}")
+        if detectedLights:
+            for light in detectedLights:
+                logging.info(f"Found light {light['protocol']} {light['name']}")
+                addNewLight(light["modelid"], light["name"], light["protocol"], light["protocol_cfg"])
+        else:
+            # As a last resort, try Yeelight direct probe and add
+            try:
+                import yeelight as _yeelight
+                b = _yeelight.Bulb(ip)
+                props = b.get_properties()
+                if props and ("power" in props or "bg_power" in props) and ("bright" in props or "bg_bright" in props):
+                    mdl = "LCT015" if props.get("color_mode") in ["1", "3"] else "LTW001"
+                    lname = props.get("name") if props.get("name") else f"Yeelight {ip}"
+                    logging.info(f"Found light yeelight {lname}")
+                    addNewLight(mdl, lname, "yeelight", {"ip": ip, "id": ip, "backlight": False, "model": props.get("model", "")})
+                else:
+                    logging.info(f"Manual add auto: {ip} is not a Yeelight or LAN control disabled")
+            except Exception as e:
+                logging.info(f"Manual add auto failed for {ip}: {e}")
     else:
         config["ip"] = ip
         # Enrich Yeelight config (where possible) so it works without multicast discovery
@@ -141,7 +160,7 @@ def manualAddLight(ip: str, protocol: str, config: Dict = {}) -> None:
                 import yeelight as _yeelight
                 b = _yeelight.Bulb(ip)
                 props = b.get_properties()
-                if not props or ("power" not in props and "bg_power" not in props):
+                if not props or ("power" not in props and "bg_power" not in props) or ("bright" not in props and "bg_bright" not in props):
                     logging.info(f"Manual add rejected for {ip}: not a Yeelight or LAN control disabled")
                     return
                 # Choose a reasonable default modelid
@@ -273,16 +292,9 @@ def discover_lights(detectedLights: List[Dict], device_ips: List[str]) -> None:
     if bridgeConfig["config"]["homeassistant"]["enabled"]:
         homeAssistantWS.discover(detectedLights)
     if bridgeConfig["config"]["yeelight"]["enabled"]:
-        # Try multicast discovery first
+        # Multicast discovery only. For networks blocking multicast, use manual add
+        # or set a very specific IP with protocol "auto" from the UI.
         yeelight.discover(detectedLights)
-        # Fallback to TCP port scan-based discovery if multicast is blocked
-        try:
-            yeelight_ips = find_hosts(55443)
-        except Exception as e:
-            logging.debug(f"Yeelight: port-scan discovery failed: {e}")
-            yeelight_ips = []
-        if yeelight_ips:
-            yeelight.discover(detectedLights, yeelight_ips)
     # native_multi probe all esp8266 lights with firmware from diyhue repo
     if bridgeConfig["config"]["native_multi"]["enabled"]:
         native_multi.discover(detectedLights, device_ips)
