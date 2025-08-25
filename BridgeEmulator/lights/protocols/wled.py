@@ -135,7 +135,6 @@ def set_light(light, data):
     # Collect data for this specific light and send via WARLS
     send_warls_data(light, data)
 
-
 def send_warls_data(light, data):
     """Send data to WLED using the same approach as entertainment mode"""
     import socket
