@@ -438,7 +438,7 @@ class Light():
             # Map Hue dynamics speed (1..12) -> WLED (30..255)
             speed_value = float(self.dynamics.get("speed", 1.0))
             # speed_value = max(1.0, min(12.0, speed_value))
-            wled_speed = int(round(30 + (speed_value  * 255 )))
+            wled_speed = int(round( (speed_value  * 255 )-70))
             intensity = 128
 
             # Current brightness (optional)
