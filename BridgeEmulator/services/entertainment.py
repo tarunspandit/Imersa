@@ -146,6 +146,10 @@ def entertainmentService(group, user):
                 nativeLights = {}
                 esphomeLights = {}
                 mqttLights = []
+                # Clear wledLights lights list for new frame
+                for ip in list(wledLights.keys()):
+                    if "lights" in wledLights[ip]:
+                        wledLights[ip]["lights"] = []
                 haLights = []      # Batch Home Assistant lights
                 non_UDP_lights = []
 
@@ -515,7 +519,7 @@ def entertainmentService(group, user):
                                 base_color = entry["color"]
                                 
                                 # Use all collected gradient points for gradient models
-                                gpts = all_gradient_points if is_grad else []
+                                gpts = all_gradient_points if is_grad else entry.get("gradient_points", [])
 
                                 if is_grad and gpts:
                                     if len(gpts) == 1:
