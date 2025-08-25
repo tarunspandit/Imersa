@@ -468,13 +468,16 @@ class Light():
                     index = 0
                 points = []
                 if self.modelid in ["LCX002", "915005987201", "LCX004", "LCX006"]:
-                    # for gradient lights
-                    gradientIndex = index
-                    for x in range(self.protocol_cfg["points_capable"]):
-                        if gradientIndex >= len(palette["color"]):
-                            gradientIndex = 0
-                        points.append(palette["color"][gradientIndex])
-                        gradientIndex += 1
+                    # for gradient lights - create smooth gradient loop animation
+                    points_capable = self.protocol_cfg.get("points_capable", 5)
+                    palette_length = len(palette["color"])
+                    
+                    # Create gradient points by cycling through palette with offset
+                    # This creates a smooth loop effect by shifting the gradient pattern
+                    for x in range(points_capable):
+                        palette_index = (index + x) % palette_length
+                        points.append(palette["color"][palette_index])
+                    
                     self.setV2State(
                         {"gradient": {"points": points}, "transitiontime": transition})
                 else:
