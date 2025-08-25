@@ -7,17 +7,23 @@ from subprocess import Popen, PIPE
 from functions.colors import convert_rgb_xy, convert_xy
 import paho.mqtt.publish as publish
 import time
+
 logging = logManager.logger.get_logger(__name__)
 bridgeConfig = configManager.bridgeConfig.yaml_config
 
-cieTolerance = 0.03 # new frames will be ignored if the color  change is smaller than this values
-briTolerange = 16 # new frames will be ignored if the brightness change is smaller than this values
+cieTolerance = 0.03  # new frames will be ignored if the color change is smaller than this value
+briTolerange = 16    # new frames will be ignored if the brightness change is smaller than this value
 lastAppliedFrame = {}
 YeelightConnections = {}
+udp_socket_pool = {}  # Socket pool to prevent creating 600+ sockets/second
+
+# Models that support gradient segments
+GRADIENT_MODELS = {"LCX001", "LCX002", "LCX003", "915005987201", "LCX004", "LCX006"}
+
 
 def skipSimilarFrames(light, color, brightness):
-    if light not in lastAppliedFrame: # check if light exist in dictionary
-        lastAppliedFrame[light] = {"xy": [0,0], "bri": 0}
+    if light not in lastAppliedFrame:  # check if light exist in dictionary
+        lastAppliedFrame[light] = {"xy": [0, 0], "bri": 0}
 
     if lastAppliedFrame[light]["xy"][0] + cieTolerance < color[0] or color[0] < lastAppliedFrame[light]["xy"][0] - cieTolerance:
         lastAppliedFrame[light]["xy"] = color
@@ -30,6 +36,7 @@ def skipSimilarFrames(light, color, brightness):
         return 1
     return 0
 
+
 def getObject(v2uuid):
     for key, obj in bridgeConfig["lights"].items():
         if str(uuid.uuid5(uuid.NAMESPACE_URL, obj.id_v2 + 'entertainment')) == v2uuid:
@@ -37,435 +44,548 @@ def getObject(v2uuid):
     logging.info("element not found!")
     return False
 
+
 def findGradientStrip(group):
+    # Kept for compatibility if you still call it elsewhere
     for light in group.lights:
-        if light().modelid in ["LCX001", "LCX002", "LCX003", "915005987201", "LCX004"]:
+        if light().modelid in GRADIENT_MODELS:
             return light()
     return None
 
+
 def get_hue_entertainment_group(light, groupname):
-    group = requests.get("http://" + light.protocol_cfg["ip"] + "/api/" + light.protocol_cfg["hueUser"] + "/groups/", timeout=3)
-    #logging.debug("Returned Groups: " + group.text)
+    group = requests.get(
+        "http://" + light.protocol_cfg["ip"] + "/api/" + light.protocol_cfg["hueUser"] + "/groups/",
+        timeout=3
+    )
     groups = json.loads(group.text)
     out = -1
     for i, grp in groups.items():
-        #logging.debug("Group "  + i + " has Name " + grp["name"] + " and type " + grp["type"])
         if (grp["name"] == groupname) and (grp["type"] == "Entertainment") and (light.protocol_cfg["id"] in grp["lights"]):
             out = i
             logging.debug("Found Corresponding entertainment group with id " + out + " for light " + light.name)
     return int(out)
-udp_socket_pool = {}  # Socket pool to prevent creating 600+ sockets/second
+
 
 def entertainmentService(group, user):
     logging.debug("User: " + user.username)
     logging.debug("Key: " + user.client_key)
     bridgeConfig["groups"][group.id_v1].stream["owner"] = user.username
     bridgeConfig["groups"][group.id_v1].state = {"all_on": True, "any_on": True}
+
     lights_v2 = []
     lights_v1 = {}
-    hueGroup  = -1
+    hueGroup = -1
     hueGroupLights = {}
-    prev_frame_time = 0
-    new_frame_time = 0
     non_UDP_update_counter = 0
+
     for light in group.lights:
         lights_v1[int(light().id_v1)] = light()
-        if light().protocol == "hue" and get_hue_entertainment_group(light(), group.name) != -1: # If the lights' Hue bridge has an entertainment group with the same name as this current group, we use it to sync the lights.
+        if light().protocol == "hue" and get_hue_entertainment_group(light(), group.name) != -1:
             hueGroup = get_hue_entertainment_group(light(), group.name)
-            hueGroupLights[int(light().protocol_cfg["id"])] = [] # Add light id to list
+            hueGroupLights[int(light().protocol_cfg["id"])] = []  # Add light id to list
         bridgeConfig["lights"][light().id_v1].state["mode"] = "streaming"
         bridgeConfig["lights"][light().id_v1].state["on"] = True
         bridgeConfig["lights"][light().id_v1].state["colormode"] = "xy"
+
     v2LightNr = {}
     for channel in group.getV2Api()["channels"]:
-        lightObj =  getObject(channel["members"][0]["service"]["rid"])
+        lightObj = getObject(channel["members"][0]["service"]["rid"])
         if lightObj.id_v1 not in v2LightNr:
             v2LightNr[lightObj.id_v1] = 0
         else:
             v2LightNr[lightObj.id_v1] += 1
         lights_v2.append({"light": lightObj, "lightNr": v2LightNr[lightObj.id_v1]})
+
     logging.debug(lights_v1)
     logging.debug(lights_v2)
-    opensslCmd = ['openssl', 's_server', '-dtls', '-psk', user.client_key, '-psk_identity', user.username, '-nocert', '-accept', '2100', '-quiet']
+
+    opensslCmd = [
+        'openssl', 's_server', '-dtls', '-psk', user.client_key,
+        '-psk_identity', user.username, '-nocert', '-accept', '2100', '-quiet'
+    ]
     p = Popen(opensslCmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
-    if hueGroup != -1:  # If we have found a hue Brige containing a suitable entertainment group for at least one Lamp, we connect to it
+
+    if hueGroup != -1:
         h = HueConnection(bridgeConfig["config"]["hue"]["ip"])
         h.connect(hueGroup, hueGroupLights)
-        if h._connected == False:
-            hueGroupLights = {} # on a failed connection, empty the list
+        if h._connected is False:
+            hueGroupLights = {}  # on a failed connection, empty the list
 
     init = False
     frameBites = 10
     frameID = 1
     initMatchBytes = 0
     host_ip = bridgeConfig["config"]["ipaddress"]
-    wledLights = {}  # Persistent WLED state across frames
-    p.stdout.read(1) # read one byte so the init function will correctly detect the frameBites
+
+    # WLED device state (persist across frames for smoothing)
+    wledLights = {}
+
+    # FPS windowing
+    fps_window_start = time.time()
+    frames_in_window = 0
+
+    p.stdout.read(1)  # read one byte so the init function will correctly detect the frameBites
     try:
         while bridgeConfig["groups"][group.id_v1].stream["active"]:
-            new_frame_time = time.time()
             if not init:
                 readByte = p.stdout.read(1)
                 logging.debug(readByte)
-                if readByte in b'\x48\x75\x65\x53\x74\x72\x65\x61\x6d':
+                if readByte in b'\x48\x75\x65\x53\x74\x72\x65\x61\x6d':  # "HueStream"
                     initMatchBytes += 1
                 else:
                     initMatchBytes = 0
                 if initMatchBytes == 9:
                     frameBites = frameID - 8
                     logging.debug("frameBites: " + str(frameBites))
-                    p.stdout.read(frameBites - 9) # sync streaming bytes
+                    p.stdout.read(frameBites - 9)  # sync streaming bytes
                     init = True
                 frameID += 1
-
             else:
                 data = p.stdout.read(frameBites)
-                #logging.debug(",".join('{:02x}'.format(x) for x in data))
                 nativeLights = {}
                 esphomeLights = {}
                 mqttLights = []
-                # Don't reset wledLights completely, prepare for new frame
-                for ip in list(wledLights.keys()):
-                    wledLights[ip]["lights"] = []  # Clear lights list for new frame
-                haLights = []  # Batch Home Assistant lights
+                haLights = []      # Batch Home Assistant lights
                 non_UDP_lights = []
+
                 if data[:9].decode('utf-8') == "HueStream":
                     i = 0
                     apiVersion = 0
                     counter = 0
-                    if data[9] == 1: #api version 1
+
+                    if data[9] == 1:  # api version 1
                         i = 16
                         apiVersion = 1
                         counter = len(data)
-                    elif data[9] == 2: #api version 1
+                        channels = {}  # v1: light_id -> occurrence index for gradient segments
+                    elif data[9] == 2:  # api version 2
                         i = 52
                         apiVersion = 2
                         counter = len(group.getV2Api()["channels"]) * 7 + 52
-                    channels = {}
-                    while (i < counter):
-                        light = None
-                        r,g,b = 0,0,0
-                        bri = 0
-                        gradient_segment_id = None  # Track segment ID for gradient strips
+
+                    while i < counter:
                         if apiVersion == 1:
-                            if (data[i+1] * 256 + data[i+2]) in channels:
-                                channels[data[i+1] * 256 + data[i+2]] += 1
-                            else:
-                                channels[data[i+1] * 256 + data[i+2]] = 0
-                            if data[i] == 0:  # Type of device 0x00 = Light
-                                if data[i+1] * 256 + data[i+2] == 0:
-                                    break
-                                light = lights_v1[data[i+1] * 256 + data[i+2]]
-                            elif data[i] == 1:  # Type of device Gradient Strip
-                                light = findGradientStrip(group)
-                                gradient_segment_id = data[i+1] * 256 + data[i+2]  # Save segment ID for gradient strips
-                            if data[14] == 0: #rgb colorspace
-                                r = int((data[i+3] * 256 + data[i+4]) / 256)
-                                g = int((data[i+5] * 256 + data[i+6]) / 256)
-                                b = int((data[i+7] * 256 + data[i+8]) / 256)
-                            elif data[14] == 1: #cie colorspace
-                                x = (data[i+3] * 256 + data[i+4]) / 65535
-                                y = (data[i+5] * 256 + data[i+6]) / 65535
-                                bri = int((data[i+7] * 256 + data[i+8]) / 256)
-                                r, g, b = convert_xy(x, y, bri)
-                        elif apiVersion == 2:
-                            light = lights_v2[data[i]]["light"]
-                            if data[14] == 0: #rgb colorspace
-                                r = int((data[i+1] * 256 + data[i+2]) / 256)
-                                g = int((data[i+3] * 256 + data[i+4]) / 256)
-                                b = int((data[i+5] * 256 + data[i+6]) / 256)
-                            elif data[14] == 1: #cie colorspace
-                                x = (data[i+1] * 256 + data[i+2]) / 65535
-                                y = (data[i+3] * 256 + data[i+4]) / 65535
-                                bri = int((data[i+5] * 256 + data[i+6]) / 256)
-                                r, g, b = convert_xy(x, y, bri)
-                        if light == None:
-                            logging.info("error in light identification")
-                            break
-                        logging.debug("Frame: " + str(frameID) + " Light:" + str(light.name) + " RED: " + str(r) + ", GREEN: " + str(g) + ", BLUE: " + str(b) )
-                        proto = light.protocol
-                        if r == 0 and  g == 0 and  b == 0:
-                            light.state["on"] = False
-                        else:
-                            if bri == 0:
-                                light.state.update({"on": True, "bri": int((r + g + b) / 3), "xy": convert_rgb_xy(r, g, b), "colormode": "xy"})
-                            else:
-                                light.state.update({"on": True, "bri": bri, "xy": [x, y], "colormode": "xy"})
-                            #logging.debug("in X: " + str(x) + " Y: " + str(y) + " B: " + str(bri))
-                            #logging.debug("st X: " + str(light.state["xy"][0]) + " Y: " + str(light.state["xy"][1]) + " B: " + str(light.state["bri"]))
-                            #logging.debug("co XY: " + str(convert_rgb_xy(r, g, b)) + " B: " + str((r + g + b) / 3))
-                        logging.debug(f"Processing light: {light.name}, proto: {proto}, modelid: {light.modelid}, gradient_segment_id: {gradient_segment_id}")
-                        if proto in ["native", "native_multi", "native_single"]:
-                            if light.protocol_cfg["ip"] not in nativeLights:
-                                nativeLights[light.protocol_cfg["ip"]] = {}
-                            if apiVersion == 1:
-                                if light.modelid in ["LCX001", "LCX002", "LCX003", "915005987201", "LCX004"]:
-                                    if data[i] == 1: # individual strip address
-                                        nativeLights[light.protocol_cfg["ip"]][data[i+1] * 256 + data[i+2]] = [r, g, b]
-                                    elif data[i] == 0: # individual strip address
-                                        for x in range(7):
-                                            nativeLights[light.protocol_cfg["ip"]][x] = [r, g, b]
-                                else:
-                                    nativeLights[light.protocol_cfg["ip"]][light.protocol_cfg["light_nr"] - 1] = [r, g, b]
+                            # device type and ids
+                            dev_type = data[i]                # 0=Light (whole device), 1=Gradient point
+                            light_id = (data[i+1] << 8) | data[i+2]
 
-                            elif apiVersion == 2:
-                                if light.modelid in ["LCX001", "LCX002", "LCX003", "915005987201", "LCX004"]:
-                                    nativeLights[light.protocol_cfg["ip"]][lights_v2[data[i]]["lightNr"]] = [r, g, b]
-                                else:
-                                    nativeLights[light.protocol_cfg["ip"]][light.protocol_cfg["light_nr"] - 1] = [r, g, b]
-                        elif proto == "esphome":
-                            if light.protocol_cfg["ip"] not in esphomeLights:
-                                esphomeLights[light.protocol_cfg["ip"]] = {}
-                            bri = int(max(r,g,b))
-                            esphomeLights[light.protocol_cfg["ip"]]["color"] = [r, g, b, bri]
-                        elif proto == "mqtt":
-                            operation = skipSimilarFrames(light.id_v1, light.state["xy"], light.state["bri"])
-                            if operation == 1:
-                                mqttLights.append({"topic": light.protocol_cfg["command_topic"], "payload": json.dumps({"brightness": light.state["bri"], "transition": 0.2})})
-                            elif operation == 2:
-                                mqttLights.append({"topic": light.protocol_cfg["command_topic"], "payload": json.dumps({"color": {"x": light.state["xy"][0], "y": light.state["xy"][1]}, "transition": 0.15})})
-                        elif proto == "yeelight":
-                            enableMusic(light.protocol_cfg["ip"], host_ip)
-                            c = YeelightConnections[light.protocol_cfg["ip"]]
-                            operation = skipSimilarFrames(light.id_v1, light.state["xy"], light.state["bri"])
-                            if operation == 1:
-                                c.command("set_bright", [int(light.state["bri"] / 2.55), "smooth", 200])
-                                #c.command("set_bright", [int(bridgeConfig["lights"][str(lightId)]["state"]["bri"] / 2.55), "sudden", 0])
+                            # occurrence index per frame for gradient mapping
+                            if light_id in channels:
+                                channels[light_id] += 1
+                            else:
+                                channels[light_id] = 0
+                            seg_index = channels[light_id]
 
-                            elif operation == 2:
-                                c.command("set_rgb", [(r * 65536) + (g * 256) + b, "smooth", 200])
-                                #c.command("set_rgb", [(r * 65536) + (g * 256) + b, "sudden", 0])
-                        elif proto == "wled":
-                            if light.protocol_cfg["ip"] not in wledLights:
-                                # Initialize data structure for this WLED device
-                                # We'll collect all segments/lights that belong to this IP
-                                wledLights[light.protocol_cfg["ip"]] = {
-                                    "lights": [],  # List of lights (segments) for this device
-                                    "total_leds": 0,  # Will be calculated from all segments
-                                    "udp_port": light.protocol_cfg["udp_port"],
-                                    "pixel_data": None,  # Will store the final pixel data
-                                    "previous_colors": None,  # Store previous frame for decay
-                                    "decay_factor": 0.85  # How fast colors decay (0.85 = 15% decay per frame)
-                                }
-                            
-                            # Add this light (segment) to the device's light list
-                            segment_start = light.protocol_cfg.get("segment_start", 0)
-                            segment_stop = light.protocol_cfg.get("segment_stop", light.protocol_cfg.get("ledCount", 100))
-                            led_count = segment_stop - segment_start
-                            
-                            # Store this light's data for processing
-                            is_gradient_model = light.modelid in ["LCX001", "LCX002", "LCX003", "915005987201", "LCX004", "LCX006"]
-                            
-                            light_data = {
-                                "light": light,
-                                "segment_start": segment_start,
-                                "segment_stop": segment_stop,
-                                "led_count": led_count,
-                                "is_gradient": is_gradient_model,
-                                "color": [r, g, b],
-                                "gradient_points": []  # Will be filled if gradient model
-                            }
-                            
-                            if apiVersion == 1:
-                                if is_gradient_model:
-                                    # For gradient strips, collect gradient points
-                                    if gradient_segment_id is not None:
-                                        # This is a gradient point
-                                        light_data["gradient_points"].append({
-                                            "id": gradient_segment_id,
-                                            "color": [r, g, b]
-                                        })
-                                        logging.debug(f"Light {light.name}: Added gradient point id={gradient_segment_id}, color=[{r},{g},{b}]")
-                                    else:
-                                        # Single color for gradient model (device type 0)
-                                        light_data["gradient_points"] = [{
-                                            "id": 0,
-                                            "color": [r, g, b]
-                                        }]
-                            elif apiVersion == 2:
-                                if is_gradient_model:
-                                    # For v2 API, data[i] contains the segment index
-                                    segment_id = data[i]
-                                    light_data["gradient_points"].append({
-                                        "id": segment_id,
-                                        "color": [r, g, b]
+                            # identify light
+                            if light_id == 0 or light_id not in lights_v1:
+                                break
+                            light = lights_v1[light_id]
+
+                            # decode color space
+                            if data[14] == 0:  # RGB 16-bit -> 8-bit
+                                r = ((data[i+3] << 8) | data[i+4]) >> 8
+                                g = ((data[i+5] << 8) | data[i+6]) >> 8
+                                b = ((data[i+7] << 8) | data[i+8]) >> 8
+                                bri = 0
+                                x = y = None
+                            else:  # CIE
+                                x = ((data[i+3] << 8) | data[i+4]) / 65535.0
+                                y = ((data[i+5] << 8) | data[i+6]) / 65535.0
+                                bri = ((data[i+7] << 8) | data[i+8]) >> 8
+                                r, g, b = convert_xy(x, y, bri)
+
+                            # on/off + state
+                            if r == 0 and g == 0 and b == 0:
+                                light.state["on"] = False
+                            else:
+                                if bri == 0:
+                                    light.state.update({
+                                        "on": True,
+                                        "bri": int((r + g + b) / 3),
+                                        "xy": convert_rgb_xy(r, g, b),
+                                        "colormode": "xy"
                                     })
-                            
-                            # Add this light to the device's light list
-                            wledLights[light.protocol_cfg["ip"]]["lights"].append(light_data)
-                            
-                            # Update total LED count for this device
-                            current_max = wledLights[light.protocol_cfg["ip"]].get("total_leds", 0)
-                            wledLights[light.protocol_cfg["ip"]]["total_leds"] = max(current_max, segment_stop)
-                        elif proto == "hue" and int(light.protocol_cfg["id"]) in hueGroupLights:
-                            hueGroupLights[int(light.protocol_cfg["id"])] = [r,g,b]
-                        elif proto == "homeassistant_ws":
-                            # Batch Home Assistant lights for better performance
-                            haLights.append({
-                                "light": light,
-                                "data": {"bri": light.state["bri"], "xy": light.state["xy"], "on": light.state["on"]}
-                            })
-                        else:
-                            if light not in non_UDP_lights:
-                                non_UDP_lights.append(light)
+                                else:
+                                    light.state.update({"on": True, "bri": bri, "xy": [x, y], "colormode": "xy"})
 
-                        frameID += 1
-                        if frameID == 25:
-                            frameID = 1
-                        if apiVersion == 1:
-                            i = i + 9
-                        elif  apiVersion == 2:
-                            i = i + 7
+                            proto = light.protocol
+                            is_gradient_model = light.modelid in GRADIENT_MODELS
 
-                    if len(nativeLights) != 0:
+                            # NATIVE (UDP 2100)
+                            if proto in ["native", "native_multi", "native_single"]:
+                                ip = light.protocol_cfg["ip"]
+                                if ip not in nativeLights:
+                                    nativeLights[ip] = {}
+
+                                if is_gradient_model:
+                                    if dev_type == 1:
+                                        nativeLights[ip][seg_index] = [r, g, b]
+                                    else:
+                                        for xseg in range(7):
+                                            nativeLights[ip][xseg] = [r, g, b]
+                                else:
+                                    nativeLights[ip][light.protocol_cfg["light_nr"] - 1] = [r, g, b]
+
+                            # ESPHOME
+                            elif proto == "esphome":
+                                ip = light.protocol_cfg["ip"]
+                                if ip not in esphomeLights:
+                                    esphomeLights[ip] = {}
+                                esphomeLights[ip]["color"] = [r, g, b, int(max(r, g, b))]
+
+                            # MQTT
+                            elif proto == "mqtt":
+                                op = skipSimilarFrames(light.id_v1, light.state["xy"], light.state["bri"])
+                                if op == 1:
+                                    mqttLights.append({
+                                        "topic": light.protocol_cfg["command_topic"],
+                                        "payload": json.dumps({"brightness": light.state["bri"], "transition": 0.2})
+                                    })
+                                elif op == 2:
+                                    mqttLights.append({
+                                        "topic": light.protocol_cfg["command_topic"],
+                                        "payload": json.dumps({
+                                            "color": {"x": light.state["xy"][0], "y": light.state["xy"][1]},
+                                            "transition": 0.15
+                                        })
+                                    })
+
+                            # YEELIGHT
+                            elif proto == "yeelight":
+                                enableMusic(light.protocol_cfg["ip"], host_ip)
+                                c = YeelightConnections[light.protocol_cfg["ip"]]
+                                op = skipSimilarFrames(light.id_v1, light.state["xy"], light.state["bri"])
+                                if op == 1:
+                                    c.command("set_bright", [int(light.state["bri"] / 2.55), "smooth", 200])
+                                elif op == 2:
+                                    c.command("set_rgb", [(r * 65536) + (g * 256) + b, "smooth", 200])
+
+                            # WLED (Realtime UDP 21324, DNRGB)
+                            elif proto == "wled":
+                                ip = light.protocol_cfg["ip"]
+                                if ip not in wledLights:
+                                    wledLights[ip] = {
+                                        "lights": [],
+                                        "total_leds": 0,
+                                        "udp_port": light.protocol_cfg.get("udp_port", 21324),
+                                        "pixel_data": None,
+                                        "previous_colors": None,
+                                        "decay_factor": 0.85
+                                    }
+
+                                seg_start = light.protocol_cfg.get("segment_start", 0)
+                                seg_stop = light.protocol_cfg.get("segment_stop", light.protocol_cfg.get("ledCount", 100))
+                                led_count = seg_stop - seg_start
+
+                                entry = {
+                                    "light": light,
+                                    "segment_start": seg_start,
+                                    "segment_stop": seg_stop,
+                                    "led_count": led_count,
+                                    "is_gradient": is_gradient_model,
+                                    "color": [r, g, b],
+                                    "gradient_points": []
+                                }
+
+                                if is_gradient_model:
+                                    if dev_type == 1:
+                                        entry["gradient_points"].append({"id": seg_index, "color": [r, g, b]})
+                                    else:
+                                        entry["gradient_points"] = [{"id": 0, "color": [r, g, b]}]
+
+                                wledLights[ip]["lights"].append(entry)
+                                wledLights[ip]["total_leds"] = max(wledLights[ip]["total_leds"], seg_stop)
+
+                            # HUE passthrough
+                            elif proto == "hue" and int(light.protocol_cfg["id"]) in hueGroupLights:
+                                hueGroupLights[int(light.protocol_cfg["id"])] = [r, g, b]
+
+                            # Home Assistant WS (batch)
+                            elif proto == "homeassistant_ws":
+                                haLights.append({
+                                    "light": light,
+                                    "data": {"bri": light.state["bri"], "xy": light.state["xy"], "on": light.state["on"]}
+                                })
+
+                            else:
+                                if light not in non_UDP_lights:
+                                    non_UDP_lights.append(light)
+
+                            frameID += 1
+                            if frameID == 25:
+                                frameID = 1
+                            i += 9
+
+                        elif apiVersion == 2:
+                            ch_idx = data[i]
+                            light = lights_v2[ch_idx]["light"]
+                            seg_index = lights_v2[ch_idx]["lightNr"]  # 0..N segment per light
+
+                            if data[14] == 0:
+                                r = ((data[i+1] << 8) | data[i+2]) >> 8
+                                g = ((data[i+3] << 8) | data[i+4]) >> 8
+                                b = ((data[i+5] << 8) | data[i+6]) >> 8
+                                bri = 0
+                                x = y = None
+                            else:
+                                x = ((data[i+1] << 8) | data[i+2]) / 65535.0
+                                y = ((data[i+3] << 8) | data[i+4]) / 65535.0
+                                bri = ((data[i+5] << 8) | data[i+6]) >> 8
+                                r, g, b = convert_xy(x, y, bri)
+
+                            if r == 0 and g == 0 and b == 0:
+                                light.state["on"] = False
+                            else:
+                                if bri == 0:
+                                    light.state.update({
+                                        "on": True,
+                                        "bri": int((r + g + b) / 3),
+                                        "xy": convert_rgb_xy(r, g, b),
+                                        "colormode": "xy"
+                                    })
+                                else:
+                                    light.state.update({"on": True, "bri": bri, "xy": [x, y], "colormode": "xy"})
+
+                            proto = light.protocol
+                            is_gradient_model = light.modelid in GRADIENT_MODELS
+
+                            if proto in ["native", "native_multi", "native_single"]:
+                                ip = light.protocol_cfg["ip"]
+                                if ip not in nativeLights:
+                                    nativeLights[ip] = {}
+                                if is_gradient_model:
+                                    nativeLights[ip][seg_index] = [r, g, b]
+                                else:
+                                    nativeLights[ip][light.protocol_cfg["light_nr"] - 1] = [r, g, b]
+
+                            elif proto == "esphome":
+                                ip = light.protocol_cfg["ip"]
+                                if ip not in esphomeLights:
+                                    esphomeLights[ip] = {}
+                                esphomeLights[ip]["color"] = [r, g, b, int(max(r, g, b))]
+
+                            elif proto == "mqtt":
+                                op = skipSimilarFrames(light.id_v1, light.state["xy"], light.state["bri"])
+                                if op == 1:
+                                    mqttLights.append({
+                                        "topic": light.protocol_cfg["command_topic"],
+                                        "payload": json.dumps({"brightness": light.state["bri"], "transition": 0.2})
+                                    })
+                                elif op == 2:
+                                    mqttLights.append({
+                                        "topic": light.protocol_cfg["command_topic"],
+                                        "payload": json.dumps({
+                                            "color": {"x": light.state["xy"][0], "y": light.state["xy"][1]},
+                                            "transition": 0.15
+                                        })
+                                    })
+
+                            elif proto == "yeelight":
+                                enableMusic(light.protocol_cfg["ip"], host_ip)
+                                c = YeelightConnections[light.protocol_cfg["ip"]]
+                                op = skipSimilarFrames(light.id_v1, light.state["xy"], light.state["bri"])
+                                if op == 1:
+                                    c.command("set_bright", [int(light.state["bri"] / 2.55), "smooth", 200])
+                                elif op == 2:
+                                    c.command("set_rgb", [(r * 65536) + (g * 256) + b, "smooth", 200])
+
+                            elif proto == "wled":
+                                ip = light.protocol_cfg["ip"]
+                                if ip not in wledLights:
+                                    wledLights[ip] = {
+                                        "lights": [],
+                                        "total_leds": 0,
+                                        "udp_port": light.protocol_cfg.get("udp_port", 21324),
+                                        "pixel_data": None,
+                                        "previous_colors": None,
+                                        "decay_factor": 0.85
+                                    }
+
+                                seg_start = light.protocol_cfg.get("segment_start", 0)
+                                seg_stop = light.protocol_cfg.get("segment_stop", light.protocol_cfg.get("ledCount", 100))
+                                led_count = seg_stop - seg_start
+
+                                entry = {
+                                    "light": light,
+                                    "segment_start": seg_start,
+                                    "segment_stop": seg_stop,
+                                    "led_count": led_count,
+                                    "is_gradient": is_gradient_model,
+                                    "color": [r, g, b],
+                                    "gradient_points": []
+                                }
+
+                                if is_gradient_model:
+                                    entry["gradient_points"].append({"id": seg_index, "color": [r, g, b]})
+
+                                wledLights[ip]["lights"].append(entry)
+                                wledLights[ip]["total_leds"] = max(wledLights[ip]["total_leds"], seg_stop)
+
+                            elif proto == "hue" and int(light.protocol_cfg["id"]) in hueGroupLights:
+                                hueGroupLights[int(light.protocol_cfg["id"])] = [r, g, b]
+
+                            elif proto == "homeassistant_ws":
+                                haLights.append({
+                                    "light": light,
+                                    "data": {"bri": light.state["bri"], "xy": light.state["xy"], "on": light.state["on"]}
+                                })
+
+                            else:
+                                if light not in non_UDP_lights:
+                                    non_UDP_lights.append(light)
+
+                            frameID += 1
+                            if frameID == 25:
+                                frameID = 1
+                            i += 7
+
+                    # === SEND PHASE ===
+
+                    # native UDP 2100
+                    if nativeLights:
                         for ip in nativeLights.keys():
                             udpmsg = bytearray()
-                            for light in nativeLights[ip].keys():
-                                udpmsg += bytes([light]) + bytes([nativeLights[ip][light][0]]) + bytes([nativeLights[ip][light][1]]) + bytes([nativeLights[ip][light][2]])
-                            # Reuse socket from pool instead of creating new one
+                            for light_idx, rgb in nativeLights[ip].items():
+                                udpmsg += bytes([light_idx]) + bytes([rgb[0]]) + bytes([rgb[1]]) + bytes([rgb[2]])
                             if ip not in udp_socket_pool:
                                 udp_socket_pool[ip] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                             udp_socket_pool[ip].sendto(udpmsg, (ip.split(":")[0], 2100))
-                    if len(esphomeLights) != 0:
+
+                    # esphome UDP 2100 (0 + R + G + B + BRIGHT)
+                    if esphomeLights:
                         for ip in esphomeLights.keys():
                             udpmsg = bytearray()
-                            udpmsg += bytes([0]) + bytes([esphomeLights[ip]["color"][0]]) + bytes([esphomeLights[ip]["color"][1]]) + bytes([esphomeLights[ip]["color"][2]]) + bytes([esphomeLights[ip]["color"][3]])
-                            # Reuse socket from pool instead of creating new one
+                            c = esphomeLights[ip]["color"]
+                            udpmsg += bytes([0]) + bytes([c[0]]) + bytes([c[1]]) + bytes([c[2]]) + bytes([c[3]])
                             if ip not in udp_socket_pool:
                                 udp_socket_pool[ip] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                             udp_socket_pool[ip].sendto(udpmsg, (ip.split(":")[0], 2100))
-                    if len(mqttLights) != 0:
+
+                    # MQTT batch
+                    if mqttLights:
                         auth = None
                         if bridgeConfig["config"]["mqtt"]["mqttUser"] != "" and bridgeConfig["config"]["mqtt"]["mqttPassword"] != "":
-                            auth = {'username':bridgeConfig["config"]["mqtt"]["mqttUser"], 'password':bridgeConfig["config"]["mqtt"]["mqttPassword"]}
-                        publish.multiple(mqttLights, hostname=bridgeConfig["config"]["mqtt"]["mqttServer"], port=bridgeConfig["config"]["mqtt"]["mqttPort"], auth=auth)
-                    if len(wledLights) != 0:
-                        # Process each WLED device
+                            auth = {
+                                'username': bridgeConfig["config"]["mqtt"]["mqttUser"],
+                                'password': bridgeConfig["config"]["mqtt"]["mqttPassword"]
+                            }
+                        publish.multiple(
+                            mqttLights,
+                            hostname=bridgeConfig["config"]["mqtt"]["mqttServer"],
+                            port=bridgeConfig["config"]["mqtt"]["mqttPort"],
+                            auth=auth
+                        )
+
+                    # WLED DNRGB packet build & send
+                    if wledLights:
                         for ip in wledLights.keys():
-                            wled_data = wledLights[ip]
-                            lights_list = wled_data.get("lights", [])
-                            udp_port = wled_data.get("udp_port", 21324)
-                            total_leds = wled_data.get("total_leds", 100)
-                            previous_colors = wled_data.get("previous_colors")
-                            decay_factor = wled_data.get("decay_factor", 0.85)
-                            
-                            # Pre-allocate pixel data for entire strip using DNRGB protocol
-                            udpdata = bytearray(4 + total_leds * 3)  # header + start_index + RGB per LED
-                            udpdata[0] = 4  # DNRGB protocol
-                            udpdata[1] = 2  # 2 second timeout for streaming mode
-                            udpdata[2] = 0  # Start index (high byte) 
-                            udpdata[3] = 0  # Start index (low byte) - starting from LED 0
-                            
-                            # Initialize pixel array with black
+                            w = wledLights[ip]
+                            lights_list = w.get("lights", [])
+                            udp_port = w.get("udp_port", 21324)
+                            total_leds = w.get("total_leds", 100)
+                            previous_colors = w.get("previous_colors")
+                            decay_factor = w.get("decay_factor", 0.85)
+
+                            # header + start index (0)
+                            udpdata = bytearray(4 + total_leds * 3)
+                            udpdata[0] = 4  # DNRGB
+                            udpdata[1] = 2  # 2s timeout
+                            udpdata[2] = 0
+                            udpdata[3] = 0
+
                             pixel_colors = [[0, 0, 0] for _ in range(total_leds)]
-                            
-                            # Collect all gradient points from all lights for this device
-                            all_gradient_points = []
-                            for light_data in lights_list:
-                                if light_data.get("gradient_points"):
-                                    all_gradient_points.extend(light_data["gradient_points"])
-                            
-                            # Sort gradient points by ID for consistent ordering
-                            all_gradient_points.sort(key=lambda x: x["id"])
-                            
-                            # Process each light (segment) for this WLED device
-                            for light_data in lights_list:
-                                light = light_data["light"]
-                                segment_start = light_data["segment_start"]
-                                segment_stop = light_data["segment_stop"]
-                                led_count = light_data["led_count"]
-                                is_gradient = light_data["is_gradient"]
-                                base_color = light_data["color"]
-                                # Use all collected gradient points for gradient models
-                                gradient_points = all_gradient_points if is_gradient else light_data.get("gradient_points", [])
-                                
-                                # Process this light's pixels
-                                if is_gradient and gradient_points:
-                                    # Gradient model - interpolate colors across pixels
-                                    gradient_points.sort(key=lambda x: x["id"])
-                                    
-                                    if len(gradient_points) == 1:
-                                        # Single gradient point - apply to all pixels in segment
-                                        color = gradient_points[0]["color"]
-                                        for led_idx in range(segment_start, min(segment_stop, total_leds)):
+
+                            # paint segments
+                            for entry in lights_list:
+                                seg_start = entry["segment_start"]
+                                seg_stop = entry["segment_stop"]
+                                led_count = entry["led_count"]
+                                is_grad = entry["is_gradient"]
+                                base_color = entry["color"]
+                                gpts = entry.get("gradient_points", [])
+
+                                if is_grad and gpts:
+                                    gpts.sort(key=lambda x: x["id"])
+                                    if len(gpts) == 1:
+                                        color = gpts[0]["color"]
+                                        for led_idx in range(seg_start, min(seg_stop, total_leds)):
                                             pixel_colors[led_idx] = [color[0], color[1], color[2]]
-                                    elif len(gradient_points) > 1:
-                                        # Multiple gradient points - interpolate across segment
-                                        for led_idx in range(segment_start, min(segment_stop, total_leds)):
-                                            # Calculate position within segment (0.0 to 1.0)
-                                            local_position = (led_idx - segment_start) / max(1, led_count - 1)
-                                            
-                                            # Map position to gradient points
-                                            scaled_pos = local_position * (len(gradient_points) - 1)
-                                            lower_idx = int(scaled_pos)
-                                            upper_idx = min(lower_idx + 1, len(gradient_points) - 1)
-                                            
-                                            if lower_idx == upper_idx:
-                                                # Same index, use the color directly
-                                                color = gradient_points[lower_idx]["color"]
+                                    else:
+                                        for led_idx in range(seg_start, min(seg_stop, total_leds)):
+                                            local_pos = (led_idx - seg_start) / max(1, led_count - 1)
+                                            scaled = local_pos * (len(gpts) - 1)
+                                            li = int(scaled)
+                                            ui = min(li + 1, len(gpts) - 1)
+                                            if li == ui:
+                                                color = gpts[li]["color"]
                                                 pixel_colors[led_idx] = [color[0], color[1], color[2]]
                                             else:
-                                                # Interpolate between two gradient points
-                                                factor = scaled_pos - lower_idx
-                                                lower_color = gradient_points[lower_idx]["color"]
-                                                upper_color = gradient_points[upper_idx]["color"]
-                                                
-                                                r = int(lower_color[0] + (upper_color[0] - lower_color[0]) * factor)
-                                                g = int(lower_color[1] + (upper_color[1] - lower_color[1]) * factor)
-                                                b = int(lower_color[2] + (upper_color[2] - lower_color[2]) * factor)
-                                                
+                                                f = scaled - li
+                                                lc = gpts[li]["color"]
+                                                uc = gpts[ui]["color"]
+                                                r = int(lc[0] + (uc[0] - lc[0]) * f)
+                                                g = int(lc[1] + (uc[1] - lc[1]) * f)
+                                                b = int(lc[2] + (uc[2] - lc[2]) * f)
                                                 pixel_colors[led_idx] = [r, g, b]
                                 else:
-                                    # Non-gradient model - apply single color to segment
-                                    for led_idx in range(segment_start, min(segment_stop, total_leds)):
+                                    for led_idx in range(seg_start, min(seg_stop, total_leds)):
                                         pixel_colors[led_idx] = [base_color[0], base_color[1], base_color[2]]
-                            
-                            # Apply smoothing with previous frame if available
+
+                            # smoothing with previous frame
                             if previous_colors and len(previous_colors) == total_leds:
-                                mix_factor = 0.8  # 80% new color, 20% old for smoothing
+                                mix = 0.8  # 80% new, 20% old
                                 for led_idx in range(total_leds):
-                                    pixel_colors[led_idx][0] = int(pixel_colors[led_idx][0] * mix_factor + previous_colors[led_idx][0] * (1 - mix_factor))
-                                    pixel_colors[led_idx][1] = int(pixel_colors[led_idx][1] * mix_factor + previous_colors[led_idx][1] * (1 - mix_factor))
-                                    pixel_colors[led_idx][2] = int(pixel_colors[led_idx][2] * mix_factor + previous_colors[led_idx][2] * (1 - mix_factor))
-                            
-                            # Fill UDP packet with pixel data using DNRGB format
-                            idx = 4  # Start after header and start index
+                                    pixel_colors[led_idx][0] = int(pixel_colors[led_idx][0] * mix + previous_colors[led_idx][0] * (1 - mix))
+                                    pixel_colors[led_idx][1] = int(pixel_colors[led_idx][1] * mix + previous_colors[led_idx][1] * (1 - mix))
+                                    pixel_colors[led_idx][2] = int(pixel_colors[led_idx][2] * mix + previous_colors[led_idx][2] * (1 - mix))
+
+                            # fill packet
+                            idx = 4
                             for led_idx in range(total_leds):
-                                udpdata[idx] = max(0, min(255, pixel_colors[led_idx][0]))     # Red
-                                udpdata[idx+1] = max(0, min(255, pixel_colors[led_idx][1]))   # Green
-                                udpdata[idx+2] = max(0, min(255, pixel_colors[led_idx][2]))   # Blue
+                                udpdata[idx] = max(0, min(255, pixel_colors[led_idx][0]))
+                                udpdata[idx+1] = max(0, min(255, pixel_colors[led_idx][1]))
+                                udpdata[idx+2] = max(0, min(255, pixel_colors[led_idx][2]))
                                 idx += 3
-                            
-                            # Store current colors for next frame
+
+                            # store for next smoothing
                             wledLights[ip]["previous_colors"] = pixel_colors
-                            
-                            # Send optimized packet with all LED values
+
                             if ip not in udp_socket_pool:
                                 udp_socket_pool[ip] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                             udp_socket_pool[ip].sendto(udpdata, (ip.split(":")[0], udp_port))
-                    if len(hueGroupLights) != 0:
+
+                    # Hue passthrough
+                    if hueGroupLights:
                         h.send(hueGroupLights, hueGroup)
-                    if len(haLights) != 0:
-                        # Batch send all Home Assistant lights at once
+
+                    # Home Assistant batch
+                    if haLights:
                         from services.homeAssistantWS import homeassistant_ws_client
                         if homeassistant_ws_client and not homeassistant_ws_client.client_terminated:
                             try:
                                 homeassistant_ws_client.change_lights_batch(haLights)
                             except Exception as e:
                                 logging.debug(f"HA batch update failed: {e}")
-                    if len(non_UDP_lights) != 0:
-                        light = non_UDP_lights[non_UDP_update_counter]
-                        operation = skipSimilarFrames(light.id_v1, light.state["xy"], light.state["bri"])
-                        if operation == 1:
-                            light.setV1State({"bri": light.state["bri"], "transitiontime": 3})
-                        elif operation == 2:
-                            light.setV1State({"xy": light.state["xy"], "transitiontime": 3})
-                        non_UDP_update_counter = non_UDP_update_counter + 1 if non_UDP_update_counter < len(non_UDP_lights)-1 else 0
 
-                    if new_frame_time - prev_frame_time > 1:
-                        fps = 1.0 / (time.time() - new_frame_time)
-                        prev_frame_time = new_frame_time
-                        logging.info("Entertainment FPS: " + str(fps))
+                    # Non-UDP fallbacks round-robin
+                    if non_UDP_lights:
+                        light = non_UDP_lights[non_UDP_update_counter]
+                        op = skipSimilarFrames(light.id_v1, light.state["xy"], light.state["bri"])
+                        if op == 1:
+                            light.setV1State({"bri": light.state["bri"], "transitiontime": 3})
+                        elif op == 2:
+                            light.setV1State({"xy": light.state["xy"], "transitiontime": 3})
+                        non_UDP_update_counter = non_UDP_update_counter + 1 if non_UDP_update_counter < len(non_UDP_lights) - 1 else 0
+
+                    # FPS logging (windowed)
+                    frames_in_window += 1
+                    now = time.time()
+                    if now - fps_window_start >= 1.0:
+                        logging.info("Entertainment FPS: %.1f", frames_in_window / (now - fps_window_start))
+                        fps_window_start = now
+                        frames_in_window = 0
+
                 else:
                     logging.info("HueStream was missing in the frame")
                     p.kill()
@@ -473,8 +593,8 @@ def entertainmentService(group, user):
                         h.disconnect()
                     except UnboundLocalError:
                         pass
-    except Exception as e: #Assuming the only exception is a network timeout, please don't scream at me
-        logging.info("Entertainment Service was syncing and has timed out, stopping server and clearing state" + str(e))
+    except Exception as e:  # Assuming the only exception is a network timeout
+        logging.info("Entertainment Service timed out, stopping server and clearing state: " + str(e))
 
     p.kill()
     bridgeConfig["groups"][group.id_v1].stream["owner"] = None
@@ -484,7 +604,8 @@ def entertainmentService(group, user):
         pass
     bridgeConfig["groups"][group.id_v1].stream["active"] = False
     for light in group.lights:
-         bridgeConfig["lights"][light().id_v1].state["mode"] = "homeautomation"
+        bridgeConfig["lights"][light().id_v1].state["mode"] = "homeautomation"
+
     # Clean up socket pool
     for sock in udp_socket_pool.values():
         try:
@@ -493,6 +614,7 @@ def entertainmentService(group, user):
             pass
     udp_socket_pool.clear()
     logging.info("Entertainment service stopped")
+
 
 def enableMusic(ip, host_ip):
     if ip in YeelightConnections:
@@ -504,9 +626,11 @@ def enableMusic(ip, host_ip):
         YeelightConnections[ip] = c
         c.enableMusic(host_ip)
 
+
 def disableMusic(ip):
-    if ip in YeelightConnections: # Else? LOL
+    if ip in YeelightConnections:  # Else? LOL
         YeelightConnections[ip].disableMusic()
+
 
 class YeelightConnection(object):
     _music = False
@@ -517,8 +641,8 @@ class YeelightConnection(object):
     def __init__(self, ip):
         self._ip = ip
 
-    def connect(self, simple = False): #Use simple when you don't need to reconnect music mode
-        self.disconnect() #To clean old socket
+    def connect(self, simple=False):  # Use simple when you don't need to reconnect music mode
+        self.disconnect()  # To clean old socket
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._socket.settimeout(5)
         self._socket.connect((self._ip, int(55443)))
@@ -539,27 +663,27 @@ class YeelightConnection(object):
 
         self._host_ip = host_ip
 
-        tempSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) #Setup listener
+        tempSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # Setup listener
         tempSock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         tempSock.settimeout(5)
 
         tempSock.bind(("", 0))
-        port = tempSock.getsockname()[1] #Get listener port
+        port = tempSock.getsockname()[1]  # Get listener port
 
         tempSock.listen(3)
 
         if not self._connected:
-            self.connect(True) #Basic connect for set_music
+            self.connect(True)  # Basic connect for set_music
 
-        self.command("set_music", [1, host_ip, port]) #MAGIC
-        self.disconnect() #Disconnect from basic mode
+        self.command("set_music", [1, host_ip, port])  # MAGIC
+        self.disconnect()  # Disconnect from basic mode
 
         while 1:
             try:
                 conn, addr = tempSock.accept()
-                if addr[0] == self._ip: #Ignore wrong connections
-                    tempSock.close() #Close listener
-                    self._socket = conn #Replace socket with music one
+                if addr[0] == self._ip:  # Ignore wrong connections
+                    tempSock.close()  # Close listener
+                    self._socket = conn  # Replace socket with music one
                     self._connected = True
                     self._music = True
                     break
@@ -627,15 +751,20 @@ class HueConnection(object):
         self.disconnect()
 
         url = "HTTP://" + str(self._ip) + "/api/" + bridgeConfig["config"]["hue"]["hueUser"] + "/groups/" + str(self._entGroup)
-        r = requests.put(url, json={"stream":{"active":True}})
+        r = requests.put(url, json={"stream": {"active": True}})
         logging.debug("Outgoing connection to hue Bridge returned: " + r.text)
         try:
-            _opensslCmd = ['openssl', 's_client', '-quiet', '-cipher', 'PSK-AES128-GCM-SHA256', '-dtls', '-psk', bridgeConfig["config"]["hue"]["hueKey"], '-psk_identity', bridgeConfig["config"]["hue"]["hueUser"], '-connect', self._ip + ':2100']
-            self._connection = Popen(_opensslCmd, stdin=PIPE, stdout=None, stderr=None) # Open a dtls connection to the Hue bridge
+            _opensslCmd = [
+                'openssl', 's_client', '-quiet', '-cipher', 'PSK-AES128-GCM-SHA256', '-dtls',
+                '-psk', bridgeConfig["config"]["hue"]["hueKey"],
+                '-psk_identity', bridgeConfig["config"]["hue"]["hueUser"],
+                '-connect', self._ip + ':2100'
+            ]
+            self._connection = Popen(_opensslCmd, stdin=PIPE, stdout=None, stderr=None)  # Open a dtls connection to the Hue bridge
             self._connected = True
-            sleep(1) # Wait a bit to catch errors
+            sleep(1)  # Wait a bit to catch errors
             err = self._connection.poll()
-            if err != None:
+            if err is not None:
                 raise ConnectionError(err)
         except Exception as e:
             logging.info("Error connecting to Hue bridge for entertainment. Is a proper hueKey set? openssl connection returned: %s", e)
@@ -646,7 +775,7 @@ class HueConnection(object):
             url = "HTTP://" + str(self._ip) + "/api/" + bridgeConfig["config"]["hue"]["hueUser"] + "/groups/" + str(self._entGroup)
             if self._connected:
                 self._connection.kill()
-            requests.put(url, data={"stream":{"active":False}})
+            requests.put(url, json={"stream": {"active": False}})
             self._connected = False
         except:
             pass
@@ -654,26 +783,27 @@ class HueConnection(object):
     def send(self, lights, hueGroup):
         arr = bytearray("HueStream", 'ascii')
         msg = [
-                1, 0,     #Api version
-                0,        #Sequence number, not needed
-                0, 0,     #Zeroes
-                0,        #0: RGB Color space, 1: XY Brightness
-                0,        #Zero
-              ]
+            1, 0,  # Api version
+            0,     # Sequence number, not needed
+            0, 0,  # Zeroes
+            0,     # 0: RGB Color space, 1: XY Brightness
+            0,     # Zero
+        ]
         for id in lights:
             r, g, b = lights[id]
-            msg.extend([    0,      #Type: Light
-                            0, id,  #Light id (v1-type), 16 Bit
-                            r, r,   #Red (or X) as 16 (2 * 8) bit value
-                            g, g,   #Green (or Y)
-                            b, b,   #Blue (or Brightness)
-                            ])
+            msg.extend([
+                0,     # Type: Light
+                0, id, # Light id (v1-type), 16 Bit
+                r, r,  # Red (or X) as 16 (2 * 8) bit value
+                g, g,  # Green (or Y)
+                b, b,  # Blue (or Brightness)
+            ])
         arr.extend(msg)
         logging.debug("Outgoing data to other Hue Bridge: " + arr.hex(','))
         try:
             self._connection.stdin.write(arr)
             self._connection.stdin.flush()
         except:
-            logging.debug("Reconnecting to Hue bridge to sync. This is normal.") #Reconnect if the connection timed out
+            logging.debug("Reconnecting to Hue bridge to sync. This is normal.")  # Reconnect if the connection timed out
             self.disconnect()
             self.connect(hueGroup)
