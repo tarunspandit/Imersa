@@ -155,27 +155,7 @@ def send_warls_data(light, data):
         color = convert_xy(data["xy"][0], data["xy"][1], brightness)
         r, g, b = color[0], color[1], color[2]
     elif "ct" in data:
-        # For color temperature, use JSON API instead of UDP for better compatibility
-        ip = light.protocol_cfg['ip']
-        if ip in Connections:
-            c = Connections[ip]
-        else:
-            c = WledDevice(ip, light.protocol_cfg['mdns_name'])
-            Connections[ip] = c
-        
-        segment_id = light.protocol_cfg.get("segment_id", 0)
-        
-        # Use the existing JSON-based method for CT
-        ct_data = {"ct": data["ct"]}
-        if "bri" in data:
-            ct_data["bri"] = data["bri"]
-        if "on" in data:
-            ct_data["on"] = data["on"]
-            
-        send_light_data(c, light, ct_data)
-        return  # Return early since we handled this via JSON API
-        
-        # Fallback to RGB conversion if JSON API fails
+        # Convert color temperature to RGB and send via DNRGB UDP protocol
         kelvin = round(translateRange(data["ct"], 153, 500, 6500, 2000))
         color = kelvinToRgb(kelvin)
         # Apply brightness to color temperature
