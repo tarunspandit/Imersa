@@ -55,11 +55,14 @@ def discover(detectedLights, device_ips):
             
             # Create a light for each segment
             if x.segmentCount > 1:
-                # Multiple segments - create one light per segment
+                # Multiple segments - create one light per segment, skip segment 0
                 for seg_idx, segment in enumerate(x.segments):
+                    if seg_idx == 0:
+                        continue  # Skip segment 0 for multi-segment devices
+                    
                     segment_name = f"{x.name}_seg{seg_idx}"
-                    # Default to regular color light, user can change to gradient model
-                    modelid = "LST002"  
+                    # Default to LCT015 for solid color, user can change to gradient model
+                    modelid = "LCT015"  
                     
                     lights.append({"protocol": "wled",
                                    "name": segment_name,
@@ -80,8 +83,8 @@ def discover(detectedLights, device_ips):
             else:
                 # Single segment or no segments - create one light for entire strip
                 total_leds = sum(seg["len"] for seg in x.segments) if x.segments else x.ledCount
-                # Default to regular color light, user can change to gradient model
-                modelid = "LST002"
+                # Default to LCT015 for solid color, user can change to gradient model
+                modelid = "LCT015"
                 
                 lights.append({"protocol": "wled",
                                "name": x.name,
