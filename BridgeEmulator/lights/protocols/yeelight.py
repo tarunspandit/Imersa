@@ -80,15 +80,15 @@ def discover(detectedLights, device_ips=None):
                 if ip in known_ips:
                     continue
                 b = yeelight.Bulb(ip)
-                props = {}
-                try:
-                    props = b.get_properties()
-                except Exception as e:
-                    logging.debug(f"Yeelight probe failed for {ip}: {e}")
-                    # Still add a minimal entry if TCP port was open
-                # We may not know device unique id here; fall back to IP
+                props = b.get_properties()
+                # Validate this really looks like a Yeelight device
+                if not props or ("power" not in props and "bg_power" not in props) or "bright" not in props:
+                    logging.debug(f"Yeelight probe ignored {ip}: missing required properties {props}")
+                    continue
                 name = props.get("name") if props.get("name") not in [None, ""] else f"Yeelight {ip}"
-                modelid = "LCT015" if props.get("color_mode") in ["1", "3"] else "LTW001"
+                # If device supports RGB modes, prefer color model
+                color_mode = props.get("color_mode")
+                modelid = "LCT015" if color_mode in ["1", "3"] else "LTW001"
                 detectedLights.append({
                     "protocol": "yeelight",
                     "name": name,
@@ -97,7 +97,7 @@ def discover(detectedLights, device_ips=None):
                 })
                 known_ips.add(ip)
             except Exception as e:
-                logging.debug(f"Yeelight: error adding {host}: {e}")
+                logging.debug(f"Yeelight: error probing {host}: {e}")
 
     return detectedLights
 

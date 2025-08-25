@@ -14,7 +14,6 @@ import os
 import sys
 import logManager
 import subprocess
-from lights.discover import manualAddLight
 logging = logManager.logger.get_logger(__name__)
 bridgeConfig = configManager.bridgeConfig.yaml_config
 core = Blueprint('core',__name__)
@@ -182,33 +181,3 @@ def logout():
 @core.route('/wled-settings')
 def wled_settings():
     return render_template('wled_settings.html')
-
-@core.route('/add-light', methods=['GET', 'POST'])
-@flask_login.login_required
-def add_light_ui():
-    """Minimal UI to add a light by IP and protocol.
-    Useful when multicast discovery (e.g., Yeelight) is blocked on the network.
-    """
-    message = None
-    if request.method == 'POST':
-        ip = request.form.get('ip', '').strip()
-        protocol = request.form.get('protocol', 'yeelight').strip()
-        name = request.form.get('name', '').strip()
-        modelid = request.form.get('modelid', '').strip()
-        if not ip:
-            message = 'IP address is required.'
-        else:
-            cfg = {}
-            if name:
-                cfg['lightName'] = name
-            if modelid:
-                cfg['lightModelID'] = modelid
-            try:
-                manualAddLight(ip, protocol, cfg)
-                message = f'Added {protocol} light at {ip}.'
-            except Exception as e:
-                message = f'Error adding light: {e}'
-
-    # Prepare model list for optional selection
-    models = sorted(list(lightTypes.keys()))
-    return render_template('add_light.html', models=models, message=message)
