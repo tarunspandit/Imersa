@@ -159,7 +159,7 @@ class EntertainmentConfiguration():
                 "mode": "auto",
                 "node": {
                     "rid": str(uuid.uuid5(
-                        uuid.NAMESPACE_URL, self.lights[0]().id_v2 + 'entertainment')) if len(self.lights) > 0 else None,
+                        uuid.NAMESPACE_URL, self.lights[0]().id_v2 + 'entertainment')) if len(self.lights) > 0 and self.lights[0]() is not None else None,
                     "rtype": "entertainment"
                 }
             },
@@ -174,20 +174,21 @@ class EntertainmentConfiguration():
             result["active_streamer"] = {"rid": self.stream["owner"], "rtype": "auth_v1"}
         channel_id = 0
         for light in self.lights:
-            if light():
+            light_obj = light()  # Get the object once
+            if light_obj:
                 result["light_services"].append(
-                    {"rtype": "light", "rid": light().id_v2})
+                    {"rtype": "light", "rid": light_obj.id_v2})
                 entertainmentUuid = str(uuid.uuid5(
-                    uuid.NAMESPACE_URL, light().id_v2 + 'entertainment'))
-                result["locations"]["service_locations"].append({"equalization_factor": 1, "positions": self.locations[light()],
-                                                                 "service": {"rid": entertainmentUuid, "rtype": "entertainment"}, "position": self.locations[light()][0]})
+                    uuid.NAMESPACE_URL, light_obj.id_v2 + 'entertainment'))
+                result["locations"]["service_locations"].append({"equalization_factor": 1, "positions": self.locations[light_obj],
+                                                                 "service": {"rid": entertainmentUuid, "rtype": "entertainment"}, "position": self.locations[light_obj][0]})
 
                 loops = 1
                 gradientStrip = False
-                if light().modelid in ["LCX001", "LCX002", "LCX003"]:
+                if light_obj.modelid in ["LCX001", "LCX002", "LCX003"]:
                     loops = len(gradienStripPositions)
-                elif light().modelid in ["915005987201", "LCX004", "LCX006"]:
-                    loops = len(self.locations[light()])
+                elif light_obj.modelid in ["915005987201", "LCX004", "LCX006"]:
+                    loops = len(self.locations[light_obj])
                 for x in range(loops):
                     channel = {
                         "channel_id": channel_id,
@@ -201,22 +202,18 @@ class EntertainmentConfiguration():
                             }
                         ]
                     }
-                    if light().modelid in ["LCX001", "LCX002", "LCX003"]:
+                    if light_obj.modelid in ["LCX001", "LCX002", "LCX003"]:
                         channel["position"] = {"x": gradienStripPositions[x]["x"],
                                                "y": gradienStripPositions[x]["y"], "z": gradienStripPositions[x]["z"]}
-                    elif light().modelid in ["915005987201", "LCX004", "LCX006"]:
+                    elif light_obj.modelid in ["915005987201", "LCX004", "LCX006"]:
                         if x == 0:
-                            channel["position"] = {"x": self.locations[light(
-                            )][0]["x"], "y": self.locations[light()][0]["y"], "z": self.locations[light()][0]["z"]}
+                            channel["position"] = {"x": self.locations[light_obj][0]["x"], "y": self.locations[light_obj][0]["y"], "z": self.locations[light_obj][0]["z"]}
                         elif x == 2:
-                            channel["position"] = {"x": self.locations[light(
-                            )][1]["x"], "y": self.locations[light()][1]["y"], "z": self.locations[light()][1]["z"]}
+                            channel["position"] = {"x": self.locations[light_obj][1]["x"], "y": self.locations[light_obj][1]["y"], "z": self.locations[light_obj][1]["z"]}
                         else:
-                            channel["position"] = {"x": (self.locations[light()][0]["x"] + self.locations[light()][1]["x"]) / 2, "y": (self.locations[light(
-                            )][0]["y"] + self.locations[light()][1]["y"]) / 2, "z": (self.locations[light()][0]["z"] + self.locations[light()][1]["z"]) / 2}
+                            channel["position"] = {"x": (self.locations[light_obj][0]["x"] + self.locations[light_obj][1]["x"]) / 2, "y": (self.locations[light_obj][0]["y"] + self.locations[light_obj][1]["y"]) / 2, "z": (self.locations[light_obj][0]["z"] + self.locations[light_obj][1]["z"]) / 2}
                     else:
-                        channel["position"] = {"x": self.locations[light(
-                        )][0]["x"], "y": self.locations[light()][0]["y"], "z": self.locations[light()][0]["z"]}
+                        channel["position"] = {"x": self.locations[light_obj][0]["x"], "y": self.locations[light_obj][0]["y"], "z": self.locations[light_obj][0]["z"]}
 
                     result["channels"].append(channel)
                     channel_id += 1
