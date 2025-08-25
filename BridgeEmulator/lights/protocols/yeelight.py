@@ -7,24 +7,97 @@ logging = logManager.logger.get_logger(__name__)
 Connections = {}
 
 
-def discover(detectedLights):
+def discover(detectedLights, device_ips=None):
+    """Discover Yeelight bulbs.
+
+    Primary path uses multicast discovery via python-yeelight. As a fallback,
+    when device_ips are provided (e.g., results of a TCP port scan on 55443),
+    probe each IP directly to build a minimal light entry so users can add by IP
+    even when multicast is blocked.
+    """
     logging.debug("Yeelight: <discover> invoked!")
-    discover = yeelight.discover_bulbs()
-    for light in discover:
-        logging.info("Found YeeLight: " + light["capabilities"]["id"])
-        modelid = "LWB010"
-        if light["capabilities"]["model"] == "desklamp":
-            modelid = "LTW001"
-        elif light["capabilities"]["model"] in ["ceiling10", "ceiling20", "ceiling4", "ceilb"]:
-            detectedLights.append({"protocol": "yeelight", "name": light["capabilities"]["name"] + '-bg' if light["capabilities"]["name"] != '' else 'Yeelight ' + light["capabilities"]["id"], "modelid": "LCT015", "protocol_cfg": {"ip": light["ip"], "id": light["capabilities"]["id"] + "bg", "backlight": True, "model": light["capabilities"]["model"]}})
-            modelid = "LWB010" # second light must be CT only
-        elif light["capabilities"]["rgb"]:
-            modelid = "LCT015"
-        elif light["capabilities"]["ct"]:
-            modelid = "LTW001"
-        elif light["capabilities"]["xy"]:
-            modelid = "LLC010"
-        detectedLights.append({"protocol": "yeelight", "name": light["capabilities"]["name"] if light["capabilities"]["name"] != '' else 'Yeelight ' + light["capabilities"]["id"], "modelid": modelid, "protocol_cfg": {"ip": light["ip"], "id": light["capabilities"]["id"], "backlight": False, "model": light["capabilities"]["model"]}})
+
+    # Keep a set of already known IDs/IPs to avoid duplicates
+    known_ids = set()
+    known_ips = set()
+    for l in detectedLights:
+        if l.get("protocol") == "yeelight":
+            if "id" in l.get("protocol_cfg", {}):
+                known_ids.add(l["protocol_cfg"]["id"])
+            if "ip" in l.get("protocol_cfg", {}):
+                known_ips.add(l["protocol_cfg"]["ip"].split(":")[0])
+
+    # Multicast discovery first
+    try:
+        md = yeelight.discover_bulbs()
+    except Exception as e:
+        logging.debug(f"Yeelight: multicast discovery failed: {e}")
+        md = []
+
+    for light in md:
+        try:
+            cap = light.get("capabilities", {})
+            dev_id = cap.get("id")
+            ip = light.get("ip")
+            if not ip:
+                continue
+            if dev_id in known_ids or ip in known_ips:
+                continue
+            logging.info("Found YeeLight: " + str(dev_id))
+            modelid = "LWB010"
+            if cap.get("model") == "desklamp":
+                modelid = "LTW001"
+            elif cap.get("model") in ["ceiling10", "ceiling20", "ceiling4", "ceilb"]:
+                detectedLights.append({
+                    "protocol": "yeelight",
+                    "name": (cap.get("name") + '-bg') if cap.get("name") not in [None, ""] else 'Yeelight ' + str(dev_id),
+                    "modelid": "LCT015",
+                    "protocol_cfg": {"ip": ip, "id": str(dev_id) + "bg", "backlight": True, "model": cap.get("model")}
+                })
+                modelid = "LWB010"  # second light must be CT only
+            elif cap.get("rgb"):
+                modelid = "LCT015"
+            elif cap.get("ct"):
+                modelid = "LTW001"
+            elif cap.get("xy"):
+                modelid = "LLC010"
+            detectedLights.append({
+                "protocol": "yeelight",
+                "name": cap.get("name") if cap.get("name") not in [None, ""] else 'Yeelight ' + str(dev_id),
+                "modelid": modelid,
+                "protocol_cfg": {"ip": ip, "id": str(dev_id), "backlight": False, "model": cap.get("model")}
+            })
+            known_ids.add(str(dev_id))
+            known_ips.add(ip)
+        except Exception as e:
+            logging.debug(f"Yeelight: error parsing multicast discovery entry: {e}")
+
+    # Fallback: probe provided IPs directly (no multicast)
+    if device_ips:
+        for host in device_ips:
+            try:
+                ip = host.split(":")[0]
+                if ip in known_ips:
+                    continue
+                b = yeelight.Bulb(ip)
+                props = {}
+                try:
+                    props = b.get_properties()
+                except Exception as e:
+                    logging.debug(f"Yeelight probe failed for {ip}: {e}")
+                    # Still add a minimal entry if TCP port was open
+                # We may not know device unique id here; fall back to IP
+                name = props.get("name") if props.get("name") not in [None, ""] else f"Yeelight {ip}"
+                modelid = "LCT015" if props.get("color_mode") in ["1", "3"] else "LTW001"
+                detectedLights.append({
+                    "protocol": "yeelight",
+                    "name": name,
+                    "modelid": modelid,
+                    "protocol_cfg": {"ip": ip, "id": ip, "backlight": False, "model": props.get("model", "")}
+                })
+                known_ips.add(ip)
+            except Exception as e:
+                logging.debug(f"Yeelight: error adding {host}: {e}")
 
     return detectedLights
 
@@ -92,7 +165,7 @@ def get_light_state(light):
     state = {}
     light_data = c.get_properties()
     prefix = ''
-    if light.protocol_cfg["backlight"]:
+    if light.protocol_cfg.get("backlight"):
         prefix = "bg_"
     if light_data[prefix + "power"] == "on": #powerstate
         state['on'] = True
