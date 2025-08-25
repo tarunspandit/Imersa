@@ -761,6 +761,7 @@ class YeelightConnection(object):
             except Exception:
                 pass
 
+        logging.info("Yeelight music: advertising %s:%s", local_host_ip, port)
         self.command("set_music", [1, local_host_ip, port])  # MAGIC
         self.disconnect()  # Disconnect from basic mode
 
