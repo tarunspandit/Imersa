@@ -12,6 +12,8 @@ logging = logManager.logger.get_logger(__name__)
 
 discovered_lights = []
 Connections = {}
+# Local state tracking to avoid querying WLED for current values
+LightStates = {}  # Format: {"ip_segment": {"bri": 255, "xy": [0.5, 0.5], "ct": None}}
 
 
 def on_mdns_discover(zeroconf, service_type, name, state_change):
@@ -146,31 +148,36 @@ def send_warls_data(light, data):
         destructured_data = data["lights"][list(data["lights"].keys())[0]]
         data = destructured_data
     
-    # Handle brightness - if not provided, get current brightness from WLED
+    # Get light state key for local tracking
+    ip = light.protocol_cfg['ip']
+    segment_id = light.protocol_cfg.get("segment_id", 0)
+    state_key = f"{ip}_{segment_id}"
+    
+    # Initialize or get existing state
+    if state_key not in LightStates:
+        LightStates[state_key] = {"bri": 255, "xy": [0.5, 0.5], "ct": None}
+    
+    current_state = LightStates[state_key]
+    
+    # Handle brightness - if not provided, use tracked brightness
     if "bri" in data:
         brightness = max(1, min(255, data["bri"]))
-    elif "xy" in data or "ct" in data:
-        # For color changes without brightness, preserve current brightness
-        ip = light.protocol_cfg['ip']
-        if ip in Connections:
-            c = Connections[ip]
-        else:
-            c = WledDevice(ip, light.protocol_cfg['mdns_name'])
-            Connections[ip] = c
-        
-        segment_id = light.protocol_cfg.get("segment_id", 0)
-        current_state = c.getSegState(segment_id)
-        brightness = current_state.get("bri", 255) if current_state else 255
+        current_state["bri"] = brightness  # Update tracked state
+    else:
+        brightness = current_state["bri"]
     
-    # Extract RGB values
+    # Extract RGB values and update tracked state
     if "xy" in data:
-        # For XY colors, use full brightness in conversion, then preserve current brightness
+        # For XY colors, use full brightness in conversion, then apply current brightness
         color = convert_xy(data["xy"][0], data["xy"][1], 255)
         r, g, b = color[0], color[1], color[2]
         # Apply current brightness to the color
         r = int(r * brightness / 255)
         g = int(g * brightness / 255)
         b = int(b * brightness / 255)
+        # Update tracked state
+        current_state["xy"] = [data["xy"][0], data["xy"][1]]
+        current_state["ct"] = None  # Clear CT when XY is set
     elif "ct" in data:
         # Convert color temperature to RGB and apply current brightness
         kelvin = round(translateRange(data["ct"], 153, 500, 6500, 2000))
@@ -179,25 +186,26 @@ def send_warls_data(light, data):
         r = int(color[0] * brightness / 255)
         g = int(color[1] * brightness / 255) 
         b = int(color[2] * brightness / 255)
+        # Update tracked state
+        current_state["ct"] = data["ct"]
+        current_state["xy"] = None  # Clear XY when CT is set
     elif "bri" in data and ("xy" not in data and "ct" not in data):
-        # Brightness-only change - get current color from WLED state
-        ip = light.protocol_cfg['ip']
-        if ip in Connections:
-            c = Connections[ip]
-        else:
-            c = WledDevice(ip, light.protocol_cfg['mdns_name'])
-            Connections[ip] = c
-        
-        segment_id = light.protocol_cfg.get("segment_id", 0)
-        current_state = c.getSegState(segment_id)
-        if "xy" in current_state:
-            # Get the color at full brightness, then apply new brightness
+        # Brightness-only change - use tracked color state
+        if current_state["xy"]:
+            # Use tracked XY color
             color = convert_xy(current_state["xy"][0], current_state["xy"][1], 255)
             r = int(color[0] * brightness / 255)
             g = int(color[1] * brightness / 255)
             b = int(color[2] * brightness / 255)
+        elif current_state["ct"]:
+            # Use tracked CT color
+            kelvin = round(translateRange(current_state["ct"], 153, 500, 6500, 2000))
+            color = kelvinToRgb(kelvin)
+            r = int(color[0] * brightness / 255)
+            g = int(color[1] * brightness / 255) 
+            b = int(color[2] * brightness / 255)
         else:
-            # Fallback to white if no color info available
+            # Fallback to white if no tracked color
             r = brightness
             g = brightness  
             b = brightness
