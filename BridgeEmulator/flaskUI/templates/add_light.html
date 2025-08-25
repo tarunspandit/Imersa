@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Add Light</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 24px; }
+        .container { max-width: 540px; margin: 0 auto; }
+        label { display: block; margin-top: 12px; }
+        input, select { width: 100%; padding: 8px; margin-top: 4px; }
+        button { margin-top: 16px; padding: 10px 16px; }
+        .msg { margin-top: 12px; color: #333; }
+    </style>
+    <script>
+        function toggleModel() {
+            var proto = document.getElementById('protocol').value;
+            var modelRow = document.getElementById('model-row');
+            modelRow.style.display = (proto === 'yeelight' || proto === 'auto') ? 'block' : 'block';
+        }
+    </script>
+    </head>
+<body>
+<div class="container">
+    <h2>Manual Add Light</h2>
+    {% if message %}
+    <div class="msg">{{ message }}</div>
+    {% endif %}
+    <form method="POST">
+        <label for="ip">IP Address</label>
+        <input id="ip" name="ip" type="text" placeholder="192.168.1.50" required>
+
+        <label for="protocol">Protocol</label>
+        <select id="protocol" name="protocol" onchange="toggleModel()">
+            <option value="yeelight" selected>yeelight</option>
+            <option value="auto">auto (probe IP)</option>
+            <option value="wled">wled</option>
+            <option value="tasmota">tasmota</option>
+            <option value="native_multi">native_multi</option>
+            <option value="esphome">esphome</option>
+        </select>
+
+        <label for="name">Name (optional)</label>
+        <input id="name" name="name" type="text" placeholder="My Light">
+
+        <label for="modelid">Model ID (optional)</label>
+        <select id="modelid" name="modelid">
+            <option value="">(auto)</option>
+            {% for m in models %}
+                <option value="{{ m }}">{{ m }}</option>
+            {% endfor %}
+        </select>
+
+        <button type="submit">Add Light</button>
+    </form>
+
+    <p style="margin-top:16px;">
+        Tip: If Yeelight discovery via Scan doesn’t work on your network (no multicast),
+        add by IP here. Ensure LAN control is enabled in the Yeelight app.
+    </p>
+</div>
+</body>
+</html>
+

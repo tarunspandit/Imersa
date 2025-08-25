@@ -127,13 +127,40 @@ def manualAddLight(ip: str, protocol: str, config: Dict = {}) -> None:
     name = config.get("lightName", "New Light")
     if protocol == "auto":
         detectedLights = []
-        for discover_func in [native_multi.discover, tasmota.discover, shelly.discover, esphome.discover]:
-            discover_func(detectedLights, [ip])
+        # Include yeelight IP-probe discovery in auto mode (no multicast)
+        for discover_func in [yeelight.discover, native_multi.discover, tasmota.discover, shelly.discover, esphome.discover]:
+            try:
+                discover_func(detectedLights, [ip])
+            except TypeError:
+                # Some discover signatures require additional params; ignore here
+                discover_func(detectedLights, [ip])
         for light in detectedLights:
             logging.info(f"Found light {light['protocol']} {light['name']}")
             addNewLight(light["modelid"], light["name"], light["protocol"], light["protocol_cfg"])
     else:
         config["ip"] = ip
+        # Enrich Yeelight config (where possible) so it works without multicast discovery
+        if protocol == "yeelight":
+            try:
+                import yeelight as _yeelight
+                b = _yeelight.Bulb(ip)
+                props = {}
+                try:
+                    props = b.get_properties()
+                except Exception as e:
+                    logging.debug(f"Yeelight manual add probe failed for {ip}: {e}")
+                # Choose a reasonable default modelid
+                mdl = "LCT015" if props.get("color_mode") in ["1", "3"] else "LTW001"
+                if modelid == "LCT015":
+                    modelid = mdl
+                # Ensure required fields exist
+                config.setdefault("id", ip)
+                config.setdefault("backlight", False)
+                config.setdefault("model", props.get("model", ""))
+                if name == "New Light":
+                    name = props.get("name") if props.get("name") else f"Yeelight {ip}"
+            except Exception as e:
+                logging.debug(f"Yeelight manual add enrichment error: {e}")
         addNewLight(modelid, name, protocol, config)
 
 def discoveryEvent() -> None:
@@ -195,6 +222,17 @@ def is_light_matching(lightObj: Light.Light, light: Dict) -> bool:
                 lightObj.protocol_cfg["light_nr"] == light["protocol_cfg"]["light_nr"] and
                 lightObj.modelid == light["modelid"])
     if protocol in ["yeelight", "tasmota", "tradfri", "hyperion", "tpkasa"]:
+        # Prefer matching by unique id when available; fall back to IP for Yeelight
+        if protocol == "yeelight":
+            obj_id = lightObj.protocol_cfg.get("id")
+            new_id = light["protocol_cfg"].get("id")
+            if obj_id and new_id and obj_id == new_id and lightObj.modelid == light["modelid"]:
+                return True
+            # Fallback: match by IP if ids are missing or differ (manual add)
+            return (
+                lightObj.protocol_cfg.get("ip") == light["protocol_cfg"].get("ip")
+                and lightObj.modelid == light["modelid"]
+            )
         return lightObj.protocol_cfg["id"] == light["protocol_cfg"]["id"] and lightObj.modelid == light["modelid"]
     if protocol in ["shelly", "native", "native_single", "esphome", "elgato"]:
         return lightObj.protocol_cfg["mac"] == light["protocol_cfg"]["mac"] and lightObj.modelid == light["modelid"]
@@ -239,7 +277,16 @@ def discover_lights(detectedLights: List[Dict], device_ips: List[str]) -> None:
     if bridgeConfig["config"]["homeassistant"]["enabled"]:
         homeAssistantWS.discover(detectedLights)
     if bridgeConfig["config"]["yeelight"]["enabled"]:
+        # Try multicast discovery first
         yeelight.discover(detectedLights)
+        # Fallback to TCP port scan-based discovery if multicast is blocked
+        try:
+            yeelight_ips = find_hosts(55443)
+        except Exception as e:
+            logging.debug(f"Yeelight: port-scan discovery failed: {e}")
+            yeelight_ips = []
+        if yeelight_ips:
+            yeelight.discover(detectedLights, yeelight_ips)
     # native_multi probe all esp8266 lights with firmware from diyhue repo
     if bridgeConfig["config"]["native_multi"]["enabled"]:
         native_multi.discover(detectedLights, device_ips)
