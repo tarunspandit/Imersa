@@ -57,18 +57,20 @@ def discover(detectedLights, device_ips):
             if x.segmentCount > 1:
                 # Multiple segments - create one light per segment, skip segment 0
                 for seg_idx in range(1, x.segmentCount):  # Start from 1, skip 0
-                    # Use segment data if available, otherwise estimate
-                    if seg_idx < len(x.segments):
+                    try:
                         segment = x.segments[seg_idx]
                         segment_start = segment["start"]
-                        segment_stop = segment["stop"]
+                        segment_stop = segment["stop"] 
                         led_count = segment["len"]
-                    else:
-                        # Estimate segment boundaries if segment data not available
+                        logging.debug(f"<WLED> Processing segment {seg_idx}: start={segment_start}, stop={segment_stop}, len={led_count}")
+                    except (IndexError, KeyError) as e:
+                        logging.error(f"<WLED> Error accessing segment {seg_idx}: {e}")
+                        # Estimate segment boundaries as fallback
                         leds_per_segment = x.ledCount // x.segmentCount
                         segment_start = seg_idx * leds_per_segment
                         segment_stop = (seg_idx + 1) * leds_per_segment
                         led_count = leds_per_segment
+                        logging.debug(f"<WLED> Using estimated segment {seg_idx}: start={segment_start}, stop={segment_stop}, len={led_count}")
                     
                     segment_name = f"{x.name}_seg{seg_idx}"
                     modelid = "LCT015"  # Default to solid color
@@ -114,8 +116,9 @@ def discover(detectedLights, device_ips):
             
             for light in lights:
                 detectedLights.append(light)
-        except:
-            break
+        except Exception as e:
+            logging.error(f"<WLED> Failed to process device {device[1]}: {e}")
+            continue
 
 
 def set_light(light, data):
