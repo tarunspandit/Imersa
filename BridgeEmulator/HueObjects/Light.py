@@ -513,13 +513,13 @@ class Light():
             logging.info(f"Dynamic scene speed value: {speed_value}")
             # Linear mapping: 1->30, 12->255
             # Ensure we properly scale across the full range
-            if speed_value <= 1:
-                wled_speed = 30
-            elif speed_value >= 12:
-                wled_speed = 255
-            else:
-                # Linear interpolation between 30 and 255
-                wled_speed = int(30 + ((speed_value - 1) * ((255 - 30) / (12 - 1))))
+            # if speed_value <= 1:
+            #     wled_speed = 30
+            # elif speed_value >= 12:
+            #     wled_speed = 255
+            # else:
+            #     # Linear interpolation between 30 and 255
+            wled_speed = int(speed_value*255)
             logging.info(f"Calculated WLED speed: {wled_speed}")
             
             # Get current brightness from tracked state
