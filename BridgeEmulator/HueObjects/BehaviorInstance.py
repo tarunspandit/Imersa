@@ -1,4 +1,5 @@
 import uuid
+import sys
 import logManager
 from HueObjects import genV2Uuid, StreamEvent
 from datetime import datetime, timezone
@@ -23,12 +24,20 @@ class BehaviorInstance():
         StreamEvent(streamMessage)
 
     def __del__(self):
-        streamMessage = {"creationtime": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                         "data": [{"id": self.id_v2, "type": "behavior_instance"}],
-                         "id": str(uuid.uuid4()),
-                         "type": "delete"
-                         }
-        StreamEvent(streamMessage)
+        try:
+            if getattr(sys, 'meta_path', None) is None:
+                return
+        except Exception:
+            return
+        try:
+            streamMessage = {"creationtime": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                             "data": [{"id": self.id_v2, "type": "behavior_instance"}],
+                             "id": str(uuid.uuid4()),
+                             "type": "delete"
+                             }
+            StreamEvent(streamMessage)
+        except Exception:
+            pass
         logging.info(self.name + " behaviour instance was destroyed.")
 
     def getV2Api(self):
