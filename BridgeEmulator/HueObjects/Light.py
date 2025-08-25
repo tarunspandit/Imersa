@@ -453,10 +453,9 @@ class Light():
                 "fx": fx_palette_id,
                 "sx": wled_speed,
                 "ix": intensity,
-                "cl": 0,
                 "pal": set_colors_pal_id,  # numeric palette id
                 "col": rgb_colors,         # 3 color slots for Set Colors
-                "c1": 128,                 # stretch
+                "c1": 0,                 # stretch
                 "c2": 0,                   # rotation
                 "c3": 16                   # animate shift
             }
