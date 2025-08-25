@@ -550,7 +550,7 @@ class Light():
                     "fx": 65,  # Palette effect (index 65)
                     "sx": wled_speed,  # Effect speed (0-255)
                     "ix": 128,  # Intensity
-                    "pal": 0,  # Use default palette (will be overridden by custom)
+                    "pal": 6,  # Use default palette (will be overridden by custom)
                     "palette": palette_data  # Custom palette definition
                 }
                 
