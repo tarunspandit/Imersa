@@ -155,7 +155,7 @@ def send_warls_data(light, data):
     
     # Initialize or get existing state
     if state_key not in LightStates:
-        LightStates[state_key] = {"bri": 255, "xy": [0.5, 0.5], "ct": None}
+        LightStates[state_key] = {"bri": 255, "xy": [0.5, 0.5], "ct": None, "gradient": None}
     
     current_state = LightStates[state_key]
     
@@ -178,6 +178,7 @@ def send_warls_data(light, data):
         # Update tracked state
         current_state["xy"] = [data["xy"][0], data["xy"][1]]
         current_state["ct"] = None  # Clear CT when XY is set
+        current_state["gradient"] = None  # Clear gradient when XY is set
     elif "ct" in data:
         # Convert color temperature to RGB and apply current brightness
         kelvin = round(translateRange(data["ct"], 153, 500, 6500, 2000))
@@ -189,7 +190,8 @@ def send_warls_data(light, data):
         # Update tracked state
         current_state["ct"] = data["ct"]
         current_state["xy"] = None  # Clear XY when CT is set
-    elif "bri" in data and ("xy" not in data and "ct" not in data):
+        current_state["gradient"] = None  # Clear gradient when CT is set
+    elif "bri" in data and ("xy" not in data and "ct" not in data and "gradient" not in data):
         # Brightness-only change - use tracked color state
         if current_state["xy"]:
             # Use tracked XY color
@@ -204,6 +206,10 @@ def send_warls_data(light, data):
             r = int(color[0] * brightness / 255)
             g = int(color[1] * brightness / 255) 
             b = int(color[2] * brightness / 255)
+        elif current_state["gradient"]:
+            # Use tracked gradient - recreate gradient data with new brightness
+            # This will be processed through the gradient logic below
+            data["gradient"] = current_state["gradient"]
         else:
             # Fallback to white if no tracked color
             r = brightness
@@ -231,6 +237,10 @@ def send_warls_data(light, data):
     # Process gradient or solid color
     if is_gradient_model and "gradient" in data:
         gradient_points = data["gradient"]["points"]
+        # Track gradient state for brightness-only changes
+        current_state["gradient"] = data["gradient"]
+        current_state["xy"] = None  # Clear XY when gradient is set
+        current_state["ct"] = None  # Clear CT when gradient is set
         
         if len(gradient_points) > 1:
             # Multiple gradient points - interpolate across segment
