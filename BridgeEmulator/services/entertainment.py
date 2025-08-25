@@ -152,6 +152,7 @@ def entertainmentService(group, user):
                         wledLights[ip]["lights"] = []
                 haLights = []      # Batch Home Assistant lights
                 non_UDP_lights = []
+                yeelightAgg = {}
 
                 if data[:9].decode('utf-8') == "HueStream":
                     i = 0
@@ -256,14 +257,18 @@ def entertainmentService(group, user):
                                     })
 
                             # YEELIGHT
+                            
                             elif proto == "yeelight":
-                                enableMusic(light.protocol_cfg["ip"], host_ip)
-                                c = YeelightConnections[light.protocol_cfg["ip"]]
-                                op = skipSimilarFrames(light.id_v1, light.state["xy"], light.state["bri"])
-                                if op == 1:
-                                    c.command("set_bright", [int(light.state["bri"] / 2.55), "smooth", 200])
-                                elif op == 2:
-                                    c.command("set_rgb", [(r * 65536) + (g * 256) + b, "smooth", 200])
+                                ip = light.protocol_cfg["ip"]
+                                enableMusic(ip, host_ip)
+                                if ip not in yeelightAgg:
+                                    yeelightAgg[ip] = {"light": light, "sum_r": 0, "sum_g": 0, "sum_b": 0, "sum_bri": 0, "count": 0}
+                                yeelightAgg[ip]["sum_r"] += r
+                                yeelightAgg[ip]["sum_g"] += g
+                                yeelightAgg[ip]["sum_b"] += b
+                                yeelightAgg[ip]["sum_bri"] += light.state["bri"]
+                                yeelightAgg[ip]["count"] += 1
+
 
                             # WLED (Realtime UDP 21324, DNRGB)
                             elif proto == "wled":
@@ -385,14 +390,18 @@ def entertainmentService(group, user):
                                         })
                                     })
 
+                            
                             elif proto == "yeelight":
-                                enableMusic(light.protocol_cfg["ip"], host_ip)
-                                c = YeelightConnections[light.protocol_cfg["ip"]]
-                                op = skipSimilarFrames(light.id_v1, light.state["xy"], light.state["bri"])
-                                if op == 1:
-                                    c.command("set_bright", [int(light.state["bri"] / 2.55), "smooth", 200])
-                                elif op == 2:
-                                    c.command("set_rgb", [(r * 65536) + (g * 256) + b, "smooth", 200])
+                                ip = light.protocol_cfg["ip"]
+                                enableMusic(ip, host_ip)
+                                if ip not in yeelightAgg:
+                                    yeelightAgg[ip] = {"light": light, "sum_r": 0, "sum_g": 0, "sum_b": 0, "sum_bri": 0, "count": 0}
+                                yeelightAgg[ip]["sum_r"] += r
+                                yeelightAgg[ip]["sum_g"] += g
+                                yeelightAgg[ip]["sum_b"] += b
+                                yeelightAgg[ip]["sum_bri"] += light.state["bri"]
+                                yeelightAgg[ip]["count"] += 1
+
 
                             elif proto == "wled":
                                 ip = light.protocol_cfg["ip"]
@@ -574,7 +583,31 @@ def entertainmentService(group, user):
                     if hueGroupLights:
                         h.send(hueGroupLights, hueGroup)
 
-                    # Home Assistant batch
+                    
+                    # Yeelight music-mode batch (average gradient -> single color per bulb)
+                    if "yeelightAgg" in locals() and yeelightAgg:
+                        for ip, entry in yeelightAgg.items():
+                            light = entry["light"]
+                            cnt = entry["count"] or 0
+                            if cnt <= 0:
+                                continue
+                            r_avg = int(entry["sum_r"] / cnt)
+                            g_avg = int(entry["sum_g"] / cnt)
+                            b_avg = int(entry["sum_b"] / cnt)
+                            bri_avg = int(entry["sum_bri"] / cnt)
+                            try:
+                                c = YeelightConnections[ip]
+                            except KeyError:
+                                enableMusic(ip, host_ip)
+                                c = YeelightConnections[ip]
+                            # Only send what's changed enough
+                            xy = convert_rgb_xy(r_avg, g_avg, b_avg)
+                            op = skipSimilarFrames(light.id_v1, xy, bri_avg)
+                            if op == 1:
+                                c.command("set_bright", [int(bri_avg / 2.55), "smooth", 200])
+                            elif op == 2:
+                                c.command("set_rgb", [(r_avg * 65536) + (g_avg * 256) + b_avg, "smooth", 200])
+    # Home Assistant batch
                     if haLights:
                         from services.homeAssistantWS import homeassistant_ws_client
                         if homeassistant_ws_client and not homeassistant_ws_client.client_terminated:
