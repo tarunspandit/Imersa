@@ -1,4 +1,5 @@
 import uuid
+import sys
 import logManager
 from lights.light_types import lightTypes, archetype
 from lights.protocols import protocols
@@ -69,6 +70,11 @@ class Light():
         StreamEvent(streamMessage)
 
     def __del__(self):
+        try:
+            if getattr(sys, 'meta_path', None) is None:
+                return
+        except Exception:
+            return
         ## light ##
         streamMessage = {
             "creationtime": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -77,7 +83,10 @@ class Light():
             "type": "delete"
         }
         streamMessage["id_v1"] = "/lights/" + self.id_v1
-        StreamEvent(streamMessage)
+        try:
+            StreamEvent(streamMessage)
+        except Exception:
+            pass
 
         ## device ##
         streamMessage = {
@@ -87,7 +96,10 @@ class Light():
             "type": "delete"
         }
         streamMessage["id_v1"] = "/lights/" + self.id_v1
-        StreamEvent(streamMessage)
+        try:
+            StreamEvent(streamMessage)
+        except Exception:
+            pass
 
         # Zigbee Connectivity
         streamMessage = {
@@ -97,7 +109,10 @@ class Light():
             "type": "delete"
         }
         streamMessage["id_v1"] = "/lights/" + self.id_v1
-        StreamEvent(streamMessage)
+        try:
+            StreamEvent(streamMessage)
+        except Exception:
+            pass
 
         # Entertainment
         streamMessage = {
@@ -107,7 +122,10 @@ class Light():
             "type": "delete"
         }
         streamMessage["id_v1"] = "/lights/" + self.id_v1
-        StreamEvent(streamMessage)
+        try:
+            StreamEvent(streamMessage)
+        except Exception:
+            pass
 
         logging.info(self.name + " light was destroyed.")
 

@@ -1,4 +1,5 @@
 import uuid
+import sys
 import logManager
 import weakref
 from datetime import datetime, timezone
@@ -33,6 +34,11 @@ class EntertainmentConfiguration():
         StreamEvent(streamMessage)
 
     def __del__(self):
+        try:
+            if getattr(sys, 'meta_path', None) is None:
+                return
+        except Exception:
+            return
         # Groupper light
         streamMessage = {"creationtime": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                          "data": [{"id": self.id_v2, "type": "grouped_light"}],
@@ -40,7 +46,10 @@ class EntertainmentConfiguration():
                          "type": "delete"
                          }
         streamMessage["id_v1"] = "/groups/" + self.id_v1
-        StreamEvent(streamMessage)
+        try:
+            StreamEvent(streamMessage)
+        except Exception:
+            pass
         ### Entertainment area ###
         streamMessage = {"creationtime": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                          "data": [{"id": self.getV2Api()["id"], "type": "entertainment_configuration"}],
@@ -48,7 +57,10 @@ class EntertainmentConfiguration():
                          "type": "delete"
                          }
         streamMessage["id_v1"] = "/groups/" + self.id_v1
-        StreamEvent(streamMessage)
+        try:
+            StreamEvent(streamMessage)
+        except Exception:
+            pass
         logging.info(self.name + " entertainment area was destroyed.")
 
     def add_light(self, light):

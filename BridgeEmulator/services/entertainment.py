@@ -641,11 +641,11 @@ def enableMusic(ip, host_ip):
     if ip in YeelightConnections:
         c = YeelightConnections[ip]
         if not c._music:
-            c.enableMusic(host_ip)
+            c.enableMusic(host_ip, require_override=True)
     else:
         c = YeelightConnection(ip)
         YeelightConnections[ip] = c
-        c.enableMusic(host_ip)
+        c.enableMusic(host_ip, require_override=True)
 
 
 def disableMusic(ip):
@@ -679,7 +679,7 @@ class YeelightConnection(object):
             self._socket.close()
         self._socket = None
 
-    def enableMusic(self, host_ip):
+    def enableMusic(self, host_ip, require_override=None):
         if self._connected and self._music:
             raise AssertionError("Already in music mode!")
         if self._music_attempted and not self._music:
@@ -696,6 +696,8 @@ class YeelightConnection(object):
             music_cfg = {}
         host_ip_override = music_cfg.get("host_ip") or None
         require_music = bool(music_cfg.get("require", False))
+        if require_override is not None:
+            require_music = bool(require_override)
 
         # Listener: pick a port, prefer configured range (for Docker published ports)
         tempSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # Setup listener
@@ -753,8 +755,10 @@ class YeelightConnection(object):
         self.disconnect()  # Disconnect from basic mode
 
         try:
-            while 1:
+            deadline = time.time() + 12  # wait up to 12s to establish
+            while True:
                 try:
+                    tempSock.settimeout(2)
                     conn, addr = tempSock.accept()
                     if addr[0] == self._ip:  # Accept only the expected device
                         tempSock.close()  # Close listener
@@ -768,6 +772,16 @@ class YeelightConnection(object):
                             conn.close()
                         except:
                             pass
+                except Exception:
+                    if time.time() >= deadline:
+                        raise ConnectionError("music connect timeout")
+                    # re-issue set_music in case the previous attempt missed
+                    try:
+                        self.connect(True)
+                        self.command("set_music", [1, local_host_ip, port])
+                        self.disconnect()
+                    except Exception:
+                        pass
         except Exception as e:
             try:
                 tempSock.close()

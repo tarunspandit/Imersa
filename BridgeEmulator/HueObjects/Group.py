@@ -1,4 +1,5 @@
 import uuid
+import sys
 import logManager
 import weakref
 from datetime import datetime, timezone
@@ -46,6 +47,11 @@ class Group():
         StreamEvent(streamMessage)
 
     def __del__(self):
+        try:
+            if getattr(sys, 'meta_path', None) is None:
+                return
+        except Exception:
+            return
         # Groupper light
         streamMessage = {"creationtime": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                          "data": [{"id": self.id_v2,  "id_v1": "/groups/" + self.id_v1, "type": "grouped_light"}],
@@ -53,7 +59,10 @@ class Group():
                          "type": "delete"
                          }
         streamMessage["id_v1"] = "/groups/" + self.id_v1
-        StreamEvent(streamMessage)
+        try:
+            StreamEvent(streamMessage)
+        except Exception:
+            pass
         ### room / zone ####
         elementId = self.getV2Room(
         )["id"] if self.type == "Room" else self.getV2Zone()["id"]
@@ -63,7 +72,10 @@ class Group():
                          "id": str(uuid.uuid4()),
                          "type": "delete"
                          }
-        StreamEvent(streamMessage)
+        try:
+            StreamEvent(streamMessage)
+        except Exception:
+            pass
         logging.info(self.name + " group was destroyed.")
 
     def add_light(self, light):
