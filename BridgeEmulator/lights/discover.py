@@ -140,9 +140,10 @@ def manualAddLight(ip: str, protocol: str, config: Dict = {}) -> None:
         else:
             # As a last resort, try Yeelight direct probe and add
             try:
-                import yeelight as _yeelight
-                b = _yeelight.Bulb(ip)
-                props = b.get_properties()
+                # Direct spec-based probe via Yeelight TCP
+                from lights.protocols import yeelight as yeelight_protocol
+                client = yeelight_protocol.YeelightTCP(ip)
+                props = client.get_properties()
                 if props and ("power" in props or "bg_power" in props) and ("bright" in props or "bg_bright" in props):
                     mdl = "LCT015" if props.get("color_mode") in ["1", "3"] else "LTW001"
                     lname = props.get("name") if props.get("name") else f"Yeelight {ip}"
@@ -157,9 +158,9 @@ def manualAddLight(ip: str, protocol: str, config: Dict = {}) -> None:
         # Enrich Yeelight config (where possible) so it works without multicast discovery
         if protocol == "yeelight":
             try:
-                import yeelight as _yeelight
-                b = _yeelight.Bulb(ip)
-                props = b.get_properties()
+                from lights.protocols import yeelight as yeelight_protocol
+                client = yeelight_protocol.YeelightTCP(ip)
+                props = client.get_properties()
                 if not props or ("power" not in props and "bg_power" not in props) or ("bright" not in props and "bg_bright" not in props):
                     logging.info(f"Manual add rejected for {ip}: not a Yeelight or LAN control disabled")
                     return

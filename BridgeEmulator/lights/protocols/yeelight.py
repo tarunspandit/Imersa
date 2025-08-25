@@ -1,13 +1,84 @@
 import logManager
-import yeelight
 from functions.colors import convert_rgb_xy, convert_xy
 from time import sleep
 import socket
 import time
+import json
 
 
 logging = logManager.logger.get_logger(__name__)
 Connections = {}
+
+
+class YeelightTCP:
+    def __init__(self, ip, port=55443, timeout=3.0):
+        self.ip = ip
+        self.port = int(port)
+        self.timeout = timeout
+        self._sock = None
+        self._id = 1
+
+    def connect(self):
+        self.close()
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(self.timeout)
+        s.connect((self.ip, self.port))
+        self._sock = s
+
+    def close(self):
+        if self._sock:
+            try:
+                self._sock.close()
+            except Exception:
+                pass
+        self._sock = None
+
+    def _ensure(self):
+        if not self._sock:
+            self.connect()
+
+    def command(self, method, params):
+        self._ensure()
+        try:
+            payload = json.dumps({"id": self._id, "method": method, "params": params}) + "\r\n"
+            self._sock.sendall(payload.encode())
+            # read one line (could be result or error)
+            chunks = b""
+            while True:
+                b = self._sock.recv(4096)
+                if not b:
+                    break
+                chunks += b
+                if b.endswith(b"\r\n") or b.endswith(b"\n"):
+                    break
+            self._id += 1
+            # yeelight returns JSON per line
+            try:
+                line = chunks.splitlines()[0]
+                resp = json.loads(line.decode(errors='ignore'))
+            except Exception:
+                return None
+            return resp
+        except Exception as e:
+            # reconnect next time
+            self.close()
+            raise e
+
+    def get_properties(self):
+        # Ask for both main and background properties per spec
+        props = [
+            "power", "bright", "color_mode", "ct", "rgb", "hue", "sat", "name",
+            "bg_power", "bg_bright", "bg_lmode", "bg_ct", "bg_rgb", "bg_hue", "bg_sat"
+        ]
+        resp = self.command("get_prop", props)
+        result = {}
+        if isinstance(resp, dict) and "result" in resp and isinstance(resp["result"], list):
+            for i, key in enumerate(props):
+                try:
+                    result[key] = resp["result"][i]
+                except Exception:
+                    pass
+        return result
 
 
 def _parse_headers(resp: bytes):
@@ -117,13 +188,7 @@ def discover(detectedLights, device_ips=None):
     except Exception as e:
         logging.debug(f"Yeelight: SSDP discovery failed: {e}")
 
-    # 2) python-yeelight discovery if SSDP returned nothing
-    if not md:
-        try:
-            md = yeelight.discover_bulbs()
-        except Exception as e:
-            logging.debug(f"Yeelight: python-yeelight discovery failed: {e}")
-            md = []
+    # 2) (optional) python-yeelight discovery removed to rely on spec
 
     for light in md:
         try:
@@ -201,7 +266,7 @@ def connect(light):
     if ip in Connections:
         c = Connections[ip]
     else:
-        c = yeelight.Bulb(ip)
+        c = YeelightTCP(ip)
         Connections[ip] = c
     return c
 
@@ -223,10 +288,9 @@ def set_light(light, data):
         elif key == "bri":
             payload[cmdPrefix + "set_bright"] = [int(value / 2.55) + 1, "smooth", transitiontime]
         elif key == "ct":
-            #if ip[:-3] == "201" or ip[:-3] == "202":
-            if light.name.find("desklamp") > 0:
-                if value > 369: value = 369
-            payload[cmdPrefix + "set_ct_abx"] = [int((-4800/347) * value + 2989900/347), "smooth", transitiontime]
+            # Hue ct(mired) -> Yeelight Kelvin per spec: K = 1e6 / mired
+            kelvin = max(1700, min(6500, int(1000000 / max(1, int(value)))))
+            payload[cmdPrefix + "set_ct_abx"] = [kelvin, "smooth", transitiontime]
         elif key == "hue":
             payload[cmdPrefix + "set_hsv"] = [int(value / 182), int(light.state["sat"] / 2.54), "smooth", transitiontime]
         elif key == "sat":
@@ -238,10 +302,9 @@ def set_light(light, data):
             payload[cmdPrefix + "start_cf"] = [ 4, 0, "1000, 2, 5500, 100, 1000, 2, 5500, 1, 1000, 2, 5500, 100, 1000, 2, 5500, 1"]
 
     # yeelight uses different functions for each action, so it has to check for each function
-    # see page 9 http://www.yeelight.com/download/Yeelight_Inter-Operation_Spec.pdf
-    # check if hue wants to change brightness
+    # spec: send individual commands for each change
     for key, value in payload.items():
-        c.send_command(key, value)
+        c.command(key, value)
         sleep(0.4)
 
 def hex_to_rgb(value):
@@ -252,7 +315,15 @@ def hex_to_rgb(value):
 
 
 def calculate_color_temp(value):
-    return int(-(347/4800) * int(value) +(2989900/4800))
+    # Yeelight returns Kelvin; Hue expects mired [153..500]
+    try:
+        kelvin = int(value)
+        if kelvin <= 0:
+            return 366
+        mired = int(1000000 / kelvin)
+        return max(153, min(500, mired))
+    except Exception:
+        return 366
 
 def get_light_state(light):
     c = connect(light)
