@@ -479,11 +479,29 @@ class Light():
             
             # Convert Hue palette colors to WLED custom palette
             wled_colors = []
-            for color in palette["color"]:
-                rgb = convert_xy(color["xy"]["x"], color["xy"]["y"], 255)
-                # WLED uses hex colors in format RRGGBB
-                hex_color = '{:02x}{:02x}{:02x}'.format(int(rgb[0]), int(rgb[1]), int(rgb[2]))
-                wled_colors.append(hex_color)
+            if "color" in palette:
+                for color_state in palette["color"]:
+                    # The palette colors are light states with color info
+                    # Extract the actual color from the state
+                    if "color" in color_state and "xy" in color_state["color"]:
+                        # V2 format: {"color": {"xy": {"x": ..., "y": ...}}}
+                        xy = color_state["color"]["xy"]
+                        rgb = convert_xy(xy["x"], xy["y"], 255)
+                    elif "xy" in color_state:
+                        # V1 format fallback: {"xy": [x, y]}
+                        rgb = convert_xy(color_state["xy"][0], color_state["xy"][1], 255)
+                    else:
+                        # Default to white if format unknown
+                        logging.warning(f"Unknown color format in palette: {color_state}")
+                        rgb = [255, 255, 255]
+                    
+                    # WLED uses hex colors in format RRGGBB
+                    hex_color = '{:02x}{:02x}{:02x}'.format(int(rgb[0]), int(rgb[1]), int(rgb[2]))
+                    wled_colors.append(hex_color)
+            else:
+                # No colors in palette, use default rainbow
+                wled_colors = ['ff0000', '00ff00', '0000ff']
+                logging.warning(f"No colors found in palette, using defaults")
             
             # Create custom palette string (up to 16 colors)
             # WLED palette format: "RRGGBB,RRGGBB,RRGGBB..."
