@@ -469,7 +469,7 @@ class Light():
                 r.raise_for_status()
                 logging.info("Applied WLED Palette effect (speed=%d, pal=%d)", wled_speed, set_colors_pal_id)
                 # Pin rotation to zero explicitly
-                seg_patch = {"c2": 0}
+                seg_patch = {"rs": 0}
                 if segment_id != 0:
                     seg_patch["id"] = segment_id
                 requests.post(f"http://{ip}/json/state",
