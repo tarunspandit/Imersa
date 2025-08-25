@@ -354,7 +354,7 @@ def entertainmentService(group, user):
                             # Pre-allocate pixel data for entire strip using DNRGB protocol
                             udpdata = bytearray(4 + total_leds * 3)  # header + start_index + RGB per LED
                             udpdata[0] = 4  # DNRGB protocol
-                            udpdata[1] = 1  # 1 second timeout
+                            udpdata[1] = 2  # 2 second timeout for streaming mode
                             udpdata[2] = 0  # Start index (high byte) 
                             udpdata[3] = 0  # Start index (low byte) - starting from LED 0
                             
