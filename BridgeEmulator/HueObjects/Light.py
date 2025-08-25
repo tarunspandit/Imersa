@@ -512,8 +512,15 @@ class Light():
             speed_value = float(self.dynamics.get("speed", 1.0))
             logging.info(f"Dynamic scene speed value: {speed_value}")
             # Linear mapping: 1->30, 12->255
-            # Formula: 30 + (speed - 1) * (225 / 11)
-            wled_speed = int(30 + ((speed_value - 1) * (225 / 11)))
+            # Ensure we properly scale across the full range
+            if speed_value <= 1:
+                wled_speed = 30
+            elif speed_value >= 12:
+                wled_speed = 255
+            else:
+                # Linear interpolation between 30 and 255
+                wled_speed = int(30 + ((speed_value - 1) * ((255 - 30) / (12 - 1))))
+            logging.info(f"Calculated WLED speed: {wled_speed}")
             
             # Get current brightness from tracked state
             from lights.protocols.wled import LightStates
@@ -525,34 +532,37 @@ class Light():
             # Configure WLED to use palette effect
             try:
                 # Build custom palette with color stops
-                # Spread colors evenly across the gradient (0-255)
                 palette_data = []
-                num_colors = len(wled_colors)
+                num_colors = min(len(wled_colors), 8)  # Limit to 8 colors
                 
                 if num_colors > 0:
-                    for i, hex_color in enumerate(wled_colors[:8]):  # Limit to 8 colors for reasonable gradient
+                    for i, hex_color in enumerate(wled_colors[:num_colors]):
                         # Calculate position (0-255) for even distribution
                         if num_colors == 1:
-                            pos = 128  # Single color in middle
+                            # Single color - put at both ends for solid
+                            palette_data.extend([0, hex_color.upper(), 255, hex_color.upper()])
                         else:
                             pos = int(i * 255 / (num_colors - 1))
-                        
-                        # Add position and color to palette
-                        palette_data.append(pos)
-                        palette_data.append(hex_color.upper())
+                            palette_data.extend([pos, hex_color.upper()])
                 
-                # Build the JSON payload for WLED with palette effect
+                # Build the JSON payload for WLED with Palette effect
+                seg_data = {
+                    "fx": 65,  # Palette effect (index 65)
+                    "sx": wled_speed,  # Effect speed (0-255)
+                    "ix": 128,  # Intensity
+                    "pal": 0,  # Use default palette (will be overridden by custom)
+                    "palette": palette_data  # Custom palette definition
+                }
+                
+                # Only add segment ID if it's not 0 (default segment)
+                if segment_id != 0:
+                    seg_data["id"] = segment_id
+                
                 wled_payload = {
                     "on": True,
                     "bri": current_brightness,
-                    "seg": [{
-                        "id": segment_id,
-                        "fx": 68,  # Palette effect ID (68 is commonly used for custom palette)
-                        "pal": 6,   # Custom palette ID
-                        "sx": wled_speed,  # Effect speed (0-255)
-                        "ix": 128,  # Intensity (medium)
-                        "palette": palette_data  # Custom palette definition
-                    }]
+                    "live": False,  # Disable UDP/live mode to allow effect changes
+                    "seg": [seg_data]
                 }
                 
                 response = requests.post(
@@ -561,7 +571,11 @@ class Light():
                     timeout=3
                 )
                 
-                logging.info(f"WLED palette effect configured with speed {wled_speed} and {num_colors} colors: {palette_data}")
+                logging.info(f"WLED palette effect request sent - speed: {wled_speed}, palette: {palette_data}")
+                if response.status_code == 200:
+                    logging.info("WLED palette effect successfully configured")
+                else:
+                    logging.error(f"WLED API error: {response.status_code} - {response.text}")
                 
             except Exception as e:
                 logging.error(f"Failed to configure WLED palette effect: {e}")
@@ -573,15 +587,20 @@ class Light():
             
             # When dynamic scene stops, restore previous state
             try:
-                # Turn off the effect
+                # Turn off the effect and re-enable live mode for UDP control
                 wled_payload = {
+                    "live": True,  # Re-enable UDP/live mode for regular color control
                     "seg": [{
-                        "id": segment_id,
+                        "id": segment_id if segment_id != 0 else None,
                         "fx": 0  # Back to solid effect
                     }]
                 }
+                # Remove None id if segment is 0
+                if segment_id == 0:
+                    wled_payload["seg"][0] = {"fx": 0}
+                    
                 requests.post(f"http://{ip}/json/state", json=wled_payload, timeout=3)
-                logging.info(f"WLED palette effect stopped for {self.name}")
+                logging.info(f"WLED palette effect stopped and live mode restored for {self.name}")
             except:
                 pass
                 
