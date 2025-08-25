@@ -46,10 +46,10 @@ def discover(detectedLights, device_ips):
             except Exception as e:
                 logging.debug("<WLED> ip %s is unknown device", ip)
 
-    lights = []
     for device in discovered_lights:
         try:
             x = WledDevice(device[0], device[1])
+            lights = []  # Initialize lights list for this device
             logging.info("<WLED> Found device: %s with %d segments" %
                          (device[1], x.segmentCount))
             
@@ -57,28 +57,38 @@ def discover(detectedLights, device_ips):
             if x.segmentCount > 1:
                 # Multiple segments - create one light per segment, skip segment 0
                 for seg_idx in range(1, x.segmentCount):  # Start from 1, skip 0
+                    # Use segment data if available, otherwise estimate
                     if seg_idx < len(x.segments):
                         segment = x.segments[seg_idx]
-                        segment_name = f"{x.name}_seg{seg_idx}"
-                        # Default to LCT015 for solid color, user can change to gradient model
-                        modelid = "LCT015"  
-                        
-                        lights.append({"protocol": "wled",
-                                       "name": segment_name,
-                                       "modelid": modelid,
-                                       "protocol_cfg": {
-                                           "ip": x.ip,
-                                           "segment_id": seg_idx,  # Which segment this light controls
-                                           "segment_start": segment["start"],  # Starting LED index
-                                           "segment_stop": segment["stop"],   # Ending LED index
-                                           "ledCount": segment["len"],        # Number of LEDs in this segment
-                                           "mdns_name": device[1],
-                                           "mac": x.mac,
-                                           "udp_port": x.udpPort,
-                                           "is_segment": True,
-                                           "points_capable": 5  # Gradient points if model changed to gradient
-                                       }
-                                       })
+                        segment_start = segment["start"]
+                        segment_stop = segment["stop"]
+                        led_count = segment["len"]
+                    else:
+                        # Estimate segment boundaries if segment data not available
+                        leds_per_segment = x.ledCount // x.segmentCount
+                        segment_start = seg_idx * leds_per_segment
+                        segment_stop = (seg_idx + 1) * leds_per_segment
+                        led_count = leds_per_segment
+                    
+                    segment_name = f"{x.name}_seg{seg_idx}"
+                    modelid = "LCT015"  # Default to solid color
+                    
+                    lights.append({"protocol": "wled",
+                                   "name": segment_name,
+                                   "modelid": modelid,
+                                   "protocol_cfg": {
+                                       "ip": x.ip,
+                                       "segment_id": seg_idx,
+                                       "segment_start": segment_start,
+                                       "segment_stop": segment_stop,
+                                       "ledCount": led_count,
+                                       "mdns_name": device[1],
+                                       "mac": x.mac,
+                                       "udp_port": x.udpPort,
+                                       "is_segment": True,
+                                       "points_capable": 5
+                                   }
+                                   })
             else:
                 # Single segment or no segments - create one light for entire strip
                 total_leds = sum(seg["len"] for seg in x.segments) if x.segments else x.ledCount
@@ -205,20 +215,20 @@ def send_warls_data(light, data):
         for led_idx in range(led_count):
             pixel_colors[led_idx] = [r, g, b]
     
-    # Build WARLS UDP packet - correct protocol format
-    udpdata = bytearray(2 + led_count * 4)  # header + LED_INDEX,R,G,B per LED
-    udpdata[0] = 1  # WARLS protocol
+    # Use DNRGB protocol for segments
+    udpdata = bytearray(4 + led_count * 3)  # header + start_index + RGB per LED
+    udpdata[0] = 4  # DNRGB protocol
     udpdata[1] = 1  # 1 second timeout
+    udpdata[2] = (segment_start >> 8) & 0xFF  # Start index high byte
+    udpdata[3] = segment_start & 0xFF  # Start index low byte
     
-    # Fill UDP packet with WARLS format (LED_INDEX, R, G, B per LED)
-    idx = 2
+    # Fill UDP packet with DNRGB format (R,G,B per LED)
+    idx = 4
     for led_idx in range(led_count):
-        actual_led_index = segment_start + led_idx  # Absolute LED position on strip
-        udpdata[idx] = actual_led_index  # LED index
-        udpdata[idx+1] = max(0, min(255, pixel_colors[led_idx][0]))  # Red
-        udpdata[idx+2] = max(0, min(255, pixel_colors[led_idx][1]))  # Green  
-        udpdata[idx+3] = max(0, min(255, pixel_colors[led_idx][2]))  # Blue
-        idx += 4
+        udpdata[idx] = max(0, min(255, pixel_colors[led_idx][0]))     # Red
+        udpdata[idx+1] = max(0, min(255, pixel_colors[led_idx][1]))   # Green
+        udpdata[idx+2] = max(0, min(255, pixel_colors[led_idx][2]))   # Blue
+        idx += 3
     
     # Send WARLS data
     try:
