@@ -247,7 +247,7 @@ def send_warls_data(light, data):
                     # Same index, use the color directly
                     point = gradient_points[lower_idx]
                     xy = point.get("color", {}).get("xy", {"x": 0.5, "y": 0.5})
-                    color = convert_xy(xy.get("x", 0.5), xy.get("y", 0.5), 255)
+                    color = convert_xy(xy.get("x", 0.5), xy.get("y", 0.5), brightness)
                     pixel_colors[led_idx] = [color[0], color[1], color[2]]
                 else:
                     # Interpolate between two gradient points
@@ -259,8 +259,8 @@ def send_warls_data(light, data):
                     lower_xy = lower_point.get("color", {}).get("xy", {"x": 0.5, "y": 0.5})
                     upper_xy = upper_point.get("color", {}).get("xy", {"x": 0.5, "y": 0.5})
                     
-                    lower_color = convert_xy(lower_xy.get("x", 0.5), lower_xy.get("y", 0.5), 255)
-                    upper_color = convert_xy(upper_xy.get("x", 0.5), upper_xy.get("y", 0.5), 255)
+                    lower_color = convert_xy(lower_xy.get("x", 0.5), lower_xy.get("y", 0.5), brightness)
+                    upper_color = convert_xy(upper_xy.get("x", 0.5), upper_xy.get("y", 0.5), brightness)
                     
                     interp_r = int(lower_color[0] + (upper_color[0] - lower_color[0]) * factor)
                     interp_g = int(lower_color[1] + (upper_color[1] - lower_color[1]) * factor)
@@ -271,7 +271,7 @@ def send_warls_data(light, data):
             # Single gradient point - apply to all pixels
             point = gradient_points[0]
             xy = point.get("color", {}).get("xy", {"x": 0.5, "y": 0.5})
-            color = convert_xy(xy.get("x", 0.5), xy.get("y", 0.5), 255)
+            color = convert_xy(xy.get("x", 0.5), xy.get("y", 0.5), brightness)
             for led_idx in range(led_count):
                 pixel_colors[led_idx] = [color[0], color[1], color[2]]
     else:
