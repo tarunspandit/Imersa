@@ -658,6 +658,7 @@ class YeelightConnection(object):
     _connected = False
     _socket = None
     _host_ip = ""
+    _music_attempted = False
 
     def __init__(self, ip):
         self._ip = ip
@@ -681,6 +682,10 @@ class YeelightConnection(object):
     def enableMusic(self, host_ip):
         if self._connected and self._music:
             raise AssertionError("Already in music mode!")
+        if self._music_attempted and not self._music:
+            # Don't keep retrying every frame if already attempted and fell back
+            return
+        self._music_attempted = True
 
         self._host_ip = host_ip
 
@@ -696,27 +701,46 @@ class YeelightConnection(object):
         if not self._connected:
             self.connect(True)  # Basic connect for set_music
 
-        self.command("set_music", [1, host_ip, port])  # MAGIC
+        # Determine the best local IP to advertise (route to device)
+        local_host_ip = host_ip
+        try:
+            _tmp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            _tmp.connect((self._ip, 1))
+            local_host_ip = _tmp.getsockname()[0]
+            _tmp.close()
+        except Exception:
+            pass
+
+        self.command("set_music", [1, local_host_ip, port])  # MAGIC
         self.disconnect()  # Disconnect from basic mode
 
-        while 1:
+        try:
+            while 1:
+                try:
+                    conn, addr = tempSock.accept()
+                    if addr[0] == self._ip:  # Accept only the expected device
+                        tempSock.close()  # Close listener
+                        self._socket = conn  # Replace socket with music one
+                        self._connected = True
+                        self._music = True
+                        break
+                    else:
+                        try:
+                            logging.info("Rejecting connection to the music mode listener from %s", addr[0])
+                            conn.close()
+                        except:
+                            pass
+        except Exception as e:
+            # Fallback: continue in non-music mode (maintain outbound TCP to device)
             try:
-                conn, addr = tempSock.accept()
-                if addr[0] == self._ip:  # Ignore wrong connections
-                    tempSock.close()  # Close listener
-                    self._socket = conn  # Replace socket with music one
-                    self._connected = True
-                    self._music = True
-                    break
-                else:
-                    try:
-                        logging.info("Rejecting connection to the music mode listener from %s", self._ip)
-                        conn.close()
-                    except:
-                        pass
-            except Exception as e:
                 tempSock.close()
-                raise ConnectionError("Yeelight with IP {} doesn't want to connect in music mode: {}".format(self._ip, e))
+            except:
+                pass
+            self._music = False
+            self._connected = False
+            logging.info("Yeelight with IP %s couldn't enter music mode (%s). Falling back to non-music mode.", self._ip, e)
+            # Establish a normal outbound control connection lazily on first command
+            return
 
         logging.info("Yeelight device with IP %s is now in music mode", self._ip)
 
