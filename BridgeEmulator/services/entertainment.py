@@ -699,13 +699,23 @@ class YeelightConnection(object):
         if require_override is not None:
             require_music = bool(require_override)
 
-        # Listener: pick a port, prefer configured range (for Docker published ports)
+        # Listener: pick a port, prefer configured single port or range (for Docker published ports)
         tempSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # Setup listener
         tempSock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         tempSock.settimeout(5)
 
-        # Try configured port range first
+        # Try configured single port first
         chosen_port = None
+        single_port = music_cfg.get("port")
+        if single_port is not None:
+            try:
+                p = int(single_port)
+                tempSock.bind(("", p))
+                chosen_port = p
+            except Exception:
+                chosen_port = None
+
+        # Try configured port range next
         pr = music_cfg.get("port_range") or music_cfg.get("ports")
         if isinstance(pr, dict) and "start" in pr and "end" in pr and int(pr["start"]) <= int(pr["end"]):
             start_p, end_p = int(pr["start"]), int(pr["end"])
