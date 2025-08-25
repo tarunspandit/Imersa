@@ -510,10 +510,10 @@ class Light():
             # Calculate speed for WLED (0-255, where higher = faster)
             # Hue dynamics speed: 1 = extra slow, 12 = extreme
             speed_value = float(self.dynamics.get("speed", 1.0))
-            # Map exponentially: 1->20, 6->128, 12->255 for better feel
-            # Using exponential scaling for more natural speed progression
-            normalized = max(0, min(1, (speed_value - 1) / 11))  # Normalize to 0-1 range
-            wled_speed = int(20 + (235 * (normalized ** 1.5)))
+            logging.info(f"Dynamic scene speed value: {speed_value}")
+            # Linear mapping: 1->30, 12->255
+            # Formula: 30 + (speed - 1) * (225 / 11)
+            wled_speed = int(30 + ((speed_value - 1) * (225 / 11)))
             
             # Get current brightness from tracked state
             from lights.protocols.wled import LightStates
@@ -524,31 +524,34 @@ class Light():
             
             # Configure WLED to use palette effect
             try:
-                # Build the JSON payload for WLED with palette effect and custom colors
-                # Convert colors to RGB arrays for WLED
-                color_arrays = []
-                for hex_color in wled_colors[:3]:  # Use up to 3 colors for the gradient
-                    r = int(hex_color[:2], 16)
-                    g = int(hex_color[2:4], 16)
-                    b = int(hex_color[4:6], 16)
-                    color_arrays.append([r, g, b])
+                # Build custom palette with color stops
+                # Spread colors evenly across the gradient (0-255)
+                palette_data = []
+                num_colors = len(wled_colors)
                 
-                # Ensure we have at least 2 colors for a gradient
-                if len(color_arrays) < 2:
-                    color_arrays.append([255, 0, 0])  # Add red as fallback
-                if len(color_arrays) < 2:
-                    color_arrays.append([0, 255, 0])  # Add green as second fallback
+                if num_colors > 0:
+                    for i, hex_color in enumerate(wled_colors[:8]):  # Limit to 8 colors for reasonable gradient
+                        # Calculate position (0-255) for even distribution
+                        if num_colors == 1:
+                            pos = 128  # Single color in middle
+                        else:
+                            pos = int(i * 255 / (num_colors - 1))
+                        
+                        # Add position and color to palette
+                        palette_data.append(pos)
+                        palette_data.append(hex_color.upper())
                 
+                # Build the JSON payload for WLED with palette effect
                 wled_payload = {
                     "on": True,
                     "bri": current_brightness,
                     "seg": [{
                         "id": segment_id,
-                        "fx": 37,  # Palette effect ID
+                        "fx": 68,  # Palette effect ID (68 is commonly used for custom palette)
+                        "pal": 6,   # Custom palette ID
                         "sx": wled_speed,  # Effect speed (0-255)
                         "ix": 128,  # Intensity (medium)
-                        "col": color_arrays,  # Set the colors for gradient
-                        "pal": 0  # Use default palette (will be overridden by col)
+                        "palette": palette_data  # Custom palette definition
                     }]
                 }
                 
@@ -558,7 +561,7 @@ class Light():
                     timeout=3
                 )
                 
-                logging.info(f"WLED palette effect configured with speed {wled_speed} and {len(color_arrays)} colors")
+                logging.info(f"WLED palette effect configured with speed {wled_speed} and {num_colors} colors: {palette_data}")
                 
             except Exception as e:
                 logging.error(f"Failed to configure WLED palette effect: {e}")
