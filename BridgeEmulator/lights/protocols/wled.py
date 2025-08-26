@@ -18,16 +18,27 @@ LightStates = {}  # Format: {"ip_segment": {"bri": 255, "xy": [0.5, 0.5], "ct": 
 
 def on_mdns_discover(zeroconf, service_type, name, state_change):
     global discovered_lights
-    if "wled" in name and state_change is ServiceStateChange.Added:
+    if "wled" in name.lower() and state_change is ServiceStateChange.Added:
         info = zeroconf.get_service_info(service_type, name)
         if info:
-            addresses = ["%s" % (socket.inet_ntoa(addr))
-                         for addr in info.addresses]
-            discovered_lights.append([addresses[0], name])
+            addresses = ["%s" % (socket.inet_ntoa(addr)) for addr in info.addresses]
+            try:
+                ip = addresses[0]
+                port = info.port or 80
+                ip_port = f"{ip}:{port}" if port != 80 else ip
+                logging.debug(f"<WLED> mDNS discovered {name} at {ip}:{port}")
+                discovered_lights.append([ip_port, name])
+            except Exception as e:
+                logging.debug(f"<WLED> mDNS parse error for {name}: {e}")
 
 
 def discover(detectedLights, device_ips):
     logging.info('<WLED> discovery started')
+    # Reset previous mDNS results to avoid stale entries across scans
+    try:
+        discovered_lights.clear()
+    except Exception:
+        pass
     ip_version = IPVersion.V4Only
     zeroconf = Zeroconf(ip_version=ip_version)
     services = "_http._tcp.local."
@@ -39,21 +50,25 @@ def discover(detectedLights, device_ips):
             "<WLED> Nothing found using mDNS, trying device_ips method...")
         for ip in device_ips:
             try:
-                response = requests.get(
-                    "http://" + ip + "/json/info", timeout=3)
+                response = requests.get("http://" + ip + "/json/info", timeout=3)
                 if response.status_code == 200:
                     json_resp = json.loads(response.content)
                     if json_resp['brand'] == "WLED":
                         discovered_lights.append([ip, json_resp['name']])
             except Exception as e:
-                logging.debug("<WLED> ip %s is unknown device", ip)
+                logging.debug("<WLED> ip %s is unknown device (%s)", ip, e)
+
+    # Done with mDNS
+    try:
+        zeroconf.close()
+    except Exception:
+        pass
 
     for device in discovered_lights:
         try:
             x = WledDevice(device[0], device[1])
             lights = []  # Initialize lights list for this device
-            logging.info("<WLED> Found device: %s with %d segments" %
-                         (device[1], x.segmentCount))
+            logging.info("<WLED> Found device: %s (%s) with %d segments" % (device[1], device[0], x.segmentCount))
             
             # Create a light for each segment
             if x.segmentCount > 1:
@@ -119,7 +134,7 @@ def discover(detectedLights, device_ips):
             for light in lights:
                 detectedLights.append(light)
         except Exception as e:
-            logging.error(f"<WLED> Failed to process device {device[1]}: {e}")
+            logging.error(f"<WLED> Failed to process device {device[1]} at {device[0]}: {e}")
             continue
 
 
@@ -409,17 +424,70 @@ class WledDevice:
         self.getInfo()
     
     def getInfo(self):
-        self.ledCount = self.state['info']['leds']['count']
-        self.mac = ':'.join(self.state[
-                            'info']['mac'][i:i+2] for i in range(0, 12, 2))
-        self.segments = self.state['state']['seg']
-        self.segmentCount = len(self.segments)
-        self.udpPort = self.state['info']['udpport']
+        data = self.state or {}
+        info = data.get('info')
+        state = data.get('state')
+
+        # If one of the sections is missing, try dedicated endpoints
+        if info is None:
+            try:
+                info = requests.get(self.url + '/json/info', timeout=2).json()
+            except Exception:
+                info = {}
+        if state is None:
+            try:
+                state = requests.get(self.url + '/json/state', timeout=2).json()
+            except Exception:
+                state = {}
+
+        # LED count
+        try:
+            self.ledCount = info.get('leds', {}).get('count', 0)
+        except Exception:
+            self.ledCount = 0
+
+        # MAC address
+        try:
+            mac_raw = info.get('mac')
+            if mac_raw and len(mac_raw) == 12:
+                self.mac = ':'.join(mac_raw[i:i+2] for i in range(0, 12, 2))
+            else:
+                self.mac = None
+        except Exception:
+            self.mac = None
+
+        # Segments
+        try:
+            self.segments = state.get('seg', [])
+            self.segmentCount = len(self.segments) if isinstance(self.segments, list) else 1
+        except Exception:
+            self.segments = []
+            self.segmentCount = 1
+
+        # UDP port for realtime
+        try:
+            self.udpPort = info.get('udpport', 21324)
+        except Exception:
+            self.udpPort = 21324
 
     def getLightState(self):
-        with urllib.request.urlopen(self.url + '/json') as resp:
-            data = json.loads(resp.read())
-            return data
+        # Prefer requests with a short timeout and graceful fallback endpoints
+        urls = [self.url + '/json', self.url + '/json/info']
+        last_err = None
+        for u in urls:
+            try:
+                resp = requests.get(u, timeout=2)
+                if resp.ok:
+                    return resp.json()
+            except Exception as e:
+                last_err = e
+        # Final fallback using urllib with timeout
+        try:
+            with urllib.request.urlopen(self.url + '/json', timeout=2) as resp:
+                data = json.loads(resp.read())
+                return data
+        except Exception as e:
+            raise ConnectionError(f"Unable to fetch WLED JSON from {self.url} ({last_err or e})")
 
     def getSegState(self, seg):
         state = {}
@@ -476,9 +544,8 @@ class WledDevice:
         self.sendJson(state)
 
     def sendJson(self, data):
-        req = urllib.request.Request(self.url + "/json")
-        req.add_header('Content-Type', 'application/json; charset=utf-8')
-        jsondata = json.dumps(data)
-        jsondataasbytes = jsondata.encode('utf-8')
-        req.add_header('Content-Length', len(jsondataasbytes))
-        response = urllib.request.urlopen(req, jsondataasbytes)
+        try:
+            response = requests.post(self.url + "/json", json=data, timeout=2)
+            response.raise_for_status()
+        except Exception as e:
+            logging.debug(f"<WLED> sendJson failed for {self.url}: {e}")
