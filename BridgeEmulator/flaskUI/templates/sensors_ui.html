@@ -1,0 +1,49 @@
+{% extends "layouts/base.html" %}
+
+{% block title %}Sensors{% endblock title %}
+
+{% block content %}
+<div class="card">
+  <h2 style="margin-top:0">Sensors</h2>
+  <table style="width:100%; border-collapse: collapse;">
+    <thead>
+      <tr>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">ID</th>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">Name</th>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">Type</th>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">State</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<script>
+  let apiKey = '';
+  let sensors = {};
+  async function init() {
+    apiKey = (await (await fetch('/get-key')).text()).trim();
+    await refresh();
+  }
+  async function refresh() {
+    sensors = await (await fetch(`/api/${apiKey}/sensors`)).json();
+    render();
+  }
+  function render() {
+    const tb = document.getElementById('tbody');
+    tb.innerHTML = '';
+    Object.entries(sensors).forEach(([id, s]) => {
+      const tr = document.createElement('tr');
+      const state = JSON.stringify(s.state || {});
+      tr.innerHTML = `
+        <td style=\"border-bottom:1px solid #f1f1f1; padding:8px;\">${id}</td>
+        <td style=\"border-bottom:1px solid #f1f1f1; padding:8px;\">${s.name || ''}</td>
+        <td style=\"border-bottom:1px solid #f1f1f1; padding:8px;\">${s.type || ''}</td>
+        <td style=\"border-bottom:1px solid #f1f1f1; padding:8px;\"><code>${state}</code></td>`;
+      tb.appendChild(tr);
+    });
+  }
+  init();
+</script>
+{% endblock content %}
+

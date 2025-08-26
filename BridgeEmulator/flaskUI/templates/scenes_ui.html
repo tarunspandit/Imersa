@@ -1,0 +1,74 @@
+{% extends "layouts/base.html" %}
+
+{% block title %}Scenes{% endblock title %}
+
+{% block content %}
+<div class="card">
+  <h2 style="margin-top:0">Scenes</h2>
+  <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+    <label>Group: <input id="groupId" type="text" placeholder="Group ID (e.g. 1)" style="width:80px"/></label>
+    <button class="btn" onclick="createScene()">Create from current</button>
+  </div>
+  <table style="width:100%; border-collapse: collapse; margin-top:12px;">
+    <thead>
+      <tr>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">ID</th>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">Name</th>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">Type</th>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">Group</th>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">Actions</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<script>
+  let apiKey = '';
+  let scenes = {};
+  let groups = {};
+
+  async function init() {
+    apiKey = (await (await fetch('/get-key')).text()).trim();
+    await refresh();
+  }
+  async function refresh() {
+    scenes = await (await fetch(`/api/${apiKey}/scenes`)).json();
+    groups = await (await fetch(`/api/${apiKey}/groups`)).json();
+    render();
+  }
+  function render() {
+    const tb = document.getElementById('tbody');
+    tb.innerHTML = '';
+    Object.entries(scenes).forEach(([id, s]) => {
+      const tr = document.createElement('tr');
+      const g = s.group || '';
+      tr.innerHTML = `
+        <td style=\"border-bottom:1px solid #f1f1f1; padding:8px;\">${id}</td>
+        <td style=\"border-bottom:1px solid #f1f1f1; padding:8px;\">${s.name || ''}</td>
+        <td style=\"border-bottom:1px solid #f1f1f1; padding:8px;\">${s.type || ''}</td>
+        <td style=\"border-bottom:1px solid #f1f1f1; padding:8px;\">${g || ''}</td>
+        <td style=\"border-bottom:1px solid #f1f1f1; padding:8px;\">
+          ${g ? `<button class=\"btn\" onclick=\"recall('${g}','${id}')\">Recall</button>` : ''}
+          <button class=\"btn secondary\" onclick=\"del('${id}')\">Delete</button>
+        </td>`;
+      tb.appendChild(tr);
+    });
+  }
+  async function recall(groupId, sceneId) {
+    await fetch(`/api/${apiKey}/groups/${groupId}/action`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ scene: sceneId }) });
+  }
+  async function del(sceneId) {
+    await fetch(`/api/${apiKey}/scenes/${sceneId}`, { method:'DELETE' });
+    await refresh();
+  }
+  async function createScene() {
+    const groupId = document.getElementById('groupId').value.trim();
+    if (!groupId) return;
+    await fetch(`/api/${apiKey}/scenes`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name: `Scene ${Date.now()}`, group: groupId }) });
+    await refresh();
+  }
+  init();
+</script>
+{% endblock content %}
+

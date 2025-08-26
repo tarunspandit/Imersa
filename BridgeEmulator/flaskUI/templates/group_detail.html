@@ -1,0 +1,76 @@
+{% extends "layouts/base.html" %}
+
+{% block title %}Group Detail{% endblock title %}
+
+{% block content %}
+<div class="card">
+  <h2 style="margin-top:0">Group <span id="gid"></span></h2>
+  <div style="display:flex; gap:16px; flex-wrap:wrap;">
+    <div style="flex:1; min-width:280px;">
+      <label>Name</label>
+      <input id="gname" type="text" />
+      <div style="margin-top:10px; display:flex; gap:8px;">
+        <button class="btn" onclick="save()">Save</button>
+        <button class="btn secondary" onclick="del()">Delete</button>
+      </div>
+    </div>
+    <div style="flex:2; min-width:320px;">
+      <label>Lights</label>
+      <div id="lightList" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap:8px;"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  let apiKey='';
+  let gid='';
+  let group={};
+  let lights={};
+
+  async function init() {
+    apiKey = (await (await fetch('/get-key')).text()).trim();
+    gid = (new URLSearchParams(window.location.search)).get('id') || window.location.pathname.split('/').pop();
+    document.getElementById('gid').textContent = gid;
+    lights = await (await fetch(`/api/${apiKey}/lights`)).json();
+    group = await (await fetch(`/api/${apiKey}/groups/${gid}`)).json();
+    document.getElementById('gname').value = group.name || '';
+    renderLights();
+  }
+  function renderLights() {
+    const el = document.getElementById('lightList');
+    el.innerHTML='';
+    const selected = new Set(group.lights || []);
+    Object.entries(lights).forEach(([id,l]) => {
+      const div=document.createElement('label');
+      div.style.border='1px solid #e5e7eb';
+      div.style.borderRadius='8px';
+      div.style.padding='8px';
+      div.style.display='flex';
+      div.style.gap='8px';
+      const cb=document.createElement('input');
+      cb.type='checkbox';
+      cb.checked=selected.has(id);
+      cb.addEventListener('change',() => {
+        if (cb.checked) selected.add(id); else selected.delete(id);
+      });
+      const span=document.createElement('div');
+      span.innerHTML=`<div>${l.name||('Light '+id)}</div><div style=\"color:#666; font-size:12px;\">${l.modelid||''}</div>`;
+      div.appendChild(cb); div.appendChild(span); el.appendChild(div);
+      el.dataset.selected = JSON.stringify(Array.from(selected));
+      cb.addEventListener('change',() => el.dataset.selected = JSON.stringify(Array.from(selected)));
+    });
+  }
+  async function save() {
+    const name = document.getElementById('gname').value;
+    const selected = JSON.parse(document.getElementById('lightList').dataset.selected||'[]');
+    const body = { name, lights: selected };
+    await fetch(`/api/${apiKey}/groups/${gid}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  }
+  async function del() {
+    await fetch(`/api/${apiKey}/groups/${gid}`, { method:'DELETE' });
+    window.location.href='/ui/groups';
+  }
+  init();
+</script>
+{% endblock content %}
+

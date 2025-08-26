@@ -1,0 +1,108 @@
+{% extends "layouts/base.html" %}
+
+{% block title %}Settings{% endblock title %}
+
+{% block content %}
+<div class="card">
+  <h2 style="margin-top:0">Bridge Settings</h2>
+  <div id="status" style="display:none"></div>
+  <div class="row" style="display:flex; gap:18px; flex-wrap:wrap;">
+    <div style="flex:1; min-width:300px;">
+      <label>Name</label>
+      <input id="name" type="text" placeholder="Bridge Name" />
+      <label style="margin-top:12px;">Timezone</label>
+      <input id="timezone" type="text" placeholder="e.g. Europe/Berlin" />
+      <label style="margin-top:12px;">Log level</label>
+      <select id="loglevel">
+        <option>DEBUG</option>
+        <option>INFO</option>
+        <option>WARNING</option>
+        <option>ERROR</option>
+      </select>
+      <div style="margin-top:12px; display:flex; gap:18px; align-items:center;">
+        <label><input type="checkbox" id="discovery" /> Discovery enabled</label>
+        <label><input type="checkbox" id="remoteapi" /> Remote API enabled</label>
+      </div>
+      <div style="margin-top:12px; display:flex; gap:10px;">
+        <button class="btn" onclick="saveConfig()">Save</button>
+        <button class="btn secondary" onclick="pressLink()">Press link button</button>
+      </div>
+    </div>
+    <div style="flex:1; min-width:300px;">
+      <h3>Updates</h3>
+      <div class="row" style="display:flex; gap:10px;">
+        <button class="btn" onclick="checkUpdates()">Check for updates</button>
+        <button class="btn secondary" onclick="installUpdates()">Install updates</button>
+      </div>
+      <h3 style="margin-top:16px;">System</h3>
+      <div class="row" style="display:flex; gap:10px; flex-wrap:wrap;">
+        <a class="btn" href="/download_config">Download Config</a>
+        <a class="btn secondary" href="/download_log">Download Log</a>
+        <a class="btn secondary" href="/download_debug">Download Debug</a>
+        <button class="btn secondary" onclick="restart()">Restart</button>
+        <button class="btn secondary" onclick="backup()">Backup</button>
+      </div>
+      <div id="info" style="margin-top:12px; font-size:14px; color:#444;"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  let apiKey = '';
+  let cfg = {};
+
+  async function init() {
+    apiKey = (await (await fetch('/get-key')).text()).trim();
+    await loadConfig();
+    await loadInfo();
+  }
+
+  async function loadConfig() {
+    const resp = await fetch(`/api/${apiKey}/config`);
+    cfg = await resp.json();
+    document.getElementById('name').value = cfg.name || '';
+    document.getElementById('timezone').value = cfg.timezone || '';
+    document.getElementById('loglevel').value = (cfg.LogLevel || 'INFO').toUpperCase();
+    document.getElementById('discovery').checked = cfg.discovery !== false;
+    document.getElementById('remoteapi').checked = cfg['Remote API enabled'] === true;
+  }
+
+  async function saveConfig() {
+    const body = {
+      name: document.getElementById('name').value,
+      timezone: document.getElementById('timezone').value,
+      loglevel: document.getElementById('loglevel').value,
+      discovery: document.getElementById('discovery').checked,
+    };
+    // remote API lives under config key name
+    body['Remote API enabled'] = document.getElementById('remoteapi').checked;
+    const resp = await fetch(`/api/${apiKey}/config`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    await resp.json();
+  }
+
+  async function pressLink() {
+    await fetch(`/api/${apiKey}/config`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ linkbutton: true }) });
+  }
+
+  async function checkUpdates() {
+    await fetch(`/api/${apiKey}/config`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ swupdate2: { checkforupdate: true } }) });
+  }
+  async function installUpdates() {
+    await fetch(`/api/${apiKey}/config`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ swupdate2: { install: true } }) });
+  }
+  async function restart() {
+    await fetch('/restart');
+  }
+  async function backup() {
+    await fetch('/save?backup=True');
+  }
+  async function loadInfo() {
+    const resp = await fetch('/info');
+    const info = await resp.json();
+    document.getElementById('info').textContent = `System: ${info.sysname} ${info.machine}, OS ${info.os_release}`;
+  }
+
+  init();
+</script>
+{% endblock content %}
+

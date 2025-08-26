@@ -1,0 +1,92 @@
+{% extends "layouts/base.html" %}
+
+{% block title %}Schedules{% endblock title %}
+
+{% block content %}
+<div class="card">
+  <h2 style="margin-top:0">Schedules</h2>
+  <div style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap;">
+    <div>
+      <label>Name</label>
+      <input id="name" type="text" placeholder="Schedule name" />
+    </div>
+    <div>
+      <label>Time (HH:MM)</label>
+      <input id="time" type="text" placeholder="21:30" />
+    </div>
+    <div>
+      <label>Group ID</label>
+      <input id="groupId" type="text" placeholder="1" style="width:80px" />
+    </div>
+    <div>
+      <label>On</label>
+      <select id="on"><option value="true">true</option><option value="false">false</option></select>
+    </div>
+    <button class="btn" onclick="createSchedule()">Create</button>
+  </div>
+  <table style="width:100%; border-collapse: collapse; margin-top:12px;">
+    <thead>
+      <tr>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">ID</th>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">Name</th>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">Time</th>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">Actions</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<script>
+  let apiKey = '';
+  let schedules = {};
+
+  async function init() {
+    apiKey = (await (await fetch('/get-key')).text()).trim();
+    await refresh();
+  }
+  async function refresh() {
+    schedules = await (await fetch(`/api/${apiKey}/schedules`)).json();
+    render();
+  }
+  function render() {
+    const tb = document.getElementById('tbody');
+    tb.innerHTML = '';
+    Object.entries(schedules).forEach(([id, s]) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td style=\"border-bottom:1px solid #f1f1f1; padding:8px;\">${id}</td>
+        <td style=\"border-bottom:1px solid #f1f1f1; padding:8px;\">${s.name || ''}</td>
+        <td style=\"border-bottom:1px solid #f1f1f1; padding:8px;\">${s.time || ''}</td>
+        <td style=\"border-bottom:1px solid #f1f1f1; padding:8px;\">
+          <button class=\"btn secondary\" onclick=\"del('${id}')\">Delete</button>
+        </td>`;
+      tb.appendChild(tr);
+    });
+  }
+  async function del(id) {
+    await fetch(`/api/${apiKey}/schedules/${id}`, { method:'DELETE' });
+    await refresh();
+  }
+  async function createSchedule() {
+    const name = document.getElementById('name').value.trim() || `Schedule ${Date.now()}`;
+    const time = document.getElementById('time').value.trim();
+    const groupId = document.getElementById('groupId').value.trim();
+    const on = document.getElementById('on').value === 'true';
+    if (!time || !groupId) return;
+    const body = {
+      name,
+      time,
+      command: {
+        address: `/api/${apiKey}/groups/${groupId}/action`,
+        method: 'PUT',
+        body: { on }
+      }
+    };
+    await fetch(`/api/${apiKey}/schedules`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    await refresh();
+  }
+  init();
+</script>
+{% endblock content %}
+

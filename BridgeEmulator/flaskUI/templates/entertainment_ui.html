@@ -1,0 +1,120 @@
+{% extends "layouts/base.html" %}
+
+{% block title %}Entertainment{% endblock title %}
+
+{% block content %}
+<div class="card">
+  <h2 style="margin-top:0">Entertainment Areas</h2>
+  <div style="margin-bottom:8px;">
+    <a class="btn" href="/entertainment-wizard">Create New Area</a>
+  </div>
+  <table style="width:100%; border-collapse: collapse;">
+    <thead>
+      <tr>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">ID</th>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">Name</th>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">Lights</th>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">Status</th>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">Actions</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<div class="card" style="margin-top:12px;">
+  <h3>Edit Positions</h3>
+  <div class="row" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+    <input id="editGroupId" type="text" placeholder="Group ID" style="width:120px" />
+    <button class="btn" onclick="loadPositions()">Load</button>
+    <button class="btn secondary" onclick="savePositions()">Save</button>
+  </div>
+  <table style="width:100%; border-collapse: collapse; margin-top:8px;">
+    <thead>
+      <tr><th>Light</th><th>X</th><th>Y</th><th>Z</th></tr>
+    </thead>
+    <tbody id="posBody"></tbody>
+  </table>
+</div>
+
+<script>
+  let apiKey = '';
+  let groups = {};
+  let lights = {};
+  let positions = {};
+
+  async function init() {
+    apiKey = (await (await fetch('/get-key')).text()).trim();
+    lights = await (await fetch(`/api/${apiKey}/lights`)).json();
+    groups = await (await fetch(`/api/${apiKey}/groups`)).json();
+    render();
+  }
+  function render() {
+    const tb = document.getElementById('tbody');
+    tb.innerHTML = '';
+    Object.entries(groups).forEach(([id, g]) => {
+      if (g.type !== 'Entertainment') return;
+      const tr = document.createElement('tr');
+      const list = (g.lights || []).join(', ');
+      const status = g.stream?.active ? 'active' : 'inactive';
+      tr.innerHTML = `
+        <td style=\"border-bottom:1px solid #f1f1f1; padding:8px;\">${id}</td>
+        <td style=\"border-bottom:1px solid #f1f1f1; padding:8px;\">${g.name || ''}</td>
+        <td style=\"border-bottom:1px solid #f1f1f1; padding:8px;\">${list}</td>
+        <td style=\"border-bottom:1px solid #f1f1f1; padding:8px;\">${status}</td>
+        <td style=\"border-bottom:1px solid #f1f1f1; padding:8px;\">
+          <button class=\"btn\" onclick=\"start('${id}')\">Start</button>
+          <button class=\"btn secondary\" onclick=\"stop('${id}')\">Stop</button>
+        </td>`;
+      tb.appendChild(tr);
+    });
+  }
+  async function start(id) {
+    await fetch(`/api/${apiKey}/groups/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ stream: { active: true } }) });
+  }
+  async function stop(id) {
+    await fetch(`/api/${apiKey}/groups/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ stream: { active: false } }) });
+  }
+
+  async function loadPositions() {
+    const gid = document.getElementById('editGroupId').value.trim();
+    if (!gid) return;
+    const g = groups[gid];
+    positions = {};
+    if (!g || !g.lights) return;
+    // Default 0 positions until user edits; actual positions are stored server-side in entertainment configuration
+    g.lights.forEach(lid => positions[lid] = positions[lid] || {x:0,y:0,z:0});
+    renderPos(gid);
+  }
+  function renderPos(gid) {
+    const pb = document.getElementById('posBody');
+    pb.innerHTML = '';
+    Object.entries(positions).forEach(([lid,pos]) => {
+      const tr = document.createElement('tr');
+      const lt = lights[lid];
+      tr.innerHTML = `
+        <td style=\"border-bottom:1px solid #f1f1f1; padding:8px;\">${lt?.name || lid}</td>
+        <td style=\"border-bottom:1px solid #f1f1f1; padding:8px;\"><input type=number step=0.01 value=${pos.x} data-id=${lid} data-k=x style=\"width:100px\"/></td>
+        <td style=\"border-bottom:1px solid #f1f1f1; padding:8px;\"><input type=number step=0.01 value=${pos.y} data-id=${lid} data-k=y style=\"width:100px\"/></td>
+        <td style=\"border-bottom:1px solid #f1f1f1; padding:8px;\"><input type=number step=0.01 value=${pos.z} data-id=${lid} data-k=z style=\"width:100px\"/></td>`;
+      pb.appendChild(tr);
+    });
+    pb.querySelectorAll('input').forEach(inp => {
+      inp.addEventListener('input', () => {
+        const lid = inp.getAttribute('data-id');
+        const k = inp.getAttribute('data-k');
+        positions[lid][k] = parseFloat(inp.value||'0');
+      })
+    });
+  }
+  async function savePositions() {
+    const gid = document.getElementById('editGroupId').value.trim();
+    if (!gid) return;
+    const loc = {};
+    Object.entries(positions).forEach(([lid,p]) => loc[lid] = [p.x,p.y,p.z]);
+    await fetch(`/api/${apiKey}/groups/${gid}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ locations: loc }) });
+  }
+  init();
+</script>
+{% endblock content %}
+
