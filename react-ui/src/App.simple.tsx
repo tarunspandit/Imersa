@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { Layout } from '@/components/layout';
 import { useAppStore } from '@/stores';
@@ -23,24 +23,6 @@ import SensorsPage from './pages/SensorsPage';
 
 function App() {
   const { theme } = useAppStore();
-  const [loading, setLoading] = useState(true);
-  const [apiKey, setApiKey] = useState<string | null>(null);
-
-  useEffect(() => {
-    // Get API key from bridge
-    fetch('/get-key')
-      .then(res => res.text())
-      .then(key => {
-        setApiKey(key);
-        // Store it for API calls
-        localStorage.setItem('bridge-api-key', key);
-        setLoading(false);
-      })
-      .catch(err => {
-        console.error('Failed to get API key:', err);
-        setLoading(false);
-      });
-  }, []);
 
   // Apply theme class to document root
   useEffect(() => {
@@ -60,14 +42,6 @@ function App() {
       }
     }
   }, [theme]);
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-2xl">Loading...</div>
-      </div>
-    );
-  }
 
   return (
     <Router>
