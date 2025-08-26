@@ -1,0 +1,66 @@
+{
+  "1": {
+    "name": "Relax",
+    "type": "LightScene",
+    "group": "1",
+    "lights": ["1", "2"],
+    "owner": "api-test-user",
+    "recycle": false,
+    "locked": false,
+    "appdata": {
+      "version": 1,
+      "data": "relax_scene_data"
+    },
+    "picture": "",
+    "lastupdated": "2023-08-26T12:00:00",
+    "version": 2
+  },
+  "2": {
+    "name": "Energize",
+    "type": "LightScene",
+    "group": "1",
+    "lights": ["1", "2"],
+    "owner": "api-test-user",
+    "recycle": false,
+    "locked": false,
+    "appdata": {
+      "version": 1,
+      "data": "energize_scene_data"
+    },
+    "picture": "",
+    "lastupdated": "2023-08-26T12:00:00",
+    "version": 2
+  },
+  "3": {
+    "name": "Cooking",
+    "type": "LightScene",
+    "group": "2",
+    "lights": ["3"],
+    "owner": "api-test-user",
+    "recycle": false,
+    "locked": false,
+    "appdata": {
+      "version": 1,
+      "data": "cooking_scene_data"
+    },
+    "picture": "",
+    "lastupdated": "2023-08-26T12:00:00",
+    "version": 2
+  },
+  "4": {
+    "name": "Entertainment",
+    "type": "LightScene",
+    "group": "3",
+    "lights": ["1", "2"],
+    "owner": "api-test-user",
+    "recycle": false,
+    "locked": false,
+    "appdata": {
+      "version": 1,
+      "data": "entertainment_scene_data"
+    },
+    "picture": "",
+    "lastupdated": "2023-08-26T12:00:00",
+    "version": 2
+  }
+}

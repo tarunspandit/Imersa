@@ -1,0 +1,59 @@
+{
+  "1": {
+    "name": "Living Room Light 1",
+    "modelid": "LCT015",
+    "type": "Extended color light",
+    "state": {
+      "on": true,
+      "bri": 254,
+      "hue": 0,
+      "sat": 0,
+      "ct": 366,
+      "xy": [0.3127, 0.3290],
+      "alert": "none",
+      "effect": "none",
+      "colormode": "ct",
+      "reachable": true
+    },
+    "swversion": "1.88.1",
+    "uniqueid": "00:17:88:01:00:00:00:01-0b"
+  },
+  "2": {
+    "name": "Living Room Light 2",
+    "modelid": "LCT015",
+    "type": "Extended color light",
+    "state": {
+      "on": false,
+      "bri": 100,
+      "hue": 25500,
+      "sat": 254,
+      "ct": 153,
+      "xy": [0.1691, 0.0441],
+      "alert": "none",
+      "effect": "none",
+      "colormode": "hs",
+      "reachable": true
+    },
+    "swversion": "1.88.1",
+    "uniqueid": "00:17:88:01:00:00:00:02-0b"
+  },
+  "3": {
+    "name": "Kitchen Strip",
+    "modelid": "LST002",
+    "type": "Color light",
+    "state": {
+      "on": true,
+      "bri": 200,
+      "hue": 10000,
+      "sat": 200,
+      "ct": 250,
+      "xy": [0.4091, 0.5182],
+      "alert": "none",
+      "effect": "none",
+      "colormode": "hs",
+      "reachable": true
+    },
+    "swversion": "1.88.1",
+    "uniqueid": "00:17:88:01:00:00:00:03-0b"
+  }
+}

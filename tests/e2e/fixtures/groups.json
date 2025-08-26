@@ -1,0 +1,72 @@
+{
+  "1": {
+    "name": "Living Room",
+    "type": "LightGroup",
+    "lights": ["1", "2"],
+    "state": {
+      "all_on": false,
+      "any_on": true
+    },
+    "action": {
+      "on": true,
+      "bri": 254,
+      "hue": 0,
+      "sat": 0,
+      "ct": 366,
+      "xy": [0.3127, 0.3290],
+      "alert": "none",
+      "effect": "none",
+      "colormode": "ct"
+    }
+  },
+  "2": {
+    "name": "Kitchen",
+    "type": "Room",
+    "lights": ["3"],
+    "state": {
+      "all_on": true,
+      "any_on": true
+    },
+    "action": {
+      "on": true,
+      "bri": 200,
+      "hue": 10000,
+      "sat": 200,
+      "ct": 250,
+      "xy": [0.4091, 0.5182],
+      "alert": "none",
+      "effect": "none",
+      "colormode": "hs"
+    }
+  },
+  "3": {
+    "name": "Entertainment Area",
+    "type": "Entertainment",
+    "lights": ["1", "2"],
+    "state": {
+      "all_on": false,
+      "any_on": true
+    },
+    "action": {
+      "on": true,
+      "bri": 254,
+      "hue": 0,
+      "sat": 0,
+      "ct": 366,
+      "xy": [0.3127, 0.3290],
+      "alert": "none",
+      "effect": "none",
+      "colormode": "ct"
+    },
+    "stream": {
+      "proxymode": "auto",
+      "proxynode": "/bridges/0011788fffe23456/groups/3",
+      "active": false,
+      "owner": "00112233-4455-6677-8899-aabbccddeeff"
+    },
+    "locations": {
+      "1": [0.5, 0.5, 0.0],
+      "2": [-0.5, 0.5, 0.0]
+    }
+  }
+}
