@@ -256,6 +256,11 @@ def ui_home():
     # Public landing page with links; no login required
     return render_template('index.html')
 
+@core.route('/index.html')
+def ui_index_html():
+    # Ensure /index.html serves the SSR UI as well
+    return redirect(url_for('core.ui_home'))
+
 @core.route('/ui/lights')
 def ui_lights():
     return render_template('lights_ui.html')
@@ -292,6 +297,15 @@ def ui_entertainment():
 @core.route('/ui/groups/<gid>')
 def ui_group_detail(gid):
     return render_template('group_detail.html')
+
+@core.route('/ui/health')
+def ui_health():
+    return {"ui": "Imersa-SSR", "routes": [
+        "/ui", "/ui/lights", "/ui/groups", "/ui/groups/<id>", 
+        "/ui/scenes", "/ui/schedules", "/ui/sensors", "/ui/rules", 
+        "/ui/settings", "/ui/entertainment", "/entertainment-wizard",
+        "/wled-settings", "/yeelight-settings"
+    ]}
 
 # Convenience redirects for plain paths to new UI
 @core.route('/lights')
