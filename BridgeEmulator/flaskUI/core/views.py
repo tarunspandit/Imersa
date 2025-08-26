@@ -21,13 +21,32 @@ core = Blueprint('core',__name__)
 # React UI Static Files
 @core.route('/')
 def index():
-    # Serve React UI instead of Flask templates
-    return send_from_directory('/opt/hue-emulator/react-ui', 'index.html')
+    # Serve React UI 
+    react_path = '/opt/hue-emulator/react-ui'
+    if os.path.exists(os.path.join(react_path, 'index.html')):
+        logging.info("Serving React UI from /opt/hue-emulator/react-ui")
+        return send_from_directory(react_path, 'index.html')
+    else:
+        # Fallback to original template
+        logging.info("React UI not found, serving Flask template")
+        return render_template('index.html')
 
-@core.route('/<path:path>')
-def static_files(path):
-    # Serve React static files (JS, CSS, assets)
-    return send_from_directory('/opt/hue-emulator/react-ui', path)
+@core.route('/assets/<path:path>')
+def static_assets(path):
+    # Serve React static files from assets
+    react_assets = '/opt/hue-emulator/react-ui/assets'
+    if os.path.exists(os.path.join(react_assets, path)):
+        return send_from_directory(react_assets, path)
+    # Fallback to Flask assets
+    return send_from_directory('assets', path)
+
+@core.route('/vite.svg')
+def vite_icon():
+    # Serve vite icon
+    react_path = '/opt/hue-emulator/react-ui'
+    if os.path.exists(os.path.join(react_path, 'vite.svg')):
+        return send_from_directory(react_path, 'vite.svg')
+    return '', 404
 
 @core.route('/get-key')
 #@flask_login.login_required
