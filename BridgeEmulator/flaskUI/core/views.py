@@ -245,3 +245,8 @@ def yeelight_settings():
         music = bridgeConfig["config"]["yeelight"]["music"]
 
     return render_template('yeelight_settings.html', music=music)
+
+@core.route('/entertainment-wizard')
+def entertainment_wizard():
+    # Simple route to render the Entertainment Group Wizard UI
+    return render_template('entertainment_wizard.html')
