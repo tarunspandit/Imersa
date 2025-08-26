@@ -307,10 +307,7 @@ def ui_health():
         "/wled-settings", "/yeelight-settings"
     ]}
 
-# Convenience redirects for plain paths to new UI
-@core.route('/lights')
-def legacy_lights_path():
-    return redirect(url_for('core.ui_lights'))
+# Convenience redirect for plain groups path to new UI
 
 @core.route('/groups')
 def legacy_groups_path():
