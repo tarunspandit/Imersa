@@ -1,0 +1,96 @@
+{% extends "layouts/base.html" %}
+
+{% block title %}Groups{% endblock title %}
+
+{% block content %}
+<div class="card">
+  <h2 style="margin-top:0">Groups</h2>
+  <div id="status" style="display:none"></div>
+  <table style="width:100%; border-collapse: collapse;">
+    <thead>
+      <tr>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">Name</th>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">Type</th>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">On</th>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">Actions</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<script>
+  let apiKey = '';
+  let groups = {};
+
+  async function initGroups() {
+    apiKey = (await (await fetch('/get-key')).text()).trim();
+    await refreshGroups();
+  }
+
+  async function refreshGroups() {
+    const resp = await fetch(`/api/${apiKey}/groups`);
+    groups = await resp.json();
+    renderGroups();
+  }
+
+  function renderGroups() {
+    const tb = document.getElementById('tbody');
+    tb.innerHTML = '';
+    Object.entries(groups).forEach(([id, g]) => {
+      if (id === '0') return; // skip all-lights
+      const tr = document.createElement('tr');
+      const anyOn = g?.state?.any_on ? 'On' : 'Off';
+      const type = g?.type || '';
+      tr.innerHTML = `
+        <td style="border-bottom:1px solid #f1f1f1; padding:8px;">${g.name || ('Group ' + id)}</td>
+        <td style="border-bottom:1px solid #f1f1f1; padding:8px;">${type}</td>
+        <td style="border-bottom:1px solid #f1f1f1; padding:8px;">
+          <label style="display:inline-flex; align-items:center; gap:6px;">
+            <input type="checkbox" ${g.state?.any_on ? 'checked' : ''} onchange="setGroupOn('${id}', this.checked)" />
+            <span>${anyOn}</span>
+          </label>
+        </td>
+        <td style="border-bottom:1px solid #f1f1f1; padding:8px;">
+          <a class="btn" href="/ui/groups/${id}">Edit</a>
+          ${type === 'Entertainment' ? `
+            <button class="btn" onclick="startEntertainment('${id}')">Start</button>
+            <button class="btn secondary" onclick="stopEntertainment('${id}')">Stop</button>
+          ` : ''}
+        </td>
+      `;
+      tb.appendChild(tr);
+    });
+  }
+
+  async function setGroupOn(id, on) {
+    try {
+      await fetch(`/api/${apiKey}/groups/${id}/action`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ on })
+      });
+      await refreshGroups();
+    } catch (e) {}
+  }
+
+  async function startEntertainment(id) {
+    try {
+      await fetch(`/api/${apiKey}/groups/${id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stream: { active: true } })
+      });
+    } catch (e) {}
+  }
+
+  async function stopEntertainment(id) {
+    try {
+      await fetch(`/api/${apiKey}/groups/${id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stream: { active: false } })
+      });
+    } catch (e) {}
+  }
+
+  initGroups();
+</script>
+{% endblock content %}

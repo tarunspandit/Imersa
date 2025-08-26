@@ -18,9 +18,9 @@ logging = logManager.logger.get_logger(__name__)
 bridgeConfig = configManager.bridgeConfig.yaml_config
 core = Blueprint('core',__name__)
 @core.route('/')
-@flask_login.login_required
 def index():
-    return render_template('index.html', groups=bridgeConfig["groups"], lights=bridgeConfig["lights"])
+    # Default UI landing page
+    return redirect(url_for('core.ui_home'))
 
 @core.route('/get-key')
 #@flask_login.login_required
@@ -250,3 +250,54 @@ def yeelight_settings():
 def entertainment_wizard():
     # Simple route to render the Entertainment Group Wizard UI
     return render_template('entertainment_wizard.html')
+
+@core.route('/ui')
+def ui_home():
+    # Public landing page with links; no login required
+    return render_template('index.html')
+
+@core.route('/ui/lights')
+def ui_lights():
+    return render_template('lights_ui.html')
+
+@core.route('/ui/groups')
+def ui_groups():
+    return render_template('groups_ui.html')
+
+@core.route('/ui/scenes')
+def ui_scenes():
+    return render_template('scenes_ui.html')
+
+@core.route('/ui/schedules')
+def ui_schedules():
+    return render_template('schedules_ui.html')
+
+@core.route('/ui/sensors')
+def ui_sensors():
+    return render_template('sensors_ui.html')
+
+@core.route('/ui/rules')
+def ui_rules():
+    return render_template('rules_ui.html')
+
+@core.route('/ui/settings')
+@flask_login.login_required
+def ui_settings():
+    return render_template('settings.html')
+
+@core.route('/ui/entertainment')
+def ui_entertainment():
+    return render_template('entertainment_ui.html')
+
+@core.route('/ui/groups/<gid>')
+def ui_group_detail(gid):
+    return render_template('group_detail.html')
+
+# Convenience redirects for plain paths to new UI
+@core.route('/lights')
+def legacy_lights_path():
+    return redirect(url_for('core.ui_lights'))
+
+@core.route('/groups')
+def legacy_groups_path():
+    return redirect(url_for('core.ui_groups'))

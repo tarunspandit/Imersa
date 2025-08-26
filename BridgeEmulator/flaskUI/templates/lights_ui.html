@@ -1,0 +1,130 @@
+{% extends "layouts/base.html" %}
+
+{% block title %}Lights{% endblock title %}
+
+{% block content %}
+<div class="card">
+  <h2 style="margin-top:0">Lights</h2>
+  <div id="status" style="display:none"></div>
+  <table style="width:100%; border-collapse: collapse;">
+    <thead>
+      <tr>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">Name</th>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">Model</th>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">Name</th>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">On</th>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">Brightness</th>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">Color</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<script>
+  let apiKey = '';
+  let lights = {};
+
+  async function initLights() {
+    apiKey = (await (await fetch('/get-key')).text()).trim();
+    await refresh();
+  }
+
+  async function refresh() {
+    const resp = await fetch(`/api/${apiKey}/lights`);
+    lights = await resp.json();
+    render();
+  }
+
+  function render() {
+    const tb = document.getElementById('tbody');
+    tb.innerHTML = '';
+    Object.entries(lights).forEach(([id, l]) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td style="border-bottom:1px solid #f1f1f1; padding:8px;">${l.name || ('Light ' + id)}</td>
+        <td style="border-bottom:1px solid #f1f1f1; padding:8px;">${l.modelid || ''}</td>
+        <td style="border-bottom:1px solid #f1f1f1; padding:8px;">
+          <input type="text" value="${l.name || ('Light ' + id)}" style="width:180px" onblur="rename('${id}', this.value)" />
+          <button class="btn secondary" onclick="removeLight('${id}')">Delete</button>
+        </td>
+        <td style="border-bottom:1px solid #f1f1f1; padding:8px;">
+          <label style="display:inline-flex; align-items:center; gap:6px;">
+            <input type="checkbox" ${l.state?.on ? 'checked' : ''} onchange="setOn('${id}', this.checked)" />
+            <span>${l.state?.on ? 'On' : 'Off'}</span>
+          </label>
+        </td>
+        <td style="border-bottom:1px solid #f1f1f1; padding:8px;">
+          <input type="range" min="1" max="254" value="${l.state?.bri ?? 254}" oninput="setBri('${id}', this.value)" />
+          <span>${l.state?.bri ?? 254}</span>
+        </td>
+        <td style="border-bottom:1px solid #f1f1f1; padding:8px;">
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <label>CT <input type="number" min="153" max="500" value="${l.state?.ct ?? 300}" style="width:80px" oninput="setCt('${id}', this.value)"/></label>
+            <label>H <input type="number" min="0" max="65535" value="${l.state?.hue ?? 0}" style="width:100px" oninput="setHue('${id}', this.value)"/></label>
+            <label>S <input type="number" min="0" max="254" value="${l.state?.sat ?? 0}" style="width:80px" oninput="setSat('${id}', this.value)"/></label>
+          </div>
+        </td>
+      `;
+      tb.appendChild(tr);
+    });
+  }
+
+  async function setOn(id, on) {
+    try {
+      await fetch(`/api/${apiKey}/lights/${id}/state`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ on })
+      });
+      await refresh();
+    } catch (e) {}
+  }
+  async function rename(id, name) {
+    await fetch(`/api/${apiKey}/lights/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name }) });
+    await refresh();
+  }
+  async function removeLight(id) {
+    await fetch(`/api/${apiKey}/lights/${id}`, { method:'DELETE' });
+    await refresh();
+  }
+
+  let briTimer;
+  async function setBri(id, bri) {
+    clearTimeout(briTimer);
+    briTimer = setTimeout(async () => {
+      try {
+        await fetch(`/api/${apiKey}/lights/${id}/state`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bri: parseInt(bri) })
+        });
+        await refresh();
+      } catch (e) {}
+    }, 120);
+  }
+
+  let colorTimer;
+  async function setCt(id, ct) {
+    clearTimeout(colorTimer);
+    colorTimer = setTimeout(async () => {
+      await fetch(`/api/${apiKey}/lights/${id}/state`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ ct: parseInt(ct) }) });
+      await refresh();
+    }, 150);
+  }
+  async function setHue(id, hue) {
+    clearTimeout(colorTimer);
+    colorTimer = setTimeout(async () => {
+      await fetch(`/api/${apiKey}/lights/${id}/state`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ hue: parseInt(hue) }) });
+      await refresh();
+    }, 150);
+  }
+  async function setSat(id, sat) {
+    clearTimeout(colorTimer);
+    colorTimer = setTimeout(async () => {
+      await fetch(`/api/${apiKey}/lights/${id}/state`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ sat: parseInt(sat) }) });
+      await refresh();
+    }, 150);
+  }
+
+  initLights();
+</script>
+{% endblock content %}

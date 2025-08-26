@@ -1,0 +1,60 @@
+{% extends "layouts/base.html" %}
+
+{% block title %}Rules{% endblock title %}
+
+{% block content %}
+<div class="card">
+  <h2 style="margin-top:0">Rules</h2>
+  <table style="width:100%; border-collapse: collapse;">
+    <thead>
+      <tr>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">ID</th>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">Name</th>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">Enabled</th>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">Actions</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<script>
+  let apiKey = '';
+  let rules = {};
+  async function init() {
+    apiKey = (await (await fetch('/get-key')).text()).trim();
+    await refresh();
+  }
+  async function refresh() {
+    rules = await (await fetch(`/api/${apiKey}/rules`)).json();
+    render();
+  }
+  function render() {
+    const tb = document.getElementById('tbody');
+    tb.innerHTML = '';
+    Object.entries(rules).forEach(([id, r]) => {
+      const tr = document.createElement('tr');
+      const enabled = r.enabled !== false;
+      tr.innerHTML = `
+        <td style=\"border-bottom:1px solid #f1f1f1; padding:8px;\">${id}</td>
+        <td style=\"border-bottom:1px solid #f1f1f1; padding:8px;\">${r.name || ''}</td>
+        <td style=\"border-bottom:1px solid #f1f1f1; padding:8px;\">${enabled}</td>
+        <td style=\"border-bottom:1px solid #f1f1f1; padding:8px;\">
+          <button class=\"btn\" onclick=\"setEnabled('${id}', ${!enabled})\">${enabled ? 'Disable' : 'Enable'}</button>
+          <button class=\"btn secondary\" onclick=\"del('${id}')\">Delete</button>
+        </td>`;
+      tb.appendChild(tr);
+    });
+  }
+  async function setEnabled(id, enabled) {
+    await fetch(`/api/${apiKey}/rules/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ enabled }) });
+    await refresh();
+  }
+  async function del(id) {
+    await fetch(`/api/${apiKey}/rules/${id}`, { method:'DELETE' });
+    await refresh();
+  }
+  init();
+</script>
+{% endblock content %}
+

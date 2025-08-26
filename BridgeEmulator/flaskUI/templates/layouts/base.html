@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}Imersa{% endblock title %}</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin:0; background:#f6f7fb; color:#111827; }
+    .nav { background:#111827; color:#fff; padding:12px 18px; display:flex; align-items:center; gap:16px; }
+    .nav a { color:#c7d2fe; text-decoration:none; margin-right:10px; }
+    .container { max-width: 1100px; margin: 22px auto; padding: 0 16px; }
+    .card { background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:16px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+    .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap:14px; }
+    .btn { appearance:none; border:none; background:#2563eb; color:#fff; padding:10px 14px; border-radius:8px; cursor:pointer; font-weight:600; text-decoration:none; display:inline-block; }
+    .btn.secondary { background:#6b7280; }
+  </style>
+  {% block stylesheets %}{% endblock stylesheets %}
+</head>
+<body>
+  <div class="nav">
+    <div style="font-weight:700;">Imersa</div>
+    <a href="/ui">Home</a>
+    <a href="/ui/lights">Lights</a>
+    <a href="/ui/groups">Groups</a>
+    <a href="/ui/entertainment">Entertainment</a>
+    <a href="/entertainment-wizard">Wizard</a>
+    <a href="/ui/scenes">Scenes</a>
+    <a href="/ui/schedules">Schedules</a>
+    <a href="/ui/sensors">Sensors</a>
+    <a href="/ui/rules">Rules</a>
+    <a href="/wled-settings">WLED</a>
+    <a href="/yeelight-settings">Yeelight</a>
+    <a href="/ui/settings">Settings</a>
+    <a href="/devices">Devices</a>
+  </div>
+  <div class="container">
+    {% block content %}{% endblock content %}
+  </div>
+  {% block javascripts %}{% endblock javascripts %}
+  <script>
+    (function() {
+      function mapHashToPath(hash) {
+        const h = (hash || '').replace(/^#/, '').toLowerCase();
+        switch (h) {
+          case 'lights': return '/ui/lights';
+          case 'groups':
+          case 'rooms': return '/ui/groups';
+          case 'scenes': return '/ui/scenes';
+          case 'schedules': return '/ui/schedules';
+          case 'sensors': return '/ui/sensors';
+          case 'rules': return '/ui/rules';
+          case 'devices': return '/devices';
+          case 'wled': return '/wled-settings';
+          case 'yeelight': return '/yeelight-settings';
+          case 'entertainment': return '/ui/entertainment';
+          case 'wizard':
+          case 'entertainment-wizard': return '/entertainment-wizard';
+          case 'settings': return '/ui/settings';
+          default: return null;
+        }
+      }
+      function redirectIfHash() {
+        const p = mapHashToPath(window.location.hash);
+        if (p) window.location.replace(p);
+      }
+      window.addEventListener('hashchange', redirectIfHash);
+      // Initial load
+      redirectIfHash();
+    })();
+  </script>
+</body>
+</html>
