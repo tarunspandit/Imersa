@@ -40,7 +40,7 @@ def discover(detectedLights):
                 elif line[:8] == "LOCATION":
                     properties["ip"] = line.split(":")[2][2:]
                 elif line[:6] == "SERVER":
-                    properties["version"] = re.match("Hyperion/\S*", line)
+                    properties["version"] = re.match(r"Hyperion/\S*", line)
             if "name" in properties:
                 detectedLights.append({"protocol": "hyperion", "name": properties["name"], "modelid": "LCT015", "protocol_cfg": properties})
 
