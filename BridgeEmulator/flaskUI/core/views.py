@@ -127,7 +127,8 @@ def get_key():
         configManager.bridgeConfig.save_config()
     return list(bridgeConfig["apiUsers"])[0]
 
-@core.route('/lights')
+# Legacy JSON endpoint moved to avoid React route conflict
+@core.route('/legacy/lights')
 #@flask_login.login_required
 def get_lights():
     result = {}
@@ -135,7 +136,8 @@ def get_lights():
         result[light] = object.save()
     return result
 
-@core.route('/sensors')
+# Legacy JSON endpoint moved to avoid React route conflict
+@core.route('/legacy/sensors')
 #@flask_login.login_required
 def get_sensors():
     result = {}
@@ -321,6 +323,27 @@ def ui_health():
     ]}
 
 # Convenience redirects
+# (Handled by react_frontend_routes below)
+
+# React Router front-end paths: serve index.html
+@core.route('/lights')
 @core.route('/groups')
-def legacy_groups_path():
-    return redirect(url_for('core.index'))
+@core.route('/scenes')
+@core.route('/gradients')
+@core.route('/entertainment')
+@core.route('/entertainment/wizard')
+@core.route('/wled')
+@core.route('/scheduler')
+@core.route('/automation')
+@core.route('/sensors')
+@core.route('/analytics')
+@core.route('/devices')
+@core.route('/settings')
+@core.route('/help')
+def react_frontend_routes():
+    # All these routes are client-side handled by React Router.
+    local_react_dist = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'react-ui', 'dist')
+    docker_react_path = '/opt/hue-emulator/react-ui'
+    if os.path.exists(os.path.join(local_react_dist, 'index.html')):
+        return send_from_directory(local_react_dist, 'index.html')
+    return send_from_directory(docker_react_path, 'index.html')
