@@ -5,12 +5,17 @@
 {% block content %}
 <div class="card">
   <h2 style="margin-top:0">Lights</h2>
+  <div style="margin-bottom:10px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+    <button class="btn" onclick="allOn()">All On</button>
+    <button class="btn secondary" onclick="allOff()">All Off</button>
+  </div>
   <div id="status" style="display:none"></div>
   <table style="width:100%; border-collapse: collapse;">
     <thead>
       <tr>
         <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">Name</th>
         <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">Model</th>
+        <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">Type</th>
         <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">Name</th>
         <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">On</th>
         <th style="text-align:left; border-bottom:1px solid #eee; padding:8px;">Brightness</th>
@@ -24,10 +29,17 @@
 <script>
   let apiKey = '';
   let lights = {};
+  let lightTypeList = [];
 
   async function initLights() {
     apiKey = (await (await fetch('/get-key')).text()).trim();
     await refresh();
+    // Load available light types for model assignment
+    try {
+      const lt = await (await fetch('/light-types')).json();
+      lightTypeList = lt.result || [];
+      render();
+    } catch (e) {}
   }
 
   async function refresh() {
@@ -44,6 +56,11 @@
       tr.innerHTML = `
         <td style="border-bottom:1px solid #f1f1f1; padding:8px;">${l.name || ('Light ' + id)}</td>
         <td style="border-bottom:1px solid #f1f1f1; padding:8px;">${l.modelid || ''}</td>
+        <td style="border-bottom:1px solid #f1f1f1; padding:8px;">
+          <select onchange="setType('${id}', this.value)">
+            ${(lightTypeList || []).map(m => `<option value="${m}" ${l.modelid===m?'selected':''}>${m}</option>`).join('')}
+          </select>
+        </td>
         <td style="border-bottom:1px solid #f1f1f1; padding:8px;">
           <input type="text" value="${l.name || ('Light ' + id)}" style="width:180px" onblur="rename('${id}', this.value)" />
           <button class="btn secondary" onclick="removeLight('${id}')">Delete</button>
@@ -70,6 +87,25 @@
     });
   }
 
+  async function allOn() {
+    try {
+      await fetch(`/api/${apiKey}/groups/0/action`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ on: true })
+      });
+      await refresh();
+    } catch (e) {}
+  }
+  async function allOff() {
+    try {
+      await fetch(`/api/${apiKey}/groups/0/action`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ on: false })
+      });
+      await refresh();
+    } catch (e) {}
+  }
+
   async function setOn(id, on) {
     try {
       await fetch(`/api/${apiKey}/lights/${id}/state`, {
@@ -86,6 +122,13 @@
   async function removeLight(id) {
     await fetch(`/api/${apiKey}/lights/${id}`, { method:'DELETE' });
     await refresh();
+  }
+
+  async function setType(id, modelId) {
+    try {
+      await fetch('/light-types', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ [id]: modelId }) });
+      await refresh();
+    } catch (e) {}
   }
 
   let briTimer;
