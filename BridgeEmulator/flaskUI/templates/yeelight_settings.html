@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Yeelight Settings</title>
+  <style>
+    body { font-family: sans-serif; margin: 24px; }
+    .container { max-width: 720px; margin: 0 auto; }
+    label { display:block; margin-top:12px; font-weight:600; }
+    input[type=text], input[type=number] { width: 100%; padding: 8px; }
+    .row { display:flex; gap:12px; }
+    .row > div { flex:1; }
+    button { margin-top:16px; padding:10px 16px; }
+    small { color:#666; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Yeelight Music + Tuning</h2>
+    <form method="POST">
+      <label>
+        <input type="checkbox" name="require" {% if music.get('require') %}checked{% endif %} />
+        Require music mode (abort if unavailable)
+      </label>
+
+      <label for="host_ip">Host IP (LAN)</label>
+      <input id="host_ip" name="host_ip" type="text" value="{{ music.get('host_ip','') }}" placeholder="192.168.1.187" />
+      <small>Advertised to bulbs in set_music. Must be reachable by bulbs.</small>
+
+      <div class="row">
+        <div>
+          <label for="port">Port (single)</label>
+          <input id="port" name="port" type="number" min="1024" max="65535" value="{{ music.get('port','') }}" />
+          <small>Optional. If set, use this one port for the shared server.</small>
+        </div>
+        <div>
+          <label for="port_start">Port range start</label>
+          <input id="port_start" name="port_start" type="number" min="1024" max="65535" value="{{ music.get('port_range',{}).get('start','') }}" />
+        </div>
+        <div>
+          <label for="port_end">Port range end</label>
+          <input id="port_end" name="port_end" type="number" min="1024" max="65535" value="{{ music.get('port_range',{}).get('end','') }}" />
+        </div>
+      </div>
+
+      <h3 style="margin-top:24px;">Tuning</h3>
+      <div class="row">
+        <div>
+          <label for="max_fps">Max FPS (per-bulb)</label>
+          <input id="max_fps" name="max_fps" type="number" min="10" max="60" value="{{ music.get('max_fps',40) }}" />
+        </div>
+        <div>
+          <label for="smooth_ms">Smooth duration (ms)</label>
+          <input id="smooth_ms" name="smooth_ms" type="number" min="0" max="300" value="{{ music.get('smooth_ms',60) }}" />
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="cie_tolerance">CIE tolerance</label>
+          <input id="cie_tolerance" name="cie_tolerance" type="text" value="{{ music.get('cie_tolerance',0.01) }}" />
+        </div>
+        <div>
+          <label for="bri_tolerance">Brightness tolerance</label>
+          <input id="bri_tolerance" name="bri_tolerance" type="number" value="{{ music.get('bri_tolerance',8) }}" />
+        </div>
+      </div>
+
+      <button type="submit">Save</button>
+    </form>
+  </div>
+</body>
+</html>
+

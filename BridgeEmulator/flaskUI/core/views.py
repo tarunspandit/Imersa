@@ -181,3 +181,67 @@ def logout():
 @core.route('/wled-settings')
 def wled_settings():
     return render_template('wled_settings.html')
+
+@core.route('/yeelight-settings', methods=['GET', 'POST'])
+def yeelight_settings():
+    music = bridgeConfig["config"].get("yeelight", {}).get("music", {})
+    if request.method == 'POST':
+        # Parse form fields
+        require = request.form.get('require', 'off') == 'on'
+        host_ip = request.form.get('host_ip', '').strip()
+        port = request.form.get('port', '').strip()
+        pr_start = request.form.get('port_start', '').strip()
+        pr_end = request.form.get('port_end', '').strip()
+        max_fps = request.form.get('max_fps', '').strip()
+        smooth_ms = request.form.get('smooth_ms', '').strip()
+        cie_tol = request.form.get('cie_tolerance', '').strip()
+        bri_tol = request.form.get('bri_tolerance', '').strip()
+
+        # Ensure structure exists
+        if "yeelight" not in bridgeConfig["config"]:
+            bridgeConfig["config"]["yeelight"] = {"enabled": True}
+        if "music" not in bridgeConfig["config"]["yeelight"]:
+            bridgeConfig["config"]["yeelight"]["music"] = {}
+        m = bridgeConfig["config"]["yeelight"]["music"]
+        m["require"] = require
+        if host_ip:
+            m["host_ip"] = host_ip
+        if port:
+            try:
+                m["port"] = int(port)
+            except Exception:
+                pass
+        # Port range
+        if pr_start and pr_end:
+            try:
+                m["port_range"] = {"start": int(pr_start), "end": int(pr_end)}
+            except Exception:
+                pass
+        # Tuning
+        if max_fps:
+            try:
+                m["max_fps"] = int(max_fps)
+            except Exception:
+                pass
+        if smooth_ms:
+            try:
+                m["smooth_ms"] = int(smooth_ms)
+            except Exception:
+                pass
+        if cie_tol:
+            try:
+                m["cie_tolerance"] = float(cie_tol)
+            except Exception:
+                pass
+        if bri_tol:
+            try:
+                m["bri_tolerance"] = int(bri_tol)
+            except Exception:
+                pass
+
+        configManager.bridgeConfig.save_config()
+
+        # Refresh local variable for rendering
+        music = bridgeConfig["config"]["yeelight"]["music"]
+
+    return render_template('yeelight_settings.html', music=music)

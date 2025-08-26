@@ -15,6 +15,7 @@ cieTolerance = 0.01  # color delta tolerance
 briTolerange = 8     # brightness delta tolerance
 lastAppliedFrame = {}
 YeelightConnections = {}
+_music_server = None
 _yeelight_last_send = {}
 udp_socket_pool = {}  # Socket pool to prevent creating 600+ sockets/second
 
@@ -729,57 +730,11 @@ class YeelightConnection(object):
         if require_override is not None:
             require_music = bool(require_override)
 
-        # Listener: pick a port, prefer configured single port or range (for Docker published ports)
-        tempSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # Setup listener
-        tempSock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        tempSock.settimeout(5)
-
-        # Try configured single port first
-        chosen_port = None
-        single_port = music_cfg.get("port")
-        if single_port is not None:
-            try:
-                p = int(single_port)
-                tempSock.bind(("", p))
-                chosen_port = p
-            except Exception:
-                # Do not fall back to ephemeral when user configured a fixed port
-                raise ConnectionError(f"Yeelight music: could not bind configured port {single_port}. Is it published/mapped?")
-
-        # Try configured port range next
-        pr = music_cfg.get("port_range") or music_cfg.get("ports")
-        if isinstance(pr, dict) and "start" in pr and "end" in pr and int(pr["start"]) <= int(pr["end"]):
-            start_p, end_p = int(pr["start"]), int(pr["end"])
-            for p in range(start_p, end_p + 1):
-                try:
-                    tempSock.bind(("", p))
-                    chosen_port = p
-                    break
-                except Exception:
-                    continue
-        elif isinstance(pr, (list, tuple)) and len(pr) == 2:
-            try:
-                start_p, end_p = int(pr[0]), int(pr[1])
-                for p in range(start_p, end_p + 1):
-                    try:
-                        tempSock.bind(("", p))
-                        chosen_port = p
-                        break
-                    except Exception:
-                        continue
-            except Exception:
-                pass
-
-        # If a range was configured but we couldn't bind any, fail fast
-        if chosen_port is None and pr:
-            raise ConnectionError("Yeelight music: no free port in configured range. Check Docker port mapping.")
-
-        # Fallback to ephemeral port only when no configuration is provided
-        if chosen_port is None:
-            tempSock.bind(("", 0))
-        port = tempSock.getsockname()[1]
-
-        tempSock.listen(3)
+        # Start or reuse a single shared music server port
+        global _music_server
+        if _music_server is None or not _music_server.running:
+            _music_server = YeelightMusicServer(music_cfg)
+            _music_server.start()
 
         if not self._connected:
             self.connect(True)  # Basic connect for set_music
@@ -796,43 +751,26 @@ class YeelightConnection(object):
             except Exception:
                 pass
 
-        logging.info("Yeelight music: advertising %s:%s", local_host_ip, port)
-        self.command("set_music", [1, local_host_ip, port])  # MAGIC
+        logging.info("Yeelight music: advertising %s:%s", local_host_ip, _music_server.port)
+        self.command("set_music", [1, local_host_ip, _music_server.port])  # MAGIC
         self.disconnect()  # Disconnect from basic mode
 
         try:
             deadline = time.time() + 12  # wait up to 12s to establish
             while True:
+                if self._music and self._connected:
+                    break
+                if time.time() >= deadline:
+                    raise ConnectionError("music connect timeout")
+                # re-issue set_music in case the previous attempt missed
                 try:
-                    tempSock.settimeout(2)
-                    conn, addr = tempSock.accept()
-                    if addr[0] == self._ip:  # Accept only the expected device
-                        tempSock.close()  # Close listener
-                        self._socket = conn  # Replace socket with music one
-                        self._connected = True
-                        self._music = True
-                        break
-                    else:
-                        try:
-                            logging.info("Rejecting connection to the music mode listener from %s", addr[0])
-                            conn.close()
-                        except:
-                            pass
+                    self.connect(True)
+                    self.command("set_music", [1, local_host_ip, _music_server.port])
+                    self.disconnect()
                 except Exception:
-                    if time.time() >= deadline:
-                        raise ConnectionError("music connect timeout")
-                    # re-issue set_music in case the previous attempt missed
-                    try:
-                        self.connect(True)
-                        self.command("set_music", [1, local_host_ip, port])
-                        self.disconnect()
-                    except Exception:
-                        pass
+                    pass
+                time.sleep(0.25)
         except Exception as e:
-            try:
-                tempSock.close()
-            except:
-                pass
             if require_music:
                 raise ConnectionError("Yeelight with IP {} doesn't want to connect in music mode: {}".format(self._ip, e))
             else:
@@ -878,6 +816,81 @@ class YeelightConnection(object):
             self.send(msg.encode())
         except Exception as e:
             logging.warning("Yeelight command error: %s", e)
+
+
+class YeelightMusicServer:
+    def __init__(self, music_cfg):
+        self.running = False
+        self.port = None
+        self._sock = None
+        self._thread = None
+        # Choose port: prefer single port, else range start, else default 59000
+        port = None
+        if "port" in music_cfg:
+            try:
+                port = int(music_cfg.get("port"))
+            except Exception:
+                port = None
+        if port is None:
+            pr = music_cfg.get("port_range") or music_cfg.get("ports")
+            if isinstance(pr, dict) and "start" in pr:
+                try:
+                    port = int(pr["start"])
+                except Exception:
+                    port = None
+            elif isinstance(pr, (list, tuple)) and len(pr) >= 1:
+                try:
+                    port = int(pr[0])
+                except Exception:
+                    port = None
+        if port is None:
+            port = 59000
+        self.port = port
+
+    def start(self):
+        if self.running:
+            return
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._sock.bind(("", self.port))
+        self._sock.listen(16)
+        self.running = True
+
+        import threading
+
+        def _loop():
+            while self.running:
+                try:
+                    conn, addr = self._sock.accept()
+                    ip = addr[0]
+                    if ip in YeelightConnections:
+                        c = YeelightConnections[ip]
+                        # Replace or set music socket
+                        try:
+                            if c._socket:
+                                try:
+                                    c._socket.close()
+                                except Exception:
+                                    pass
+                            c._socket = conn
+                            c._connected = True
+                            c._music = True
+                            logging.info("Yeelight device with IP %s is now in music mode (shared)", ip)
+                        except Exception:
+                            try:
+                                conn.close()
+                            except Exception:
+                                pass
+                    else:
+                        try:
+                            conn.close()
+                        except Exception:
+                            pass
+                except Exception:
+                    time.sleep(0.2)
+
+        self._thread = threading.Thread(target=_loop, daemon=True)
+        self._thread.start()
 
 
 class HueConnection(object):
