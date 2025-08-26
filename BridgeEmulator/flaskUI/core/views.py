@@ -35,10 +35,25 @@ def index():
 def static_assets(path):
     # Serve React static files from assets
     react_assets = '/opt/hue-emulator/react-ui/assets'
-    if os.path.exists(os.path.join(react_assets, path)):
+    full_path = os.path.join(react_assets, path)
+    logging.info(f"Looking for asset: {full_path}")
+    
+    if os.path.exists(react_assets) and os.path.exists(full_path):
+        logging.info(f"Serving React asset: {path}")
         return send_from_directory(react_assets, path)
-    # Fallback to Flask assets
-    return send_from_directory('assets', path)
+    
+    # Try Flask assets directory
+    flask_assets = os.path.join(os.path.dirname(__file__), '..', 'assets')
+    if os.path.exists(os.path.join(flask_assets, path)):
+        logging.info(f"Serving Flask asset: {path}")
+        return send_from_directory(flask_assets, path)
+    
+    logging.error(f"Asset not found: {path}")
+    logging.error(f"React assets dir exists: {os.path.exists(react_assets)}")
+    if os.path.exists(react_assets):
+        logging.error(f"Files in react assets: {os.listdir(react_assets)[:5]}")
+    
+    return '', 404
 
 @core.route('/vite.svg')
 def vite_icon():

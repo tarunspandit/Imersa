@@ -37,8 +37,10 @@ COPY ./BridgeEmulator/HueEmulator3.py /opt/hue-emulator/
 COPY ./BridgeEmulator/githubInstall.sh /opt/hue-emulator/
 
 ## Install the React UI instead of official web interface
-RUN mkdir -p /opt/hue-emulator/react-ui
-COPY ./react-ui/dist/ /opt/hue-emulator/react-ui/
+RUN mkdir -p /opt/hue-emulator/react-ui/assets
+COPY ./react-ui/dist/index.html /opt/hue-emulator/react-ui/
+COPY ./react-ui/dist/vite.svg /opt/hue-emulator/react-ui/
+COPY ./react-ui/dist/assets/ /opt/hue-emulator/react-ui/assets/
 
 ## Copy correct (compiled) C file from previous image
 COPY ./BridgeEmulator/genCert.sh ./BridgeEmulator/openssl.conf /opt/hue-emulator/
