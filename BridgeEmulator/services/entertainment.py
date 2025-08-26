@@ -11,10 +11,11 @@ import time
 logging = logManager.logger.get_logger(__name__)
 bridgeConfig = configManager.bridgeConfig.yaml_config
 
-cieTolerance = 0.01  # tighter tolerance for higher responsiveness
-briTolerange = 8     # tighter brightness threshold for higher responsiveness
+cieTolerance = 0.01  # color delta tolerance
+briTolerange = 8     # brightness delta tolerance
 lastAppliedFrame = {}
 YeelightConnections = {}
+_yeelight_last_send = {}
 udp_socket_pool = {}  # Socket pool to prevent creating 600+ sockets/second
 
 # Models that support gradient segments
@@ -35,6 +36,17 @@ def skipSimilarFrames(light, color, brightness):
         lastAppliedFrame[light]["bri"] = brightness
         return 1
     return 0
+
+
+def _yeelight_tuning():
+    music_cfg = bridgeConfig.get("config", {}).get("yeelight", {}).get("music", {})
+    max_fps = music_cfg.get("max_fps", 40)
+    smooth_ms = music_cfg.get("smooth_ms", 60)
+    global cieTolerance, briTolerange
+    cieTolerance = float(music_cfg.get("cie_tolerance", cieTolerance))
+    briTolerange = int(music_cfg.get("bri_tolerance", briTolerange))
+    # sanitize
+    return max(10, int(max_fps)), max(0, int(smooth_ms))
 
 
 def getObject(v2uuid):
@@ -262,10 +274,19 @@ def entertainmentService(group, user):
                                 enableMusic(ip, host_ip)
                                 c = YeelightConnections[ip]
                                 op = skipSimilarFrames(light.id_v1, light.state["xy"], light.state["bri"])
-                                if op == 1:
-                                    c.command("set_bright", [int(light.state["bri"] / 2.55), "smooth", 30])
-                                elif op == 2:
-                                    c.command("set_rgb", [(r * 65536) + (g * 256) + b, "smooth", 30])
+                                max_fps, smooth_ms = _yeelight_tuning()
+                                now = time.time()
+                                last = _yeelight_last_send.get(ip, 0)
+                                min_interval = 1.0 / max_fps
+                                if now - last < min_interval:
+                                    pass
+                                else:
+                                    if op == 1:
+                                        c.command("set_bright", [int(light.state["bri"] / 2.55), "smooth", smooth_ms])
+                                        _yeelight_last_send[ip] = now
+                                    elif op == 2:
+                                        c.command("set_rgb", [(r * 65536) + (g * 256) + b, "smooth", smooth_ms])
+                                        _yeelight_last_send[ip] = now
 
 
                             # WLED (Realtime UDP 21324, DNRGB)
@@ -393,10 +414,19 @@ def entertainmentService(group, user):
                                 enableMusic(ip, host_ip)
                                 c = YeelightConnections[ip]
                                 op = skipSimilarFrames(light.id_v1, light.state["xy"], light.state["bri"])
-                                if op == 1:
-                                    c.command("set_bright", [int(light.state["bri"] / 2.55), "smooth", 30])
-                                elif op == 2:
-                                    c.command("set_rgb", [(r * 65536) + (g * 256) + b, "smooth", 30])
+                                max_fps, smooth_ms = _yeelight_tuning()
+                                now = time.time()
+                                last = _yeelight_last_send.get(ip, 0)
+                                min_interval = 1.0 / max_fps
+                                if now - last < min_interval:
+                                    pass
+                                else:
+                                    if op == 1:
+                                        c.command("set_bright", [int(light.state["bri"] / 2.55), "smooth", smooth_ms])
+                                        _yeelight_last_send[ip] = now
+                                    elif op == 2:
+                                        c.command("set_rgb", [(r * 65536) + (g * 256) + b, "smooth", smooth_ms])
+                                        _yeelight_last_send[ip] = now
 
 
                             elif proto == "wled":
