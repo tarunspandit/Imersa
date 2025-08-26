@@ -713,7 +713,8 @@ class YeelightConnection(object):
                 tempSock.bind(("", p))
                 chosen_port = p
             except Exception:
-                chosen_port = None
+                # Do not fall back to ephemeral when user configured a fixed port
+                raise ConnectionError(f"Yeelight music: could not bind configured port {single_port}. Is it published/mapped?")
 
         # Try configured port range next
         pr = music_cfg.get("port_range") or music_cfg.get("ports")
@@ -739,7 +740,11 @@ class YeelightConnection(object):
             except Exception:
                 pass
 
-        # Fallback to ephemeral port
+        # If a range was configured but we couldn't bind any, fail fast
+        if chosen_port is None and pr:
+            raise ConnectionError("Yeelight music: no free port in configured range. Check Docker port mapping.")
+
+        # Fallback to ephemeral port only when no configuration is provided
         if chosen_port is None:
             tempSock.bind(("", 0))
         port = tempSock.getsockname()[1]
