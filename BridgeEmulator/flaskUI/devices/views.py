@@ -14,7 +14,7 @@ bridgeConfig = configManager.bridgeConfig.yaml_config
 
 devices = Blueprint('devices',__name__)
 
-@devices.route('/devices', methods=['GET', 'POST'])
+@devices.route('/legacy/devices', methods=['GET', 'POST'])
 @flask_login.login_required
 def sensors():
     form = DevicesForm()

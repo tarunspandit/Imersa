@@ -17,8 +17,11 @@
     "test:integration": "jest --testPathPattern=integration",
     "test:e2e": "cypress run",
     "test:e2e:open": "cypress open",
-    "lint": "eslint 'BridgeEmulator/flaskUI/**/*.{js,jsx,ts,tsx}' --fix",
-    "lighthouse": "lighthouse http://localhost:5000 --output json --output html --output-path=./tests/lighthouse-report"
+    "lint": "eslint 'BridgeEmulator/flaskUI/**/*.{js,jsx,ts,tsx}' --fix --no-error-on-unmatched-pattern",
+    "lighthouse": "lighthouse http://localhost:5000 --output json --output html --output-path=./tests/lighthouse-report",
+    "ui:dev": "npm run dev --prefix react-ui",
+    "ui:build": "npm run build --prefix react-ui",
+    "ui:preview": "npm run preview --prefix react-ui"
   },
   "repository": {
     "type": "git",
