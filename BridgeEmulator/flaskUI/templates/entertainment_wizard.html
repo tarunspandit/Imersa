@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Entertainment Group Wizard</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; background: #f6f7fb; color: #222; }
+    .container { max-width: 920px; margin: 0 auto; background: #fff; border-radius: 10px; box-shadow: 0 8px 20px rgba(0,0,0,0.08); overflow: hidden; }
+    header { padding: 18px 22px; border-bottom: 1px solid #eee; display:flex; align-items:center; justify-content:space-between; }
+    header h1 { margin: 0; font-size: 18px; }
+    .steps { display:flex; gap:10px; font-size: 12px; color:#666; }
+    .step-pill { padding:6px 10px; border-radius: 999px; border:1px solid #ddd; background: #fafafa; }
+    .step-pill.active { background:#e6f2ff; border-color:#66aaff; color:#1155cc; font-weight:600; }
+    main { padding: 22px; }
+    .actions { display:flex; justify-content: space-between; padding:16px 22px; border-top:1px solid #eee; background:#fafafa; }
+    button { appearance:none; border:none; background:#2563eb; color:#fff; padding:10px 14px; border-radius:8px; cursor:pointer; font-weight:600; }
+    button[disabled] { background:#9ab4f5; cursor:not-allowed; }
+    .btn-secondary { background:#6b7280; }
+    .btn-ghost { background:transparent; color:#2563eb; border:1px solid #c7dbff; }
+    label { font-weight:600; display:block; margin:14px 0 8px; }
+    input[type=text] { width: 100%; padding:10px; border:1px solid #ddd; border-radius:8px; }
+    .row { display:flex; gap:16px; flex-wrap:wrap; }
+    .col { flex:1; min-width: 260px; }
+    .card { border:1px solid #eee; border-radius:10px; padding:16px; background:#fff; }
+    .light-list { display:grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap:12px; }
+    .light-item { border:1px solid #e5e7eb; border-radius:8px; padding:10px; display:flex; align-items:center; gap:10px; }
+    .light-item input { transform: scale(1.2); }
+    .muted { color:#666; font-size: 12px; }
+    table { width:100%; border-collapse: collapse; margin-top:10px; }
+    th, td { border-bottom:1px solid #eee; padding:8px; text-align:left; }
+    .status { display:none; margin-top:12px; padding:10px; border-radius:8px; }
+    .status.ok { display:block; background:#e7f8ed; color:#106a2b; border:1px solid #bde5c8; }
+    .status.err { display:block; background:#fdecea; color:#a12622; border:1px solid #f5c2bf; }
+    .help { font-size:12px; color:#666; }
+    .toolbar { display:flex; gap:8px; margin-top:8px; }
+  </style>
+  <script>
+    let apiKey = '';
+    let lights = {}; // { id: { name, modelid } }
+    let selected = []; // [ids]
+    let positions = {}; // { id: { x, y, z } }
+    let currentStep = 1;
+
+    async function init() {
+      try {
+        const keyResponse = await fetch('/get-key');
+        apiKey = (await keyResponse.text()).trim();
+        await loadLights();
+        refreshStepUI();
+      } catch (e) {
+        showStatus('global', 'Error initializing wizard: ' + e, true);
+      }
+    }
+
+    async function loadLights() {
+      const resp = await fetch(`/api/${apiKey}/lights`);
+      const data = await resp.json();
+      lights = data || {};
+      renderLightList();
+    }
+
+    function renderLightList() {
+      const container = document.getElementById('light-list');
+      container.innerHTML = '';
+      Object.entries(lights).forEach(([id, obj]) => {
+        const item = document.createElement('label');
+        item.className = 'light-item';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.value = id;
+        cb.checked = selected.includes(id);
+        cb.addEventListener('change', () => toggleSelect(id, cb.checked));
+        const span = document.createElement('div');
+        span.innerHTML = `<div>${obj.name || ('Light ' + id)}</div><div class="muted">${obj.modelid || ''}</div>`;
+        item.appendChild(cb);
+        item.appendChild(span);
+        container.appendChild(item);
+      });
+      document.getElementById('sel-count').textContent = selected.length;
+      updateNextState();
+    }
+
+    function toggleAllLights(checked) {
+      selected = checked ? Object.keys(lights) : [];
+      renderLightList();
+    }
+
+    function toggleSelect(id, checked) {
+      if (checked) {
+        if (!selected.includes(id)) selected.push(id);
+      } else {
+        selected = selected.filter(x => x !== id);
+      }
+      document.getElementById('sel-count').textContent = selected.length;
+      updateNextState();
+    }
+
+    function refreshStepUI() {
+      document.querySelectorAll('.step-pill').forEach(p => p.classList.remove('active'));
+      document.querySelector(`.step-pill[data-step="${currentStep}"]`).classList.add('active');
+      document.querySelectorAll('[data-step-panel]').forEach(el => el.style.display = 'none');
+      document.querySelector(`[data-step-panel="${currentStep}"]`).style.display = 'block';
+      updateNextState();
+    }
+
+    function updateNextState() {
+      const nextBtn = document.getElementById('next-btn');
+      nextBtn.disabled = false;
+      if (currentStep === 1) {
+        const name = document.getElementById('grp-name').value.trim();
+        nextBtn.disabled = name.length === 0;
+      } else if (currentStep === 2) {
+        nextBtn.disabled = selected.length === 0;
+      } else if (currentStep === 3) {
+        // ensure positions exist for selected lights
+        nextBtn.disabled = selected.some(id => positions[id] == null);
+      }
+      document.getElementById('back-btn').disabled = currentStep === 1;
+      document.getElementById('create-btn').style.display = currentStep === 4 ? 'inline-block' : 'none';
+      document.getElementById('next-btn').style.display = currentStep === 4 ? 'none' : 'inline-block';
+    }
+
+    function nextStep() {
+      if (currentStep === 2) buildPositionsTable();
+      if (currentStep === 3) buildReview();
+      currentStep = Math.min(4, currentStep + 1);
+      refreshStepUI();
+    }
+    function prevStep() {
+      currentStep = Math.max(1, currentStep - 1);
+      refreshStepUI();
+    }
+
+    function autoArrange() {
+      if (selected.length === 0) return;
+      const cfgType = document.querySelector('input[name="cfg-type"]:checked').value;
+      const ys = cfgType === 'screen' ? 0.8 : 0.0;
+      const zs = 0.0;
+      const n = selected.length;
+      selected.forEach((id, idx) => {
+        const t = n === 1 ? 0.5 : idx / (n - 1);
+        const x = -0.5 + t * 1.0; // from -0.5 to +0.5
+        positions[id] = { x: round(x), y: round(ys), z: round(zs) };
+      });
+      buildPositionsTable();
+    }
+
+    function resetPositions() {
+      selected.forEach(id => positions[id] = { x: 0.0, y: 0.0, z: 0.0 });
+      buildPositionsTable();
+    }
+
+    function round(v) { return Math.round(v * 1000) / 1000; }
+
+    function buildPositionsTable() {
+      const tbody = document.getElementById('pos-tbody');
+      tbody.innerHTML = '';
+      selected.forEach(id => {
+        if (!positions[id]) positions[id] = { x: 0.0, y: 0.0, z: 0.0 };
+        const tr = document.createElement('tr');
+        const obj = lights[id] || {};
+        tr.innerHTML = `
+          <td>${obj.name || ('Light ' + id)}<div class="muted">${obj.modelid || ''}</div></td>
+          <td><input type="number" step="0.01" value="${positions[id].x}" data-pos="x" data-id="${id}" style="width:100px"></td>
+          <td><input type="number" step="0.01" value="${positions[id].y}" data-pos="y" data-id="${id}" style="width:100px"></td>
+          <td><input type="number" step="0.01" value="${positions[id].z}" data-pos="z" data-id="${id}" style="width:100px"></td>
+        `;
+        tbody.appendChild(tr);
+      });
+      tbody.querySelectorAll('input[data-pos]').forEach(inp => {
+        inp.addEventListener('input', () => {
+          const id = inp.getAttribute('data-id');
+          const key = inp.getAttribute('data-pos');
+          const val = parseFloat(inp.value || '0');
+          positions[id][key] = isNaN(val) ? 0.0 : val;
+        });
+      });
+      updateNextState();
+    }
+
+    function buildReview() {
+      const name = document.getElementById('grp-name').value.trim();
+      const cfgType = document.querySelector('input[name="cfg-type"]:checked').value;
+      const review = document.getElementById('review');
+      const list = selected.map(id => (lights[id]?.name || ('Light ' + id)) + ` (id ${id})`).join(', ');
+      review.innerHTML = `
+        <div class="card">
+          <div><strong>Name:</strong> ${name}</div>
+          <div><strong>Type:</strong> ${cfgType}</div>
+          <div><strong>Lights:</strong> ${selected.length}</div>
+          <div class="help" style="margin-top:8px;">Positions will be saved with the group. You can adjust later via API if needed.</div>
+        </div>
+        <div style="margin-top:10px;" class="muted">${list}</div>
+      `;
+    }
+
+    async function createGroup() {
+      try {
+        const name = document.getElementById('grp-name').value.trim();
+        const cfgType = document.querySelector('input[name="cfg-type"]:checked').value;
+        if (!name || selected.length === 0) return;
+
+        // 1) Create the group
+        const createResp = await fetch(`/api/${apiKey}/groups`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, type: 'Entertainment', configuration_type: cfgType, lights: selected })
+        });
+        const createJson = await createResp.json();
+        const newId = createJson?.[0]?.success?.id;
+        if (!newId) throw new Error('Unexpected create response: ' + JSON.stringify(createJson));
+
+        // 2) Save locations
+        const locMap = {};
+        selected.forEach(id => {
+          const p = positions[id] || { x: 0, y: 0, z: 0 };
+          locMap[id] = [p.x, p.y, p.z];
+        });
+        const locResp = await fetch(`/api/${apiKey}/groups/${newId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ locations: locMap })
+        });
+        const locJson = await locResp.json();
+        if (!Array.isArray(locJson)) throw new Error('Unexpected locations response');
+
+        showStatus('global', `Entertainment group created (id ${newId}).`, false);
+        document.getElementById('start-stream').style.display = 'inline-block';
+        document.getElementById('start-stream').setAttribute('data-group', newId);
+      } catch (e) {
+        showStatus('global', e.message || String(e), true);
+      }
+    }
+
+    async function startStream(btn) {
+      const gid = btn.getAttribute('data-group');
+      if (!gid) return;
+      try {
+        const resp = await fetch(`/api/${apiKey}/groups/${gid}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ stream: { active: true } })
+        });
+        const js = await resp.json();
+        showStatus('global', 'Entertainment streaming requested.', false);
+      } catch (e) {
+        showStatus('global', e.message || String(e), true);
+      }
+    }
+
+    function showStatus(scope, msg, isErr) {
+      const el = document.getElementById(scope + '-status');
+      if (!el) return;
+      el.className = 'status ' + (isErr ? 'err' : 'ok');
+      el.textContent = msg;
+    }
+  </script>
+</head>
+<body onload="init()">
+  <div class="container">
+    <header>
+      <h1>Entertainment Group Wizard</h1>
+      <div class="steps">
+        <div class="step-pill active" data-step="1">1. Name & Layout</div>
+        <div class="step-pill" data-step="2">2. Select Lights</div>
+        <div class="step-pill" data-step="3">3. Position</div>
+        <div class="step-pill" data-step="4">4. Review</div>
+      </div>
+    </header>
+
+    <main>
+      <div id="global-status" class="status"></div>
+
+      <!-- Step 1: Name + config type -->
+      <section data-step-panel="1">
+        <div class="row">
+          <div class="col">
+            <label for="grp-name">Area name</label>
+            <input id="grp-name" type="text" placeholder="Living Room TV" value="Entertainment Area" oninput="updateNextState()" />
+            <div class="help">A descriptive name helps identify the area in apps.</div>
+          </div>
+          <div class="col">
+            <label>Configuration type</label>
+            <div class="card">
+              <label><input type="radio" name="cfg-type" value="screen" checked /> Screen (front-facing)</label>
+              <div class="muted">Best for TV/monitor setups. Positions use a 2D screen plane.</div>
+              <div style="height:8px"></div>
+              <label><input type="radio" name="cfg-type" value="3dspace" /> 3D space</label>
+              <div class="muted">Freeform coordinates for more complex arrangements.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Step 2: Select lights -->
+      <section data-step-panel="2" style="display:none">
+        <div class="row" style="align-items:center; justify-content:space-between;">
+          <div class="muted">Selected: <span id="sel-count">0</span></div>
+          <div class="toolbar">
+            <button class="btn-ghost" onclick="toggleAllLights(true)">Select all</button>
+            <button class="btn-ghost" onclick="toggleAllLights(false)">Clear</button>
+          </div>
+        </div>
+        <div id="light-list" class="light-list" style="margin-top:12px"></div>
+      </section>
+
+      <!-- Step 3: Positions -->
+      <section data-step-panel="3" style="display:none">
+        <div class="toolbar">
+          <button class="btn-ghost" onclick="autoArrange()">Auto arrange (left → right)</button>
+          <button class="btn-ghost" onclick="resetPositions()">Reset to (0,0,0)</button>
+        </div>
+        <div class="help" style="margin-top:8px">
+          Screen mode tip: X spans left(-) to right(+), Y is height (use ~0.8), Z is depth.
+        </div>
+        <table>
+          <thead>
+            <tr><th>Light</th><th>X</th><th>Y</th><th>Z</th></tr>
+          </thead>
+          <tbody id="pos-tbody"></tbody>
+        </table>
+      </section>
+
+      <!-- Step 4: Review -->
+      <section data-step-panel="4" style="display:none">
+        <div id="review"></div>
+        <div id="create-status" class="status" style="margin-top:12px"></div>
+        <div class="toolbar" style="margin-top:8px">
+          <button id="start-stream" style="display:none" onclick="startStream(this)">Start streaming</button>
+        </div>
+      </section>
+    </main>
+
+    <div class="actions">
+      <div>
+        <button id="back-btn" class="btn-secondary" onclick="prevStep()" disabled>Back</button>
+      </div>
+      <div>
+        <button id="next-btn" onclick="nextStep()" disabled>Next</button>
+        <button id="create-btn" onclick="createGroup()" style="display:none">Create Entertainment Group</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+
