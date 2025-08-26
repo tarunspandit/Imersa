@@ -21,47 +21,101 @@ core = Blueprint('core',__name__)
 # React UI Static Files
 @core.route('/')
 def index():
-    # Serve React UI 
-    react_path = '/opt/hue-emulator/react-ui'
-    if os.path.exists(os.path.join(react_path, 'index.html')):
+    # Serve React UI from local dist directory
+    # Try local development path first
+    local_react_dist = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'react-ui', 'dist')
+    docker_react_path = '/opt/hue-emulator/react-ui'
+    
+    # Use local dist if available, otherwise Docker path
+    if os.path.exists(os.path.join(local_react_dist, 'index.html')):
+        logging.info(f"Serving React UI from {local_react_dist}")
+        return send_from_directory(local_react_dist, 'index.html')
+    elif os.path.exists(os.path.join(docker_react_path, 'index.html')):
         logging.info("Serving React UI from /opt/hue-emulator/react-ui")
-        return send_from_directory(react_path, 'index.html')
+        return send_from_directory(docker_react_path, 'index.html')
     else:
         # If React UI not found, return error
-        logging.error("React UI not found at /opt/hue-emulator/react-ui")
-        return "React UI not installed. Please rebuild Docker image.", 500
+        logging.error("React UI not found")
+        return "React UI not installed. Please build with 'npm run build' in react-ui directory.", 500
 
 @core.route('/assets/<path:path>')
 def static_assets(path):
     # Serve React static files from assets
-    react_assets = '/opt/hue-emulator/react-ui/assets'
-    full_path = os.path.join(react_assets, path)
-    logging.info(f"Looking for asset: {full_path}")
+    # Try local dist/assets first
+    local_react_assets = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'react-ui', 'dist', 'assets')
+    docker_react_assets = '/opt/hue-emulator/react-ui/assets'
     
-    if os.path.exists(react_assets) and os.path.exists(full_path):
-        logging.info(f"Serving React asset: {path}")
-        return send_from_directory(react_assets, path)
+    logging.info(f"Asset request: {path}")
     
-    # Try Flask assets directory
+    # Check local dist/assets first
+    if os.path.exists(local_react_assets):
+        local_full_path = os.path.join(local_react_assets, path)
+        if os.path.exists(local_full_path):
+            logging.info(f"Serving local asset: {path}")
+            return send_from_directory(local_react_assets, path)
+    
+    # Fall back to Docker path
+    docker_full_path = os.path.join(docker_react_assets, path)
+    logging.info(f"React assets dir exists: {os.path.exists(docker_react_assets)}")
+    
+    # Check Docker path if local didn't work
+    if os.path.exists(docker_react_assets):
+        assets_list = os.listdir(docker_react_assets)
+        logging.info(f"Files in Docker assets ({len(assets_list)} total): {assets_list[:10]}")
+        
+        # Check if exact file exists
+        if os.path.exists(docker_full_path):
+            logging.info(f"Found Docker asset, serving: {path}")
+            return send_from_directory(docker_react_assets, path)
+        else:
+            logging.error(f"Asset file not found: {docker_full_path}")
+    else:
+        logging.error(f"Assets directory doesn't exist in either location")
+    
+    # Try Flask assets directory as fallback
     flask_assets = os.path.join(os.path.dirname(__file__), '..', 'assets')
-    if os.path.exists(os.path.join(flask_assets, path)):
+    flask_asset_path = os.path.join(flask_assets, path)
+    
+    if os.path.exists(flask_asset_path):
         logging.info(f"Serving Flask asset: {path}")
         return send_from_directory(flask_assets, path)
     
-    logging.error(f"Asset not found: {path}")
-    logging.error(f"React assets dir exists: {os.path.exists(react_assets)}")
-    if os.path.exists(react_assets):
-        logging.error(f"Files in react assets: {os.listdir(react_assets)[:5]}")
-    
+    logging.error(f"Asset not found anywhere: {path}")
     return '', 404
 
 @core.route('/vite.svg')
 def vite_icon():
     # Serve vite icon
-    react_path = '/opt/hue-emulator/react-ui'
-    if os.path.exists(os.path.join(react_path, 'vite.svg')):
-        return send_from_directory(react_path, 'vite.svg')
+    local_react_dist = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'react-ui', 'dist')
+    docker_react_path = '/opt/hue-emulator/react-ui'
+    
+    # Try local dist first
+    if os.path.exists(os.path.join(local_react_dist, 'vite.svg')):
+        return send_from_directory(local_react_dist, 'vite.svg')
+    elif os.path.exists(os.path.join(docker_react_path, 'vite.svg')):
+        return send_from_directory(docker_react_path, 'vite.svg')
     return '', 404
+
+@core.route('/debug/react-ui')
+def debug_react_ui():
+    # Debug endpoint to check React UI installation
+    react_path = '/opt/hue-emulator/react-ui'
+    react_assets = '/opt/hue-emulator/react-ui/assets'
+    
+    info = {
+        'react_ui_exists': os.path.exists(react_path),
+        'assets_exists': os.path.exists(react_assets),
+        'react_ui_files': [],
+        'assets_files': []
+    }
+    
+    if os.path.exists(react_path):
+        info['react_ui_files'] = os.listdir(react_path)
+    
+    if os.path.exists(react_assets):
+        info['assets_files'] = os.listdir(react_assets)
+    
+    return info
 
 @core.route('/get-key')
 #@flask_login.login_required
@@ -246,7 +300,13 @@ def entertainment_wizard():
 @core.route('/ui/<path:path>')
 def ui_routes(path=None):
     # All UI routes handled by React
-    return send_from_directory('/opt/hue-emulator/react-ui', 'index.html')
+    local_react_dist = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'react-ui', 'dist')
+    docker_react_path = '/opt/hue-emulator/react-ui'
+    
+    if os.path.exists(os.path.join(local_react_dist, 'index.html')):
+        return send_from_directory(local_react_dist, 'index.html')
+    else:
+        return send_from_directory(docker_react_path, 'index.html')
 
 @core.route('/index.html')
 def ui_index_html():
