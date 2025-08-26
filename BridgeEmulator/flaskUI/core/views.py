@@ -1,4 +1,4 @@
-from flask import render_template, request, Blueprint, redirect, url_for, make_response, send_file
+from flask import render_template, request, Blueprint, redirect, url_for, make_response, send_file, send_from_directory
 from werkzeug.security import generate_password_hash,check_password_hash
 from flaskUI.core.forms import LoginForm
 import flask_login
@@ -17,10 +17,17 @@ import subprocess
 logging = logManager.logger.get_logger(__name__)
 bridgeConfig = configManager.bridgeConfig.yaml_config
 core = Blueprint('core',__name__)
+
+# React UI Static Files
 @core.route('/')
 def index():
-    # Default UI landing page
-    return redirect(url_for('core.ui_home'))
+    # Serve React UI instead of Flask templates
+    return send_from_directory('/opt/hue-emulator/react-ui', 'index.html')
+
+@core.route('/<path:path>')
+def static_files(path):
+    # Serve React static files (JS, CSS, assets)
+    return send_from_directory('/opt/hue-emulator/react-ui', path)
 
 @core.route('/get-key')
 #@flask_login.login_required
@@ -148,21 +155,8 @@ def info():
 
 @core.route('/login', methods=['GET', 'POST'])
 def login():
-    form = LoginForm()
-    if request.method == 'GET':
-        return render_template('login.html', form=form)
-    email = form.email.data
-    if email not in bridgeConfig["config"]["users"]:
-        return 'User don\'t exist\n'
-    if check_password_hash(bridgeConfig["config"]["users"][email]['password'],form.password.data):
-        user = User()
-        user.id = email
-        flask_login.login_user(user)
-        return redirect(url_for('core.index'))
-
-    logging.info("Hashed pass: " + generate_password_hash(form.password.data))
-
-    return 'Bad login\n'
+    # Bridge emulator doesn't require authentication - just redirect to main UI
+    return redirect(url_for('core.index'))
 
 @core.route('/description.xml')
 def description_xml():
@@ -176,139 +170,63 @@ def description_xml():
 @flask_login.login_required
 def logout():
     flask_login.logout_user()
-    return redirect(url_for('core.login'))
+    return redirect(url_for('core.index'))
 
 @core.route('/wled-settings')
 def wled_settings():
-    return render_template('wled_settings.html')
+    # Return JSON for React UI instead of template
+    return {
+        "wled_gradient_mode": bridgeConfig["config"].get("wled_gradient_mode", "sparse"),
+        "status": "success"
+    }
 
 @core.route('/yeelight-settings', methods=['GET', 'POST'])
 def yeelight_settings():
     music = bridgeConfig["config"].get("yeelight", {}).get("music", {})
     if request.method == 'POST':
-        # Parse form fields
-        require = request.form.get('require', 'off') == 'on'
-        host_ip = request.form.get('host_ip', '').strip()
-        port = request.form.get('port', '').strip()
-        pr_start = request.form.get('port_start', '').strip()
-        pr_end = request.form.get('port_end', '').strip()
-        max_fps = request.form.get('max_fps', '').strip()
-        smooth_ms = request.form.get('smooth_ms', '').strip()
-        cie_tol = request.form.get('cie_tolerance', '').strip()
-        bri_tol = request.form.get('bri_tolerance', '').strip()
-
+        # Parse JSON for React UI
+        data = request.get_json(force=True)
+        
         # Ensure structure exists
         if "yeelight" not in bridgeConfig["config"]:
             bridgeConfig["config"]["yeelight"] = {"enabled": True}
         if "music" not in bridgeConfig["config"]["yeelight"]:
             bridgeConfig["config"]["yeelight"]["music"] = {}
-        m = bridgeConfig["config"]["yeelight"]["music"]
-        m["require"] = require
-        if host_ip:
-            m["host_ip"] = host_ip
-        if port:
-            try:
-                m["port"] = int(port)
-            except Exception:
-                pass
-        # Port range
-        if pr_start and pr_end:
-            try:
-                m["port_range"] = {"start": int(pr_start), "end": int(pr_end)}
-            except Exception:
-                pass
-        # Tuning
-        if max_fps:
-            try:
-                m["max_fps"] = int(max_fps)
-            except Exception:
-                pass
-        if smooth_ms:
-            try:
-                m["smooth_ms"] = int(smooth_ms)
-            except Exception:
-                pass
-        if cie_tol:
-            try:
-                m["cie_tolerance"] = float(cie_tol)
-            except Exception:
-                pass
-        if bri_tol:
-            try:
-                m["bri_tolerance"] = int(bri_tol)
-            except Exception:
-                pass
-
+        
+        # Update settings
+        bridgeConfig["config"]["yeelight"]["music"].update(data)
         configManager.bridgeConfig.save_config()
-
-        # Refresh local variable for rendering
-        music = bridgeConfig["config"]["yeelight"]["music"]
-
-    return render_template('yeelight_settings.html', music=music)
+        
+        return {"status": "success", "settings": bridgeConfig["config"]["yeelight"]["music"]}
+    
+    return {"status": "success", "settings": music}
 
 @core.route('/entertainment-wizard')
 def entertainment_wizard():
-    # Simple route to render the Entertainment Group Wizard UI
-    return render_template('entertainment_wizard.html')
+    # React UI will handle the wizard
+    return redirect(url_for('core.index'))
 
+# Legacy routes that should redirect to React UI
 @core.route('/ui')
-def ui_home():
-    # Public landing page with links; no login required
-    return render_template('index.html')
+@core.route('/ui/')
+@core.route('/ui/<path:path>')
+def ui_routes(path=None):
+    # All UI routes handled by React
+    return send_from_directory('/opt/hue-emulator/react-ui', 'index.html')
 
 @core.route('/index.html')
 def ui_index_html():
-    # Ensure /index.html serves the SSR UI as well
-    return redirect(url_for('core.ui_home'))
-
-@core.route('/ui/lights')
-def ui_lights():
-    return render_template('lights_ui.html')
-
-@core.route('/ui/groups')
-def ui_groups():
-    return render_template('groups_ui.html')
-
-@core.route('/ui/scenes')
-def ui_scenes():
-    return render_template('scenes_ui.html')
-
-@core.route('/ui/schedules')
-def ui_schedules():
-    return render_template('schedules_ui.html')
-
-@core.route('/ui/sensors')
-def ui_sensors():
-    return render_template('sensors_ui.html')
-
-@core.route('/ui/rules')
-def ui_rules():
-    return render_template('rules_ui.html')
-
-@core.route('/ui/settings')
-@flask_login.login_required
-def ui_settings():
-    return render_template('settings.html')
-
-@core.route('/ui/entertainment')
-def ui_entertainment():
-    return render_template('entertainment_ui.html')
-
-@core.route('/ui/groups/<gid>')
-def ui_group_detail(gid):
-    return render_template('group_detail.html')
+    return redirect(url_for('core.index'))
 
 @core.route('/ui/health')
 def ui_health():
-    return {"ui": "Imersa-SSR", "routes": [
-        "/ui", "/ui/lights", "/ui/groups", "/ui/groups/<id>", 
-        "/ui/scenes", "/ui/schedules", "/ui/sensors", "/ui/rules", 
-        "/ui/settings", "/ui/entertainment", "/entertainment-wizard",
+    return {"ui": "Imersa-React", "routes": [
+        "/", "/lights", "/groups", "/scenes", "/schedules", 
+        "/sensors", "/rules", "/entertainment", "/entertainment-wizard",
         "/wled-settings", "/yeelight-settings"
     ]}
 
-# Convenience redirect for plain groups path to new UI
-
+# Convenience redirects
 @core.route('/groups')
 def legacy_groups_path():
-    return redirect(url_for('core.ui_groups'))
+    return redirect(url_for('core.index'))
