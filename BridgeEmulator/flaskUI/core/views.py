@@ -27,9 +27,9 @@ def index():
         logging.info("Serving React UI from /opt/hue-emulator/react-ui")
         return send_from_directory(react_path, 'index.html')
     else:
-        # Fallback to original template
-        logging.info("React UI not found, serving Flask template")
-        return render_template('index.html')
+        # If React UI not found, return error
+        logging.error("React UI not found at /opt/hue-emulator/react-ui")
+        return "React UI not installed. Please rebuild Docker image.", 500
 
 @core.route('/assets/<path:path>')
 def static_assets(path):
