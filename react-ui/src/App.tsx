@@ -6,7 +6,7 @@ import authService from '@/services/authApi';
 import { Toaster } from 'react-hot-toast';
 
 // Import pages - using complete implementations
-import Dashboard from './pages/Dashboard';
+import Dashboard from './pages/DashboardNew';
 import LightsComplete from './pages/LightsComplete';
 import Groups from './pages/Groups';
 import Scenes from './pages/Scenes';

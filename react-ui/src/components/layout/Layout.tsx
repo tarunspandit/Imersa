@@ -1,120 +1,55 @@
 import React, { useState } from 'react';
-import { Outlet, useNavigate } from 'react-router-dom';
-import { Header } from './Header';
-import { Sidebar } from './Sidebar';
+import { Outlet } from 'react-router-dom';
+import { SidebarNew } from './SidebarNew';
 import { SimpleFooter } from './SimpleFooter';
 import { UniversalSearch, useUniversalSearch } from '@/components/ui/UniversalSearch';
-import { QuickActionBar } from '@/components/ui/QuickActionBar';
-import { useAppStore } from '@/stores';
-import { cn } from '@/utils';
-import { Power, Sun, Moon, Play, Home } from 'lucide-react';
-import { toast } from 'react-hot-toast';
+import { Menu } from 'lucide-react';
+import '@/styles/design-system.css';
 
 const Layout: React.FC = () => {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
-  const { sidebarCollapsed } = useAppStore();
   const { isOpen: isSearchOpen, close: closeSearch } = useUniversalSearch();
-  const navigate = useNavigate();
-  const [showQuickActions, setShowQuickActions] = useState(true);
-
-  const handleMobileMenuToggle = () => {
-    setIsMobileSidebarOpen(!isMobileSidebarOpen);
-  };
 
   const closeMobileSidebar = () => {
     setIsMobileSidebarOpen(false);
   };
 
   return (
-    <div className="min-h-screen flex">
+    <div className="min-h-screen flex bg-imersa-void">
       {/* Sidebar - handles both mobile and desktop */}
-      <Sidebar 
+      <SidebarNew 
         isOpen={isMobileSidebarOpen} 
         onClose={closeMobileSidebar}
       />
 
       {/* Main content area */}
       <div className="flex-1 flex flex-col">
-        {/* Header */}
-        <Header onMenuClick={handleMobileMenuToggle} />
+        {/* Header - Optional, can be removed for cleaner look */}
+        {/* <Header onMenuClick={handleMobileMenuToggle} /> */}
+
+        {/* Mobile Menu Button */}
+        <button
+          onClick={() => setIsMobileSidebarOpen(true)}
+          className="fixed top-4 left-4 z-40 md:hidden p-2 rounded-lg bg-imersa-surface/90 backdrop-blur-sm border border-white/10"
+        >
+          <Menu className="w-6 h-6 text-white" />
+        </button>
 
         {/* Page content */}
-        <main className="flex-1 relative">
+        <main className="flex-1 relative overflow-hidden">
           <div className="h-full">
             <Outlet />
           </div>
         </main>
 
-        {/* Simple Footer */}
-        <SimpleFooter />
+        {/* Simple Footer - Made more subtle */}
+        <div className="relative z-10">
+          <SimpleFooter />
+        </div>
       </div>
-
 
       {/* Universal Search Modal */}
       <UniversalSearch isOpen={isSearchOpen} onClose={closeSearch} />
-
-      {/* Global Quick Action Bar - Desktop Only */}
-      {showQuickActions && (
-        <div className="hidden md:block">
-          <QuickActionBar
-            actions={[
-              {
-                id: 'all-on',
-                label: 'All On',
-                icon: Power,
-                action: () => {
-                  toast.success('All lights turned on');
-                },
-                variant: 'default'
-              },
-              {
-                id: 'all-off',
-                label: 'All Off',
-                icon: Power,
-                action: () => {
-                  toast.success('All lights turned off');
-                },
-                variant: 'outline'
-              },
-              {
-                id: 'bright',
-                label: 'Bright',
-                icon: Sun,
-                action: () => {
-                  toast('Setting all lights to maximum brightness');
-                }
-              },
-              {
-                id: 'dim',
-                label: 'Dim',
-                icon: Moon,
-                action: () => {
-                  toast('Dimming all lights to 30%');
-                }
-              },
-              {
-                id: 'scenes',
-                label: 'Scenes',
-                icon: Play,
-                action: () => {
-                  navigate('/scenes');
-                }
-              },
-              {
-                id: 'rooms',
-                label: 'Rooms',
-                icon: Home,
-                action: () => {
-                  navigate('/groups');
-                }
-              }
-            ]}
-            position="bottom"
-            floating={true}
-            className="mb-4"
-          />
-        </div>
-      )}
     </div>
   );
 };
