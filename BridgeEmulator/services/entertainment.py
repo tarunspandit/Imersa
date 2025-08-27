@@ -13,15 +13,6 @@ from collections import deque
 logging = logManager.logger.get_logger(__name__)
 bridgeConfig = configManager.bridgeConfig.yaml_config
 
-# Adaptive tolerances based on system resources
-cieTolerance, briTolerange = get_tolerances()
-logging.debug(f"Using tolerances - CIE: {cieTolerance}, Brightness: {briTolerange}")
-lastAppliedFrame = {}
-YeelightConnections = {}
-_music_server = None
-_yeelight_last_send = {}
-udp_socket_pool = {}  # Socket pool to prevent creating 600+ sockets/second
-
 # Performance optimization - Use system resource detection
 try:
     from functions.system_resources import get_worker_count, get_buffer_size, get_tolerances
@@ -37,9 +28,19 @@ except ImportError:
         return 32768
     
     def get_tolerances():
-        return (0.010, 8)
+        return (0.008, 6)  # Default values
     
     _use_adaptive = False
+
+# Adaptive tolerances based on system resources (AFTER imports)
+cieTolerance, briTolerange = get_tolerances()
+logging.debug(f"Using tolerances - CIE: {cieTolerance}, Brightness: {briTolerange}")
+
+lastAppliedFrame = {}
+YeelightConnections = {}
+_music_server = None
+_yeelight_last_send = {}
+udp_socket_pool = {}  # Socket pool to prevent creating 600+ sockets/second
 
 _worker_count = get_worker_count()
 executor = ThreadPoolExecutor(max_workers=_worker_count)
@@ -67,11 +68,15 @@ def skipSimilarFrames(light, color, brightness):
 
 def _yeelight_tuning():
     music_cfg = bridgeConfig.get("config", {}).get("yeelight", {}).get("music", {})
-    max_fps = music_cfg.get("max_fps", 40)
-    smooth_ms = music_cfg.get("smooth_ms", 60)
+    max_fps = music_cfg.get("max_fps", 60)  # Increased default from 40
+    smooth_ms = music_cfg.get("smooth_ms", 20)  # Reduced default from 60
+    # Note: cieTolerance and briTolerange are now set from system resources
+    # But can still be overridden in config if needed
     global cieTolerance, briTolerange
-    cieTolerance = float(music_cfg.get("cie_tolerance", cieTolerance))
-    briTolerange = int(music_cfg.get("bri_tolerance", briTolerange))
+    if "cie_tolerance" in music_cfg:
+        cieTolerance = float(music_cfg["cie_tolerance"])
+    if "bri_tolerance" in music_cfg:
+        briTolerange = int(music_cfg["bri_tolerance"])
     # sanitize
     return max(10, int(max_fps)), max(0, int(smooth_ms))
 
