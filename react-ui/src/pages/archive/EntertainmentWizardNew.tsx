@@ -21,12 +21,6 @@ interface WizardStep {
 
 const steps: WizardStep[] = [
   {
-    id: 'room',
-    title: 'Select Room',
-    description: 'Choose the room for your entertainment area',
-    icon: Home
-  },
-  {
     id: 'type',
     title: 'Entertainment Type',
     description: 'What will you be using this area for?',
@@ -91,8 +85,7 @@ const EntertainmentWizardNew: React.FC = () => {
   const [currentStep, setCurrentStep] = useState(0);
   const [isCreating, setIsCreating] = useState(false);
   
-  // Wizard state
-  const [selectedRoom, setSelectedRoom] = useState<string | null>(null);
+  // Wizard state - Room selection removed, entertainment areas work anywhere
   const [entertainmentType, setEntertainmentType] = useState<string | null>(null);
   const [selectedLights, setSelectedLights] = useState<string[]>([]);
   const [lightPositions, setLightPositions] = useState<Record<string, { x: number, y: number, z: number }>>({});
