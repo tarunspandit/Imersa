@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Modal, Button, Input, Card, CardContent, CardHeader, CardTitle } from '@/components/ui';
+import { Modal, ModalContent, Button, Input, Card, CardContent, CardHeader, CardTitle } from '@/components/ui';
 import { CreateScheduleRequest, ScheduleTemplate, LightGroup, Scene } from '@/types';
 import { useGroups } from '@/hooks/useGroups';
 import { useScenes } from '@/hooks/useScenes';
@@ -173,7 +173,8 @@ const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
   ];
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} size="xl">
+    <Modal open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <ModalContent size="xl">
       <div className="p-6">
         <h2 className="text-xl font-semibold mb-6">
           {editSchedule ? 'Edit Schedule' : 'Create Schedule'}
@@ -440,6 +441,7 @@ const CreateScheduleModal: React.FC<CreateScheduleModalProps> = ({
           </div>
         </form>
       </div>
+      </ModalContent>
     </Modal>
   );
 };

@@ -261,29 +261,4 @@ export interface SensorDashboardStats {
 }
 
 // Export all types for use in components
-export type {
-  SensorType,
-  SensorStatus,
-  SensorReading,
-  SensorThreshold,
-  SensorAutomation,
-  Sensor,
-  MotionSensorState,
-  DaylightSensorState,
-  TemperatureSensorState,
-  SwitchSensorState,
-  ContactSensorState,
-  SensorHistoryEntry,
-  SensorHistoryQuery,
-  SensorHistoryResponse,
-  SensorDiscoveryResult,
-  SensorBulkAction,
-  CreateSensorRequest,
-  UpdateSensorRequest,
-  SensorAlert,
-  SensorStateUpdate,
-  SensorStatusUpdate,
-  SensorAlertUpdate,
-  SensorWebSocketEvent,
-  SensorDashboardStats,
-};
+// Re-export block removed to avoid duplicate export declarations within the same module.

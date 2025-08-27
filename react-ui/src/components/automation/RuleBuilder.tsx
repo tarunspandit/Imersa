@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Modal, Button, Input, Card, CardContent, CardHeader, CardTitle } from '@/components/ui';
-import { CreateRuleRequest, UpdateRuleRequest, RuleCondition, RuleAction, RuleTemplate } from '@/types';
-import { Plus, Minus, Zap, AlertCircle, Settings, Target, Clock, Trash2 } from 'lucide-react';
+import { Modal, ModalContent, Button, Input, Card, CardContent, CardHeader, CardTitle } from '@/components/ui';
+import { CreateRuleRequest, RuleCondition, RuleAction, RuleTemplate } from '@/types';
+import { Plus, Zap, AlertCircle, Settings, Target, Clock, Trash2 } from 'lucide-react';
 
 interface RuleBuilderProps {
   isOpen: boolean;
@@ -235,7 +235,8 @@ const RuleBuilder: React.FC<RuleBuilderProps> = ({
   const addressOptions = getAddressOptions();
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} size="xl">
+    <Modal open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <ModalContent size="xl">
       <div className="p-6 max-h-[90vh] overflow-y-auto">
         <h2 className="text-xl font-semibold mb-6">
           {editRule ? 'Edit Automation Rule' : 'Create Automation Rule'}
@@ -552,6 +553,7 @@ const RuleBuilder: React.FC<RuleBuilderProps> = ({
           </div>
         </form>
       </div>
+      </ModalContent>
     </Modal>
   );
 };

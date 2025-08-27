@@ -229,7 +229,7 @@ const YeelightPage: React.FC = () => {
                         <label className="text-sm font-medium">Host IP</label>
                         <Input
                           value={musicSettings.hostIp}
-                          onChange={(e) => updateMusicSettings({ hostIp: e.target.value })}
+                          onChange={(e) => selectedDevice && updateMusicSettings(selectedDevice.id, { hostIp: e.target.value })}
                           placeholder="192.168.1.100"
                         />
                       </div>
@@ -238,7 +238,7 @@ const YeelightPage: React.FC = () => {
                         <Input
                           type="number"
                           value={musicSettings.port}
-                          onChange={(e) => updateMusicSettings({ port: parseInt(e.target.value) })}
+                          onChange={(e) => selectedDevice && updateMusicSettings(selectedDevice.id, { port: parseInt(e.target.value) })}
                           placeholder="55443"
                         />
                       </div>
@@ -251,7 +251,7 @@ const YeelightPage: React.FC = () => {
                         <label className="text-sm font-medium">Max FPS: {musicSettings.maxFps}</label>
                         <Slider
                           value={[musicSettings.maxFps]}
-                          onValueChange={([value]) => updateMusicSettings({ maxFps: value })}
+                          onValueChange={([value]) => selectedDevice && updateMusicSettings(selectedDevice.id, { maxFps: value })}
                           min={10}
                           max={120}
                           step={5}
@@ -262,7 +262,7 @@ const YeelightPage: React.FC = () => {
                         <label className="text-sm font-medium">Smoothing (ms): {musicSettings.smoothMs}</label>
                         <Slider
                           value={[musicSettings.smoothMs]}
-                          onValueChange={([value]) => updateMusicSettings({ smoothMs: value })}
+                          onValueChange={([value]) => selectedDevice && updateMusicSettings(selectedDevice.id, { smoothMs: value })}
                           min={0}
                           max={500}
                           step={10}
@@ -273,7 +273,7 @@ const YeelightPage: React.FC = () => {
                         <label className="text-sm font-medium">Color Tolerance: {musicSettings.cieTolerance}</label>
                         <Slider
                           value={[musicSettings.cieTolerance]}
-                          onValueChange={([value]) => updateMusicSettings({ cieTolerance: value })}
+                          onValueChange={([value]) => selectedDevice && updateMusicSettings(selectedDevice.id, { cieTolerance: value })}
                           min={0.01}
                           max={0.1}
                           step={0.01}
@@ -284,7 +284,7 @@ const YeelightPage: React.FC = () => {
                         <label className="text-sm font-medium">Brightness Tolerance: {musicSettings.briTolerance}</label>
                         <Slider
                           value={[musicSettings.briTolerance]}
-                          onValueChange={([value]) => updateMusicSettings({ briTolerance: value })}
+                          onValueChange={([value]) => selectedDevice && updateMusicSettings(selectedDevice.id, { briTolerance: value })}
                           min={1}
                           max={50}
                           step={1}

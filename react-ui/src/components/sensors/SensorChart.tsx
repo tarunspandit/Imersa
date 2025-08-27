@@ -187,11 +187,9 @@ const SensorChart: React.FC<SensorChartProps> = ({
   
   const renderChart = () => {
     const commonProps = {
-      width: '100%',
-      height,
       data: chartData,
       margin: { top: 5, right: 30, left: 20, bottom: 5 }
-    };
+    } as const;
     
     switch (chartType) {
       case 'area':

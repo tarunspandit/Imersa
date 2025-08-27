@@ -67,6 +67,18 @@ const defaultSettings: AppSettings = {
     voiceControl: false,
     geofencing: false,
   },
+  wled: {
+    discoveryTimeout: 5000,
+    maxDevices: 50,
+    defaultGradientMode: 'sparse',
+    syncEnabled: false,
+  },
+  yeelight: {
+    discoveryEnabled: true,
+    musicModeDefault: false,
+    maxFpsDefault: 60,
+    smoothMsDefault: 100,
+  },
 };
 
 const useAppStore = create<AppState>()(

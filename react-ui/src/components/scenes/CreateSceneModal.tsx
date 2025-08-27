@@ -187,7 +187,7 @@ export const CreateSceneModal: React.FC<CreateSceneModalProps> = ({
           </div>
           {formData.category && (
             <p className="mt-2 text-sm text-gray-600">
-              {CATEGORY_DESCRIPTIONS[formData.category]}
+              {CATEGORY_DESCRIPTIONS[formData.category || 'Custom']}
             </p>
           )}
         </div>
