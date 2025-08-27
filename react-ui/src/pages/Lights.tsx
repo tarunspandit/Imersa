@@ -1,8 +1,10 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, Button, Input } from '@/components/ui';
+import { Card, CardContent, CardHeader, CardTitle, Button, Input, Modal, ModalContent, ModalHeader, ModalTitle } from '@/components/ui';
 import { LightRow } from '@/components/lights/LightRow';
 import { useLights } from '@/hooks/useLights';
-import { RefreshCw, Power, PowerOff, Search, Filter, Grid, List, Zap, ZapOff, AlertCircle, Loader2, X } from 'lucide-react';
+import { RefreshCw, Power, PowerOff, Search, Grid, List, Zap, ZapOff, AlertCircle, Loader2, X, SatelliteDish, Plus } from 'lucide-react';
+import lightsApiService from '@/services/lightsApi';
+import { useAppStore } from '@/stores';
 import type { Light } from '@/types';
 
 type ViewMode = 'table' | 'grid';
@@ -36,6 +38,12 @@ const Lights: React.FC = () => {
   const [sortField, setSortField] = useState<SortField>('name');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
   const [selectedLights, setSelectedLights] = useState<string[]>([]);
+  const [scanLoading, setScanLoading] = useState(false);
+  const [addModalOpen, setAddModalOpen] = useState(false);
+  const [manualIp, setManualIp] = useState('');
+  const [manualProtocol, setManualProtocol] = useState('');
+  const [manualConfig, setManualConfig] = useState('');
+  const { addNotification } = useAppStore();
 
   // Filter and sort lights
   const filteredAndSortedLights = React.useMemo(() => {
@@ -142,6 +150,42 @@ const Lights: React.FC = () => {
       console.error(`Bulk ${action} failed:`, error);
     }
   }, [selectedLights, lights, toggleLight, deleteLight]);
+
+  const handleScanForLights = useCallback(async () => {
+    setScanLoading(true);
+    try {
+      await lightsApiService.initialize();
+      await lightsApiService.scanForLights();
+      addNotification({ type: 'success', title: 'Discovery Started', message: 'Scanning for lights...' });
+      setTimeout(() => {
+        refreshLights().catch(() => {});
+      }, 3000);
+    } catch (e: any) {
+      addNotification({ type: 'error', title: 'Discovery Failed', message: e?.message || 'Failed to start discovery' });
+    } finally {
+      setScanLoading(false);
+    }
+  }, [refreshLights, addNotification]);
+
+  const handleAddLightManually = useCallback(async () => {
+    try {
+      await lightsApiService.initialize();
+      let parsed: any = {};
+      if (manualConfig.trim()) {
+        parsed = JSON.parse(manualConfig);
+      }
+      if (!manualIp.trim() || !manualProtocol.trim()) {
+        throw new Error('IP and protocol are required');
+      }
+      await lightsApiService.manualAddLight(manualIp.trim(), manualProtocol.trim(), parsed);
+      addNotification({ type: 'success', title: 'Light Add Requested', message: manualIp.trim() });
+      setAddModalOpen(false);
+      setManualIp(''); setManualProtocol(''); setManualConfig('');
+      setTimeout(() => { refreshLights().catch(() => {}); }, 3000);
+    } catch (e: any) {
+      addNotification({ type: 'error', title: 'Manual Add Failed', message: e?.message || 'Failed to add light' });
+    }
+  }, [manualIp, manualProtocol, manualConfig, addNotification, refreshLights]);
 
   // Clear error on mount
   useEffect(() => {
@@ -299,34 +343,53 @@ const Lights: React.FC = () => {
                 All Off
               </Button>
               
-              {selectedLights.length > 0 && (
-                <>
-                  <div className="h-6 w-px bg-gray-300 dark:bg-gray-600" />
-                  <span className="text-sm text-muted-foreground">
-                    {selectedLights.length} selected
-                  </span>
-                  
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleBulkAction('on')}
-                    className="flex items-center gap-1"
-                  >
-                    <Zap className="h-3 w-3" />
-                    On
-                  </Button>
-                  
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleBulkAction('off')}
-                    className="flex items-center gap-1"
-                  >
-                    <ZapOff className="h-3 w-3" />
-                    Off
-                  </Button>
-                </>
-              )}
+            {selectedLights.length > 0 && (
+              <>
+                <div className="h-6 w-px bg-gray-300 dark:bg-gray-600" />
+                <span className="text-sm text-muted-foreground">
+                  {selectedLights.length} selected
+                </span>
+                
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handleBulkAction('on')}
+                  className="flex items-center gap-1"
+                >
+                  <Zap className="h-3 w-3" />
+                  On
+                </Button>
+                
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handleBulkAction('off')}
+                  className="flex items-center gap-1"
+                >
+                  <ZapOff className="h-3 w-3" />
+                  Off
+                </Button>
+              </>
+            )}
+            {/* Discovery and manual add controls */}
+            <div className="h-6 w-px bg-gray-300 dark:bg-gray-600" />
+            <Button
+              variant="outline"
+              onClick={handleScanForLights}
+              disabled={scanLoading}
+              className="flex items-center gap-2"
+            >
+              <SatelliteDish className={`h-4 w-4 ${scanLoading ? 'animate-pulse' : ''}`} />
+              Scan for Lights
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => setAddModalOpen(true)}
+              className="flex items-center gap-2"
+            >
+              <Plus className="h-4 w-4" />
+              Add Light Manually
+            </Button>
             </div>
             
             {/* Search and Filters */}
@@ -439,6 +502,40 @@ const Lights: React.FC = () => {
           )}
         </CardContent>
       </Card>
+
+      {/* Add Light Manually Modal */}
+      <Modal open={addModalOpen} onOpenChange={setAddModalOpen}>
+        <ModalContent>
+          <ModalHeader>
+            <ModalTitle>Add Light Manually</ModalTitle>
+          </ModalHeader>
+          <div className="space-y-4 p-2">
+            <div>
+              <label className="block text-sm font-medium mb-1">IP Address</label>
+              <Input value={manualIp} onChange={(e) => setManualIp(e.target.value)} placeholder="192.168.1.50" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Protocol</label>
+              <Input value={manualProtocol} onChange={(e) => setManualProtocol(e.target.value)} placeholder="e.g., yeelight, wled" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Config (JSON)</label>
+              <textarea
+                className="w-full border rounded p-2 text-sm font-mono"
+                rows={6}
+                placeholder='{"key":"value"}'
+                value={manualConfig}
+                onChange={(e) => setManualConfig(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground mt-1">Provide protocol-specific config in JSON format (optional).</p>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" onClick={() => setAddModalOpen(false)}>Cancel</Button>
+              <Button onClick={handleAddLightManually}>Add Light</Button>
+            </div>
+          </div>
+        </ModalContent>
+      </Modal>
     </div>
   );
 };
