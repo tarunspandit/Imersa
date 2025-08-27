@@ -49,7 +49,7 @@ const HomeAssistantIntegration: React.FC = () => {
     setToken('');
     setIsConnected(false);
     setEntityCount(0);
-    toast.info('Disconnected from Home Assistant');
+    toast('Disconnected from Home Assistant');
   };
 
   const handleTestConnection = async () => {
@@ -59,7 +59,7 @@ const HomeAssistantIntegration: React.FC = () => {
     }
 
     try {
-      toast.info('Testing connection...');
+      toast('Testing connection...');
       const response = await discoveryService.testHomeAssistant(url, token);
       if (response && response.success) {
         toast.success('Connection test successful!');

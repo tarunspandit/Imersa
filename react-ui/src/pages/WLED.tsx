@@ -38,7 +38,7 @@ const WLED: React.FC = () => {
         setDevices(response.devices);
         toast.success(`Found ${response.devices.length} WLED device(s)`);
       } else {
-        toast.info('No WLED devices found');
+        toast('No WLED devices found');
       }
     } catch (error) {
       console.error('WLED discovery failed:', error);

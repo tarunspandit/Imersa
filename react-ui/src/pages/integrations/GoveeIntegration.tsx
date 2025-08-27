@@ -43,7 +43,7 @@ const GoveeIntegration: React.FC = () => {
     setApiKey('');
     setIsConnected(false);
     setDeviceCount(0);
-    toast.info('Disconnected from Govee API');
+    toast('Disconnected from Govee API');
   };
 
   return (

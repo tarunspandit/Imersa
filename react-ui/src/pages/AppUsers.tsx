@@ -37,7 +37,7 @@ const AppUsers: React.FC = () => {
       return () => clearTimeout(timer);
     } else if (linkButtonActive) {
       setLinkButtonActive(false);
-      toast.info('Link button timeout');
+      toast('Link button timeout');
     }
   }, [linkButtonTimer, linkButtonActive]);
 

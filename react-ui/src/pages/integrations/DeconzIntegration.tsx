@@ -32,7 +32,7 @@ const DeconzIntegration: React.FC = () => {
         setGateways(response);
         toast.success(`Found ${response.length} deCONZ gateway(s)`);
       } else {
-        toast.info('No deCONZ gateways found');
+        toast('No deCONZ gateways found');
         setShowManual(true);
       }
     } catch (error) {
@@ -47,7 +47,7 @@ const DeconzIntegration: React.FC = () => {
   const handleConnectGateway = async (gateway: DeconzGateway) => {
     try {
       // Request API key from deCONZ
-      toast.info('Requesting access from deCONZ gateway...');
+      toast('Requesting access from deCONZ gateway...');
       
       const response = await discoveryService.connectDeconz(
         gateway.ip, 
@@ -85,7 +85,7 @@ const DeconzIntegration: React.FC = () => {
 
   const handleGetApiKey = async () => {
     try {
-      toast.info('Unlock your gateway in deCONZ Phoscon app first', { duration: 5000 });
+      toast('Unlock your gateway in deCONZ Phoscon app first', { duration: 5000 });
       // This would typically open the Phoscon app or provide instructions
       window.open(`http://${manualIp || 'localhost'}:${manualPort}/pwa/login.html`, '_blank');
     } catch (error) {

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, Button, Input } from '@/components/ui';
-import discoveryService, { DeviceSensor, getSupportedProtocols } from '@/services/discoveryApi';
+import discoveryService from '@/services/discoveryApi';
 import authService from '@/services/authApi';
 import { 
   Search, RefreshCw, Plus, Wifi, Power, Battery, 
@@ -8,6 +8,20 @@ import {
   Trash2, Settings, TestTube, Loader2
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
+
+interface DeviceSensor {
+  id: string;
+  name: string;
+  type: string;
+  protocol?: string;
+  ip?: string;
+  mac?: string;
+  state?: any;
+  battery?: number;
+  reachable?: boolean;
+  lastupdated?: string;
+  config?: any;
+}
 
 interface DeviceCardProps {
   device: DeviceSensor;
@@ -66,7 +80,7 @@ const DeviceCard: React.FC<DeviceCardProps> = ({ device, onDelete, onUpdate }) =
             <div>
               <CardTitle className="text-base">{device.name}</CardTitle>
               <p className="text-xs text-muted-foreground">
-                {device.modelid} · {device.manufacturername}
+                {device.protocol || 'Unknown'}
               </p>
             </div>
           </div>
@@ -153,7 +167,10 @@ const DevicesComplete: React.FC = () => {
     model: ''
   });
 
-  const protocols = discoveryService.getSupportedProtocols();
+  const protocols = [
+    'wled', 'yeelight', 'tasmota', 'shelly', 'esphome', 
+    'hyperion', 'tuyaapi', 'magichome', 'elgato'
+  ];
 
   useEffect(() => {
     fetchDevices();
@@ -192,7 +209,7 @@ const DevicesComplete: React.FC = () => {
           toast.success(`Found ${foundCount} new device(s)`);
           await fetchDevices();
         } else {
-          toast.info('No new devices found');
+          toast('No new devices found');
         }
         setIsScanning(false);
       }, 10000);
@@ -310,13 +327,12 @@ const DevicesComplete: React.FC = () => {
             </Button>
             {protocols.map(protocol => (
               <Button
-                key={protocol.id}
+                key={protocol}
                 size="sm"
-                variant={selectedProtocol === protocol.id ? 'default' : 'outline'}
-                onClick={() => setSelectedProtocol(protocol.id)}
+                variant={selectedProtocol === protocol ? 'default' : 'outline'}
+                onClick={() => setSelectedProtocol(protocol)}
               >
-                <span className="mr-1">{protocol.icon}</span>
-                {protocol.name}
+                {protocol}
               </Button>
             ))}
           </div>
@@ -376,8 +392,8 @@ const DevicesComplete: React.FC = () => {
                   onChange={(e) => setManualDevice(prev => ({ ...prev, protocol: e.target.value }))}
                 >
                   {protocols.map(protocol => (
-                    <option key={protocol.id} value={protocol.id}>
-                      {protocol.name} - {protocol.description}
+                    <option key={protocol} value={protocol}>
+                      {protocol}
                     </option>
                   ))}
                 </select>

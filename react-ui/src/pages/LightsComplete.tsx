@@ -1,7 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, Button, Input, Slider, Switch } from '@/components/ui';
 import { Wizard } from '@/components/ui/Wizard';
-import discoveryService, { LightCatalogItem } from '@/services/discoveryApi';
+import discoveryService from '@/services/discoveryApi';
+
+interface LightCatalogItem {
+  id: string;
+  name: string;
+  modelid: string;
+  type: string;
+  manufacturername?: string;
+  swversion?: string;
+}
 import { useLights } from '@/hooks/useLights';
 import { 
   Search, Plus, Power, Lightbulb, Trash2, Edit, 
@@ -228,7 +237,7 @@ const LightsComplete: React.FC = () => {
           toast.success(`Found ${foundCount} new light(s)`);
           await refreshLights();
         } else {
-          toast.info('No new lights found');
+          toast('No new lights found');
         }
         setIsSearching(false);
       }, 10000);

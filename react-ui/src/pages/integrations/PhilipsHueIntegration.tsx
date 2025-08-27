@@ -31,7 +31,7 @@ const PhilipsHueIntegration: React.FC = () => {
         setBridges(response);
         toast.success(`Found ${response.length} Hue bridge(s)`);
       } else {
-        toast.info('No Hue bridges found on your network');
+        toast('No Hue bridges found on your network');
         setShowManual(true);
       }
     } catch (error) {
@@ -46,7 +46,7 @@ const PhilipsHueIntegration: React.FC = () => {
   const handleConnectBridge = async (bridge: HueBridge) => {
     try {
       // First, prompt user to press link button
-      toast.info('Press the link button on your Hue bridge, then click OK', {
+      toast('Press the link button on your Hue bridge, then click OK', {
         duration: 10000
       });
 

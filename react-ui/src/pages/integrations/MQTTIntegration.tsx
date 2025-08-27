@@ -53,7 +53,7 @@ const MQTTIntegration: React.FC = () => {
         toast.success('Successfully connected to MQTT broker!');
         
         if (config.discovery) {
-          toast.info('Auto-discovery enabled. Devices will appear automatically.');
+          toast('Auto-discovery enabled. Devices will appear automatically.');
         }
       } else {
         toast.error('Failed to connect to MQTT broker');
@@ -68,7 +68,7 @@ const MQTTIntegration: React.FC = () => {
 
   const handleDisconnect = () => {
     setIsConnected(false);
-    toast.info('Disconnected from MQTT broker');
+    toast('Disconnected from MQTT broker');
   };
 
   const handleTestPublish = async () => {
