@@ -20,7 +20,8 @@ BridgeEmulator/export/
 BridgeEmulator/cert.pem
 /config
 *.log
-*.js
+tests/
+React-ui/dist/
 
 *.webp
 BridgeEmulator/flaskUI/templates/index.html
