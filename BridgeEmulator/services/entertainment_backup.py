@@ -7,64 +7,42 @@ from subprocess import Popen, PIPE
 from functions.colors import convert_rgb_xy, convert_xy
 import paho.mqtt.publish as publish
 import time
-import threading
-import queue
-from concurrent.futures import ThreadPoolExecutor
-from collections import defaultdict, deque
-import asyncio
 
 logging = logManager.logger.get_logger(__name__)
 bridgeConfig = configManager.bridgeConfig.yaml_config
 
-# Performance-optimized constants
-cieTolerance = 0.008  # Reduced for better accuracy
-briTolerange = 5      # Reduced for smoother transitions
+cieTolerance = 0.01  # color delta tolerance
+briTolerange = 8     # brightness delta tolerance
 lastAppliedFrame = {}
 YeelightConnections = {}
 _music_server = None
 _yeelight_last_send = {}
 udp_socket_pool = {}  # Socket pool to prevent creating 600+ sockets/second
 
-# Performance optimization
-MAX_WORKERS = 8
-UDP_BATCH_SIZE = 50
-FRAME_BUFFER_SIZE = 3
-executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
-
 # Models that support gradient segments
 GRADIENT_MODELS = {"LCX001", "LCX002", "LCX003", "915005987201", "LCX004", "LCX006"}
 
 
 def skipSimilarFrames(light, color, brightness):
-    if light not in lastAppliedFrame:
+    if light not in lastAppliedFrame:  # check if light exist in dictionary
         lastAppliedFrame[light] = {"xy": [0, 0], "bri": 0}
-    
-    last = lastAppliedFrame[light]
-    
-    # Fast path for exact match
-    if last["xy"] == color and last["bri"] == brightness:
-        return 0
-    
-    # Check color difference
-    dx = abs(color[0] - last["xy"][0])
-    dy = abs(color[1] - last["xy"][1])
-    
-    if dx > cieTolerance or dy > cieTolerance:
-        lastAppliedFrame[light] = {"xy": color, "bri": brightness}
+
+    if lastAppliedFrame[light]["xy"][0] + cieTolerance < color[0] or color[0] < lastAppliedFrame[light]["xy"][0] - cieTolerance:
+        lastAppliedFrame[light]["xy"] = color
         return 2
-    
-    # Check brightness difference
-    if abs(brightness - last["bri"]) > briTolerange:
+    if lastAppliedFrame[light]["xy"][1] + cieTolerance < color[1] or color[1] < lastAppliedFrame[light]["xy"][1] - cieTolerance:
+        lastAppliedFrame[light]["xy"] = color
+        return 2
+    if lastAppliedFrame[light]["bri"] + briTolerange < brightness or brightness < lastAppliedFrame[light]["bri"] - briTolerange:
         lastAppliedFrame[light]["bri"] = brightness
         return 1
-    
     return 0
 
 
 def _yeelight_tuning():
     music_cfg = bridgeConfig.get("config", {}).get("yeelight", {}).get("music", {})
-    max_fps = music_cfg.get("max_fps", 60)  # Increased default
-    smooth_ms = music_cfg.get("smooth_ms", 20)  # Reduced for faster response
+    max_fps = music_cfg.get("max_fps", 40)
+    smooth_ms = music_cfg.get("smooth_ms", 60)
     global cieTolerance, briTolerange
     cieTolerance = float(music_cfg.get("cie_tolerance", cieTolerance))
     briTolerange = int(music_cfg.get("bri_tolerance", briTolerange))
@@ -107,10 +85,6 @@ def entertainmentService(group, user):
     logging.debug("Key: " + user.client_key)
     bridgeConfig["groups"][group.id_v1].stream["owner"] = user.username
     bridgeConfig["groups"][group.id_v1].state = {"all_on": True, "any_on": True}
-    
-    # Performance tracking
-    fps_tracker = deque(maxlen=60)
-    last_fps_log = time.time()
 
     lights_v2 = []
     lights_v1 = {}
@@ -160,10 +134,9 @@ def entertainmentService(group, user):
     # WLED device state (persist across frames for smoothing)
     wledLights = {}
 
-    # FPS windowing with performance optimization
+    # FPS windowing
     fps_window_start = time.time()
     frames_in_window = 0
-    frame_buffer = deque(maxlen=FRAME_BUFFER_SIZE)  # Buffer for frame smoothing
 
     p.stdout.read(1)  # read one byte so the init function will correctly detect the frameBites
     try:
@@ -296,30 +269,28 @@ def entertainmentService(group, user):
                                         })
                                     })
 
-                            # YEELIGHT (music mode inline) - Optimized
+                            # YEELIGHT (music mode inline)
                             elif proto == "yeelight":
                                 ip = light.protocol_cfg["ip"]
                                 enableMusic(ip, host_ip)
                                 c = YeelightConnections[ip]
                                 op = skipSimilarFrames(light.id_v1, light.state["xy"], light.state["bri"])
-                                
-                                if op:  # Only process if there's a change
-                                    max_fps, smooth_ms = _yeelight_tuning()
-                                    now = time.time()
-                                    last = _yeelight_last_send.get(ip, 0)
-                                    min_interval = 1.0 / max(max_fps, 60)  # Cap at 60 FPS
-                                    
-                                    if now - last >= min_interval:
-                                        if op == 1:
-                                            executor.submit(c.command, "set_bright", 
-                                                          [int(light.state["bri"] / 2.55), "smooth", smooth_ms])
-                                        elif op == 2:
-                                            executor.submit(c.command, "set_rgb", 
-                                                          [(r * 65536) + (g * 256) + b, "smooth", smooth_ms])
+                                max_fps, smooth_ms = _yeelight_tuning()
+                                now = time.time()
+                                last = _yeelight_last_send.get(ip, 0)
+                                min_interval = 1.0 / max_fps
+                                if now - last < min_interval:
+                                    pass
+                                else:
+                                    if op == 1:
+                                        c.command("set_bright", [int(light.state["bri"] / 2.55), "smooth", smooth_ms])
+                                        _yeelight_last_send[ip] = now
+                                    elif op == 2:
+                                        c.command("set_rgb", [(r * 65536) + (g * 256) + b, "smooth", smooth_ms])
                                         _yeelight_last_send[ip] = now
 
 
-                            # WLED (Realtime UDP 21324, DNRGB) - Optimized
+                            # WLED (Realtime UDP 21324, DNRGB)
                             elif proto == "wled":
                                 ip = light.protocol_cfg["ip"]
                                 if ip not in wledLights:
@@ -329,7 +300,7 @@ def entertainmentService(group, user):
                                         "udp_port": light.protocol_cfg.get("udp_port", 21324),
                                         "pixel_data": None,
                                         "previous_colors": None,
-                                        "decay_factor": 0.90  # Increased for smoother transitions
+                                        "decay_factor": 0.85
                                     }
 
                                 seg_start = light.protocol_cfg.get("segment_start", 0)
@@ -509,11 +480,8 @@ def entertainmentService(group, user):
                                 frameID = 1
                             i += 7
 
-                    # === OPTIMIZED SEND PHASE ===
-                    
-                    # Batch UDP packets for better performance
-                    udp_batch = []
-                    
+                    # === SEND PHASE ===
+
                     # native UDP 2100
                     if nativeLights:
                         for ip in nativeLights.keys():
@@ -521,11 +489,8 @@ def entertainmentService(group, user):
                             for light_idx, rgb in nativeLights[ip].items():
                                 udpmsg += bytes([light_idx]) + bytes([rgb[0]]) + bytes([rgb[1]]) + bytes([rgb[2]])
                             if ip not in udp_socket_pool:
-                                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                                sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
-                                sock.setblocking(False)
-                                udp_socket_pool[ip] = sock
-                            udp_batch.append((ip, 2100, udpmsg))
+                                udp_socket_pool[ip] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                            udp_socket_pool[ip].sendto(udpmsg, (ip.split(":")[0], 2100))
 
                     # esphome UDP 2100 (0 + R + G + B + BRIGHT)
                     if esphomeLights:
@@ -534,11 +499,8 @@ def entertainmentService(group, user):
                             c = esphomeLights[ip]["color"]
                             udpmsg += bytes([0]) + bytes([c[0]]) + bytes([c[1]]) + bytes([c[2]]) + bytes([c[3]])
                             if ip not in udp_socket_pool:
-                                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                                sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
-                                sock.setblocking(False)
-                                udp_socket_pool[ip] = sock
-                            udp_batch.append((ip, 2100, udpmsg))
+                                udp_socket_pool[ip] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                            udp_socket_pool[ip].sendto(udpmsg, (ip.split(":")[0], 2100))
 
                     # MQTT batch
                     if mqttLights:
@@ -555,20 +517,20 @@ def entertainmentService(group, user):
                             auth=auth
                         )
 
-                    # WLED DNRGB packet build & send - Optimized
+                    # WLED DNRGB packet build & send
                     if wledLights:
-                        def process_wled_device(ip):
+                        for ip in wledLights.keys():
                             w = wledLights[ip]
                             lights_list = w.get("lights", [])
                             udp_port = w.get("udp_port", 21324)
                             total_leds = w.get("total_leds", 100)
                             previous_colors = w.get("previous_colors")
-                            decay_factor = w.get("decay_factor", 0.90)
+                            decay_factor = w.get("decay_factor", 0.85)
 
-                            # Pre-allocate arrays for performance
+                            # header + start index (0)
                             udpdata = bytearray(4 + total_leds * 3)
                             udpdata[0] = 4  # DNRGB
-                            udpdata[1] = 255  # No timeout for instant response
+                            udpdata[1] = 2  # 2s timeout
                             udpdata[2] = 0
                             udpdata[3] = 0
 
@@ -621,52 +583,28 @@ def entertainmentService(group, user):
                                     for led_idx in range(seg_start, min(seg_stop, total_leds)):
                                         pixel_colors[led_idx] = [base_color[0], base_color[1], base_color[2]]
 
-                            # Optimized smoothing with previous frame
+                            # smoothing with previous frame
                             if previous_colors and len(previous_colors) == total_leds:
-                                mix = 0.85  # 85% new, 15% old for less lag
-                                # Vectorized operation for better performance
+                                mix = 0.8  # 80% new, 20% old
                                 for led_idx in range(total_leds):
-                                    pc = previous_colors[led_idx]
-                                    cc = pixel_colors[led_idx]
-                                    pixel_colors[led_idx][0] = min(255, int(cc[0] * mix + pc[0] * (1 - mix)))
-                                    pixel_colors[led_idx][1] = min(255, int(cc[1] * mix + pc[1] * (1 - mix)))
-                                    pixel_colors[led_idx][2] = min(255, int(cc[2] * mix + pc[2] * (1 - mix)))
+                                    pixel_colors[led_idx][0] = int(pixel_colors[led_idx][0] * mix + previous_colors[led_idx][0] * (1 - mix))
+                                    pixel_colors[led_idx][1] = int(pixel_colors[led_idx][1] * mix + previous_colors[led_idx][1] * (1 - mix))
+                                    pixel_colors[led_idx][2] = int(pixel_colors[led_idx][2] * mix + previous_colors[led_idx][2] * (1 - mix))
 
-                            # Optimized packet filling
+                            # fill packet
                             idx = 4
                             for led_idx in range(total_leds):
-                                pc = pixel_colors[led_idx]
-                                udpdata[idx] = pc[0]
-                                udpdata[idx+1] = pc[1]
-                                udpdata[idx+2] = pc[2]
+                                udpdata[idx] = max(0, min(255, pixel_colors[led_idx][0]))
+                                udpdata[idx+1] = max(0, min(255, pixel_colors[led_idx][1]))
+                                udpdata[idx+2] = max(0, min(255, pixel_colors[led_idx][2]))
                                 idx += 3
 
                             # store for next smoothing
                             wledLights[ip]["previous_colors"] = pixel_colors
-                            
-                            return (ip, udp_port, bytes(udpdata))
-                        
-                        # Process all WLED devices in parallel
-                        wled_results = list(executor.map(process_wled_device, wledLights.keys()))
-                        for ip, port, data in wled_results:
+
                             if ip not in udp_socket_pool:
-                                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                                sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
-                                sock.setblocking(False)
-                                udp_socket_pool[ip] = sock
-                            udp_batch.append((ip.split(":")[0], port, data))
-                    
-                    # Send all UDP packets in parallel
-                    if udp_batch:
-                        def send_udp(item):
-                            ip, port, data = item
-                            try:
-                                udp_socket_pool[ip if ':' not in ip else ip.split(':')[0]].sendto(data, (ip.split(':')[0], port))
-                            except:
-                                pass
-                        
-                        # Use thread pool for parallel sending
-                        list(executor.map(send_udp, udp_batch))
+                                udp_socket_pool[ip] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                            udp_socket_pool[ip].sendto(udpdata, (ip.split(":")[0], udp_port))
 
                     # Hue passthrough
                     if hueGroupLights:
@@ -682,38 +620,21 @@ def entertainmentService(group, user):
                             except Exception as e:
                                 logging.debug(f"HA batch update failed: {e}")
 
-                    # Non-UDP fallbacks - Process multiple lights per frame for better performance
+                    # Non-UDP fallbacks round-robin
                     if non_UDP_lights:
-                        # Process up to 3 non-UDP lights per frame to reduce lag
-                        lights_to_process = min(3, len(non_UDP_lights))
-                        for _ in range(lights_to_process):
-                            if non_UDP_lights:
-                                light = non_UDP_lights[non_UDP_update_counter]
-                                op = skipSimilarFrames(light.id_v1, light.state["xy"], light.state["bri"])
-                                if op == 1:
-                                    executor.submit(light.setV1State, {"bri": light.state["bri"], "transitiontime": 2})
-                                elif op == 2:
-                                    executor.submit(light.setV1State, {"xy": light.state["xy"], "transitiontime": 2})
-                                non_UDP_update_counter = (non_UDP_update_counter + 1) % len(non_UDP_lights)
+                        light = non_UDP_lights[non_UDP_update_counter]
+                        op = skipSimilarFrames(light.id_v1, light.state["xy"], light.state["bri"])
+                        if op == 1:
+                            light.setV1State({"bri": light.state["bri"], "transitiontime": 3})
+                        elif op == 2:
+                            light.setV1State({"xy": light.state["xy"], "transitiontime": 3})
+                        non_UDP_update_counter = non_UDP_update_counter + 1 if non_UDP_update_counter < len(non_UDP_lights) - 1 else 0
 
-                    # Optimized FPS tracking and logging
+                    # FPS logging (windowed)
                     frames_in_window += 1
                     now = time.time()
-                    frame_time = now - fps_window_start
-                    
-                    if frame_time >= 1.0:
-                        current_fps = frames_in_window / frame_time
-                        fps_tracker.append(current_fps)
-                        
-                        # Only log FPS periodically to reduce overhead
-                        if now - last_fps_log >= 5.0:  # Log every 5 seconds
-                            avg_fps = sum(fps_tracker) / len(fps_tracker) if fps_tracker else 0
-                            min_fps = min(fps_tracker) if fps_tracker else 0
-                            max_fps = max(fps_tracker) if fps_tracker else 0
-                            logging.info("Entertainment FPS - Avg: %.1f, Min: %.1f, Max: %.1f, Lights: %d", 
-                                       avg_fps, min_fps, max_fps, len(lights_v1))
-                            last_fps_log = now
-                        
+                    if now - fps_window_start >= 1.0:
+                        logging.info("Entertainment FPS: %.1f", frames_in_window / (now - fps_window_start))
                         fps_window_start = now
                         frames_in_window = 0
 
@@ -737,20 +658,13 @@ def entertainmentService(group, user):
     for light in group.lights:
         bridgeConfig["lights"][light().id_v1].state["mode"] = "homeautomation"
 
-    # Clean up resources
+    # Clean up socket pool
     for sock in udp_socket_pool.values():
         try:
             sock.close()
         except:
             pass
     udp_socket_pool.clear()
-    
-    # Shutdown thread pool executor
-    try:
-        executor.shutdown(wait=False)
-    except:
-        pass
-    
     logging.info("Entertainment service stopped")
 
 
