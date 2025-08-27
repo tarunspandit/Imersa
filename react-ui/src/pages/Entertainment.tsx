@@ -35,33 +35,11 @@ const Entertainment: React.FC = () => {
     refreshAvailableLights,
   } = useGroups({ includeEntertainment: false });
 
-  const [showCreateModal, setShowCreateModal] = useState(false);
+  // Removed redundant create modal - using wizard instead
   const [showPositionEditor, setShowPositionEditor] = useState(false);
-  const [createForm, setCreateForm] = useState<CreateAreaRequest>({
-    name: '',
-    lights: [],
-    type: 'Entertainment' as const,
-    class: 'Other', // Default value, not shown to user
-  });
+  // Removed create form state - using wizard instead
 
-  // Handle create area
-  const handleCreateArea = async () => {
-    if (!createForm.name || createForm.lights.length === 0) {
-      return;
-    }
-
-    const result = await createArea(createForm);
-    
-    if (result.success) {
-      setShowCreateModal(false);
-      setCreateForm({
-        name: '',
-        lights: [],
-        type: 'Entertainment',
-        class: 'Other',
-      });
-    }
-  };
+  // Removed handleCreateArea - using wizard instead
 
   // Handle edit positions
   const handleEditPositions = (area: EntertainmentArea) => {
@@ -238,86 +216,7 @@ const Entertainment: React.FC = () => {
         />
       )}
 
-      {/* Create Area Modal */}
-      <Modal
-        isOpen={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
-        title="Create Entertainment Area"
-      >
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">
-              Area Name
-            </label>
-            <input
-              value={createForm.name}
-              onChange={(e) => setCreateForm(prev => ({ ...prev, name: e.target.value }))}
-              placeholder="e.g., Living Room Entertainment"
-              className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-500"
-            />
-          </div>
-
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Select Lights ({createForm.lights.length} selected)
-            </label>
-            <div className="max-h-48 overflow-y-auto border border-gray-200 rounded p-2 space-y-1">
-              {ungroupedLights.map((light) => (
-                <label key={light.id} className="flex items-center space-x-2 p-2 hover:bg-gray-50 rounded">
-                  <input
-                    type="checkbox"
-                    checked={createForm.lights.includes(light.id)}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        setCreateForm(prev => ({
-                          ...prev,
-                          lights: [...prev.lights, light.id]
-                        }));
-                      } else {
-                        setCreateForm(prev => ({
-                          ...prev,
-                          lights: prev.lights.filter(id => id !== light.id)
-                        }));
-                      }
-                    }}
-                    className="rounded"
-                  />
-                  <div className={cn(
-                    'w-2 h-2 rounded-full',
-                    light.status === 'online' ? 'bg-green-400' : 'bg-red-400'
-                  )} />
-                  <span className="text-sm">{light.name}</span>
-                </label>
-              ))}
-            </div>
-            {ungroupedLights.length === 0 && (
-              <p className="text-sm text-gray-500 text-center py-4">
-                No available lights. All lights are already in groups.
-              </p>
-            )}
-          </div>
-
-          <div className="flex justify-end space-x-3 pt-4">
-            <button
-              onClick={() => setShowCreateModal(false)}
-              className="px-4 py-2 rounded-xl bg-imersa-surface border border-gray-700 text-gray-300 hover:border-imersa-glow-primary transition-all"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleCreateArea}
-              disabled={!createForm.name || createForm.lights.length === 0 || isLoading}
-              className="btn-glow flex items-center gap-2"
-            >
-              {isLoading ? (
-                <div className="animate-spin h-4 w-4 border border-current border-t-transparent rounded-full mr-2" />
-              ) : null}
-              Create Area
-            </button>
-          </div>
-        </div>
-      </Modal>
+      {/* Removed redundant create modal - using wizard instead */}
     </PageWrapper>
   );
 };

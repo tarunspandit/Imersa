@@ -12,7 +12,8 @@ import {
   AlertCircle,
   RefreshCw
 } from 'lucide-react';
-import { Button, Card, CardContent, CardHeader, CardTitle, Slider } from '@/components/ui';
+import { Button, Input, Slider } from '@/components/ui';
+import '@/styles/design-system.css';
 import { WizardFormData } from '@/hooks/useWizard';
 import { cn } from '@/utils';
 
@@ -165,7 +166,7 @@ export const TestPreview: React.FC<TestPreviewProps> = ({
       <svg
         width={size}
         height={size}
-        className="border border-gray-200 rounded bg-gray-50"
+        className="border border-white/10 rounded-xl"
         viewBox={`0 0 ${size} ${size}`}
       >
         {/* Center reference */}
@@ -222,60 +223,62 @@ export const TestPreview: React.FC<TestPreviewProps> = ({
   };
 
   return (
-    <Card className={className}>
-      <CardHeader>
-        <CardTitle className="flex items-center space-x-2">
-          <Eye className="w-5 h-5" />
-          <span>Review & Create Entertainment Area</span>
-        </CardTitle>
-      </CardHeader>
+    <div className={cn('glass-card p-6', className)}>
+      <div className="mb-6">
+        <h3 className="text-xl font-semibold text-white mb-2 flex items-center gap-2">
+          <Eye className="w-5 h-5 text-imersa-glow-primary" />
+          Review & Create Entertainment Area
+        </h3>
+      </div>
 
-      <CardContent className="space-y-6">
+      <div className="space-y-6">
         {/* Summary */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Configuration Summary */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Configuration Summary</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
+          <div className="glass-card p-4 holo-card">
+            <h4 className="text-lg font-medium text-white mb-4 flex items-center gap-2">
+              <CheckCircle className="w-4 h-4 text-imersa-glow-secondary" />
+              Configuration Summary
+            </h4>
+            <div className="space-y-3">
               <div className="flex justify-between">
-                <span className="text-sm text-gray-600">Name:</span>
-                <span className="text-sm font-medium">{formData.name}</span>
+                <span className="text-sm text-gray-400">Name:</span>
+                <span className="text-sm font-medium text-white">{formData.name}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-sm text-gray-600">Type:</span>
-                <span className="text-sm font-medium">
+                <span className="text-sm text-gray-400">Type:</span>
+                <span className="text-sm font-medium text-white">
                   {formData.configurationType === 'screen' ? '2D Screen' : '3D Space'}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-sm text-gray-600">Room:</span>
-                <span className="text-sm font-medium">{formData.roomClass}</span>
+                <span className="text-sm text-gray-400">Room:</span>
+                <span className="text-sm font-medium text-white">{formData.roomClass}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-sm text-gray-600">Lights:</span>
-                <span className="text-sm font-medium">
+                <span className="text-sm text-gray-400">Lights:</span>
+                <span className="text-sm font-medium text-white">
                   {formData.selectedLights.length} selected
                 </span>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
 
           {/* Position Preview */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Light Positions</CardTitle>
-            </CardHeader>
-            <CardContent className="flex justify-center">
+          <div className="glass-card p-4 holo-card">
+            <h4 className="text-lg font-medium text-white mb-4 flex items-center gap-2">
+              <Zap className="w-4 h-4 text-imersa-glow-secondary" />
+              Light Positions
+            </h4>
+            <div className="flex justify-center">
               {renderPositionPreview()}
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         </div>
 
         {/* Selected Lights List */}
         <div>
-          <h3 className="text-sm font-medium text-gray-900 mb-3">
+          <h3 className="text-sm font-medium text-white mb-3">
             Selected Lights ({formData.selectedLights.length})
           </h3>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
@@ -284,12 +287,12 @@ export const TestPreview: React.FC<TestPreviewProps> = ({
               return (
                 <div
                   key={lightId}
-                  className="flex items-center space-x-2 p-2 border border-gray-200 rounded text-sm"
+                  className="flex items-center space-x-2 p-2 glass-surface rounded-xl text-sm"
                 >
-                  <div className="w-2 h-2 bg-emerald-500 rounded-full" />
-                  <span className="font-mono">{lightId}</span>
+                  <div className="w-2 h-2 bg-emerald-400 rounded-full" />
+                  <span className="font-mono text-gray-300">{lightId}</span>
                   {position && (
-                    <span className="text-xs text-gray-500 ml-auto">
+                    <span className="text-xs text-gray-400 ml-auto">
                       ({position.x.toFixed(1)}, {position.y.toFixed(1)})
                     </span>
                   )}
@@ -301,29 +304,28 @@ export const TestPreview: React.FC<TestPreviewProps> = ({
 
         {/* Create Area Section */}
         {!createdAreaId && (
-          <div className="border-2 border-dashed border-blue-300 rounded-lg p-6 text-center">
+          <div className="glass-card p-6 text-center border-2 border-dashed border-imersa-glow-primary/30">
             <div className="space-y-4">
               <div>
-                <h3 className="text-lg font-medium text-gray-900 mb-2">
+                <h3 className="text-lg font-medium text-white mb-2">
                   Ready to Create Entertainment Area
                 </h3>
-                <p className="text-gray-600">
+                <p className="text-gray-400">
                   Click the button below to create your entertainment area with the selected lights and positions.
                 </p>
               </div>
 
               {createError && (
-                <div className="flex items-center justify-center space-x-2 text-red-600 bg-red-50 border border-red-200 rounded p-3">
+                <div className="flex items-center justify-center space-x-2 text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl p-3">
                   <AlertCircle className="w-5 h-5" />
-                  <span className="text-sm">{createError}</span>
+                  <span className="text-sm text-red-300">{createError}</span>
                 </div>
               )}
 
-              <Button
+              <button
                 onClick={handleCreateArea}
                 disabled={isLoading}
-                size="lg"
-                className="min-w-[200px]"
+                className="btn-glow min-w-[200px] px-6 py-3"
               >
                 {isLoading ? (
                   <div className="flex items-center space-x-2">
@@ -336,28 +338,28 @@ export const TestPreview: React.FC<TestPreviewProps> = ({
                     <span>Create Entertainment Area</span>
                   </div>
                 )}
-              </Button>
+              </button>
             </div>
           </div>
         )}
 
         {/* Test Section */}
         {createdAreaId && (
-          <div className="border-2 border-dashed border-emerald-300 rounded-lg p-6">
+          <div className="glass-card p-6 border-2 border-dashed border-emerald-400/30">
             <div className="space-y-4">
-              <div className="flex items-center space-x-2 text-emerald-600">
+              <div className="flex items-center space-x-2 text-emerald-400">
                 <CheckCircle className="w-6 h-6" />
                 <h3 className="text-lg font-medium">Entertainment Area Created!</h3>
               </div>
               
-              <p className="text-gray-600">
+              <p className="text-gray-400">
                 Your entertainment area has been successfully created. Test the streaming functionality below.
               </p>
 
               {/* Test Settings */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-gray-50 rounded-lg">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 glass-surface rounded-xl">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
                     Test Duration
                   </label>
                   <div className="flex items-center space-x-2">
@@ -370,14 +372,14 @@ export const TestPreview: React.FC<TestPreviewProps> = ({
                       className="flex-1"
                       disabled={testState.isRunning}
                     />
-                    <span className="text-sm text-gray-600 w-12">
+                    <span className="text-sm text-gray-400 w-12">
                       {testSettings.duration}s
                     </span>
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
                     Test Pattern
                   </label>
                   <select
@@ -387,7 +389,7 @@ export const TestPreview: React.FC<TestPreviewProps> = ({
                       pattern: e.target.value as any 
                     }))}
                     disabled={testState.isRunning}
-                    className="w-full px-3 py-1 border border-gray-300 rounded text-sm"
+                    className="w-full px-3 py-1 bg-white/5 border border-white/10 rounded-xl text-white text-sm"
                   >
                     {TEST_PATTERNS.map((pattern) => (
                       <option key={pattern.id} value={pattern.id}>
@@ -401,39 +403,36 @@ export const TestPreview: React.FC<TestPreviewProps> = ({
               {/* Test Controls */}
               <div className="flex items-center justify-center space-x-3">
                 {!testState.isRunning ? (
-                  <Button
+                  <button
                     onClick={handleTestStreaming}
                     disabled={isLoading}
-                    size="lg"
-                    className="min-w-[160px]"
+                    className="btn-glow min-w-[160px] px-6 py-3 flex items-center justify-center gap-2"
                   >
-                    <Play className="w-5 h-5 mr-2" />
+                    <Play className="w-5 h-5" />
                     Start Test
-                  </Button>
+                  </button>
                 ) : (
-                  <Button
+                  <button
                     onClick={stopTest}
-                    variant="destructive"
-                    size="lg"
-                    className="min-w-[160px]"
+                    className="px-6 py-3 min-w-[160px] rounded-xl bg-red-500/20 border border-red-500/30 text-red-400 hover:bg-red-500/30 transition-all flex items-center justify-center gap-2"
                   >
-                    <Square className="w-5 h-5 mr-2" />
+                    <Square className="w-5 h-5" />
                     Stop Test
-                  </Button>
+                  </button>
                 )}
               </div>
 
               {/* Test Status */}
               {testState.isRunning && (
-                <div className="text-center p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                  <div className="flex items-center justify-center space-x-2 text-blue-600 mb-2">
+                <div className="text-center p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl">
+                  <div className="flex items-center justify-center space-x-2 text-blue-400 mb-2">
                     <Activity className="w-5 h-5 animate-pulse" />
                     <span className="font-medium">Testing Entertainment Streaming</span>
                   </div>
-                  <div className="text-sm text-blue-700">
+                  <div className="text-sm text-blue-300">
                     Pattern: <span className="font-medium">{testState.currentPattern}</span>
                   </div>
-                  <div className="text-lg font-mono font-bold text-blue-600 mt-2">
+                  <div className="text-lg font-mono font-bold text-blue-400 mt-2">
                     {testState.timeRemaining}s remaining
                   </div>
                 </div>
@@ -441,24 +440,24 @@ export const TestPreview: React.FC<TestPreviewProps> = ({
 
               {/* Test Results */}
               {testState.success === true && (
-                <div className="text-center p-4 bg-emerald-50 border border-emerald-200 rounded-lg">
-                  <div className="flex items-center justify-center space-x-2 text-emerald-600 mb-2">
+                <div className="text-center p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-xl">
+                  <div className="flex items-center justify-center space-x-2 text-emerald-400 mb-2">
                     <CheckCircle className="w-6 h-6" />
                     <span className="font-medium">Test Completed Successfully!</span>
                   </div>
-                  <p className="text-sm text-emerald-700">
+                  <p className="text-sm text-emerald-300">
                     Your entertainment area is ready for use. You can now use it with compatible apps and services.
                   </p>
                 </div>
               )}
 
               {testState.success === false && (
-                <div className="text-center p-4 bg-red-50 border border-red-200 rounded-lg">
-                  <div className="flex items-center justify-center space-x-2 text-red-600 mb-2">
+                <div className="text-center p-4 bg-red-500/10 border border-red-500/20 rounded-xl">
+                  <div className="flex items-center justify-center space-x-2 text-red-400 mb-2">
                     <AlertCircle className="w-6 h-6" />
                     <span className="font-medium">Test Failed</span>
                   </div>
-                  <p className="text-sm text-red-700">
+                  <p className="text-sm text-red-300">
                     There was an issue testing the entertainment streaming. Please check your lights and try again.
                   </p>
                 </div>
@@ -469,9 +468,9 @@ export const TestPreview: React.FC<TestPreviewProps> = ({
 
         {/* Next Steps */}
         {createdAreaId && testState.success && (
-          <div className="bg-gradient-to-r from-blue-50 to-emerald-50 border border-blue-200 rounded-lg p-4">
-            <h4 className="font-medium text-gray-900 mb-2">🎉 What's Next?</h4>
-            <ul className="text-sm text-gray-700 space-y-1">
+          <div className="glass-card p-4 bg-gradient-to-r from-blue-500/10 to-emerald-500/10 border border-emerald-500/20">
+            <h4 className="font-medium text-white mb-2">🎉 What's Next?</h4>
+            <ul className="text-sm text-gray-300 space-y-1">
               <li>• Your entertainment area is now available in the Entertainment page</li>
               <li>• Use compatible apps like Philips Hue Sync or screen mirroring software</li>
               <li>• Adjust light positions anytime from the Entertainment area settings</li>
@@ -479,8 +478,8 @@ export const TestPreview: React.FC<TestPreviewProps> = ({
             </ul>
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 };
 

@@ -12,7 +12,8 @@ import {
   RefreshCw,
   Users
 } from 'lucide-react';
-import { Button, Input, Card, CardContent, CardHeader, CardTitle } from '@/components/ui';
+import { Button, Input } from '@/components/ui';
+import '@/styles/design-system.css';
 import { Light } from '@/types';
 import { cn } from '@/utils';
 
@@ -207,69 +208,68 @@ export const LightSelector: React.FC<LightSelectorProps> = ({
   };
 
   return (
-    <Card className={className}>
-      <CardHeader>
-        <CardTitle className="flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <Users className="w-5 h-5" />
-            <span>Select Lights</span>
-            <span className="text-sm font-normal text-gray-500">
+    <div className={cn('glass-card p-6', className)}>
+      <div className="mb-6">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xl font-semibold text-white flex items-center gap-2">
+            <Users className="w-5 h-5 text-imersa-glow-primary" />
+            Select Lights
+            <span className="text-sm font-normal text-gray-400">
               ({totalSelected} of {filteredLights.length} selected)
             </span>
-          </div>
+          </h3>
           
           <div className="flex items-center space-x-2">
-            <Button
-              variant="outline"
-              size="sm"
+            <button
               onClick={handleRefresh}
               disabled={isLoading}
-              className="flex items-center space-x-1"
+              className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-gray-400 transition-all flex items-center gap-2"
             >
               <RefreshCw className={cn('w-4 h-4', isLoading && 'animate-spin')} />
               <span>Refresh</span>
-            </Button>
+            </button>
           </div>
-        </CardTitle>
-      </CardHeader>
+        </div>
+      </div>
 
-      <CardContent className="space-y-4">
+      <div className="space-y-4">
         {/* Search and Filters */}
         <div className="flex flex-col sm:flex-row gap-3">
           <div className="flex-1 relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <Input
+            <input
               placeholder="Search lights by name, ID, or manufacturer..."
               value={filters.search}
               onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
-              className="pl-10"
+              className="w-full pl-10 px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-500"
             />
           </div>
           
           <div className="flex items-center space-x-2">
-            <Button
-              variant="outline"
-              size="sm"
+            <button
               onClick={() => setFilters(prev => ({ ...prev, showOnlineOnly: !prev.showOnlineOnly }))}
               className={cn(
-                'flex items-center space-x-1',
-                filters.showOnlineOnly && 'bg-emerald-50 border-emerald-300'
+                'px-4 py-2 rounded-xl border transition-all flex items-center gap-2',
+                filters.showOnlineOnly 
+                  ? 'bg-emerald-500/20 border-emerald-500/30 text-emerald-400' 
+                  : 'border-white/10 text-gray-400 hover:border-white/20'
               )}
             >
               <Filter className="w-4 h-4" />
               <span>Online Only</span>
-            </Button>
+            </button>
             
-            <Button
-              variant="outline"
-              size="sm"
+            <button
               onClick={() => setFilters(prev => ({ ...prev, groupByType: !prev.groupByType }))}
               className={cn(
-                filters.groupByType && 'bg-blue-50 border-blue-300'
+                'px-4 py-2 rounded-xl border transition-all',
+                filters.groupByType 
+                  ? 'bg-blue-500/20 border-blue-500/30 text-blue-400' 
+                  : 'border-white/10 text-gray-400 hover:border-white/20'
               )}
             >
               Group by Type
-            </Button>
+            </button>
           </div>
         </div>
 
@@ -362,8 +362,8 @@ export const LightSelector: React.FC<LightSelectorProps> = ({
             </p>
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 };
 
