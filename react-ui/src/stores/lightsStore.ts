@@ -1,6 +1,10 @@
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import type { Light, LightGroup, Scene } from '@/types';
+import { lightsApiService } from '@/services/lightsApi';
+import groupsApi from '@/services/groupsApi';
+import { scenesApiService } from '@/services/scenesApi';
+import { rgbToHsv } from '@/utils';
 
 interface LightsState {
   lights: Light[];
@@ -61,13 +65,13 @@ const useLightsStore = create<LightsState>()(
     // Light actions
     fetchLights: async () => {
       set({ isLoading: true, error: null });
-      
       try {
-        const response = await fetch('/api/lights');
-        if (!response.ok) throw new Error('Failed to fetch lights');
-        
-        const lights = await response.json();
-        set({ lights, isLoading: false });
+        await lightsApiService.initialize();
+        const hueLights = await lightsApiService.fetchLights();
+        const converted = Object.entries(hueLights).map(([id, hueLight]) =>
+          lightsApiService.convertHueLightToLight(id, hueLight)
+        );
+        set({ lights: converted, isLoading: false });
       } catch (error) {
         set({
           error: error instanceof Error ? error.message : 'Failed to fetch lights',
@@ -78,21 +82,26 @@ const useLightsStore = create<LightsState>()(
 
     updateLight: async (id: string, updates: Partial<Light>) => {
       try {
-        const response = await fetch(`/api/lights/${id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(updates),
-        });
-        
-        if (!response.ok) throw new Error('Failed to update light');
-        
-        const updatedLight = await response.json();
-        
-        set((state) => ({
-          lights: state.lights.map((light) =>
-            light.id === id ? { ...light, ...updatedLight } : light
-          ),
-        }));
+        await lightsApiService.initialize();
+        // Map UI updates to Hue state/properties
+        const state: any = {};
+        let didStateChange = false;
+        if (updates.isOn !== undefined) { state.on = updates.isOn; didStateChange = true; }
+        if (updates.brightness !== undefined) { state.bri = Math.max(1, Math.round((updates.brightness / 100) * 254)); didStateChange = true; }
+        if (updates.color) {
+          const hsv = rgbToHsv(updates.color.r, updates.color.g, updates.color.b);
+          state.hue = Math.round((hsv.h / 360) * 65535);
+          state.sat = Math.round((hsv.s / 100) * 254);
+          didStateChange = true;
+        }
+        if (didStateChange) {
+          await lightsApiService.updateLightState(id, state);
+        }
+        if (updates.name) {
+          await lightsApiService.updateLightProperties(id, { name: updates.name });
+        }
+        // Refresh single light via fetchLights for simplicity
+        await get().fetchLights();
       } catch (error) {
         set({ error: error instanceof Error ? error.message : 'Failed to update light' });
       }
@@ -113,29 +122,16 @@ const useLightsStore = create<LightsState>()(
       await get().updateLight(id, { color });
     },
 
-    setEffect: async (id: string, effectId: string, params?: Record<string, any>) => {
-      try {
-        const response = await fetch(`/api/lights/${id}/effect`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ effectId, params }),
-        });
-        
-        if (!response.ok) throw new Error('Failed to set effect');
-        
-        await get().fetchLights(); // Refresh to get updated state
-      } catch (error) {
-        set({ error: error instanceof Error ? error.message : 'Failed to set effect' });
-      }
+    setEffect: async (id: string, _effectId: string, _params?: Record<string, any>) => {
+      // Placeholder: effects not implemented in Hue v1 by diyHue; no-op
+      await get().fetchLights();
     },
 
     // Group actions
     fetchGroups: async () => {
       try {
-        const response = await fetch('/api/groups');
-        if (!response.ok) throw new Error('Failed to fetch groups');
-        
-        const groups = await response.json();
+        await groupsApi.initialize();
+        const groups = await groupsApi.getGroups();
         set({ groups });
       } catch (error) {
         set({ error: error instanceof Error ? error.message : 'Failed to fetch groups' });
@@ -144,16 +140,18 @@ const useLightsStore = create<LightsState>()(
 
     createGroup: async (group) => {
       try {
-        const response = await fetch('/api/groups', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(group),
-        });
-        
-        if (!response.ok) throw new Error('Failed to create group');
-        
-        const newGroup = await response.json();
-        set((state) => ({ groups: [...state.groups, newGroup] }));
+        await groupsApi.initialize();
+        const res = await groupsApi.createGroup({
+          name: group.name,
+          lights: group.lightIds,
+          type: group.type,
+          class: group.class,
+        } as any);
+        if (res.success) {
+          await get().fetchGroups();
+        } else {
+          throw new Error(res.error || 'Failed to create group');
+        }
       } catch (error) {
         set({ error: error instanceof Error ? error.message : 'Failed to create group' });
       }
@@ -161,21 +159,21 @@ const useLightsStore = create<LightsState>()(
 
     updateGroup: async (id: string, updates: Partial<LightGroup>) => {
       try {
-        const response = await fetch(`/api/groups/${id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(updates),
-        });
-        
-        if (!response.ok) throw new Error('Failed to update group');
-        
-        const updatedGroup = await response.json();
-        
-        set((state) => ({
-          groups: state.groups.map((group) =>
-            group.id === id ? { ...group, ...updatedGroup } : group
-          ),
-        }));
+        await groupsApi.initialize();
+        if (updates.brightness !== undefined) {
+          await groupsApi.setGroupBrightness(id, updates.brightness);
+        }
+        if (updates.color) {
+          await groupsApi.setGroupColor(id, updates.color as any);
+        }
+        const coreUpdates: Partial<LightGroup> = {};
+        if (updates.name) coreUpdates.name = updates.name;
+        if (updates.lightIds) coreUpdates.lightIds = updates.lightIds;
+        if (updates.class) coreUpdates.class = updates.class;
+        if (Object.keys(coreUpdates).length) {
+          await groupsApi.updateGroup(id, coreUpdates as any);
+        }
+        await get().fetchGroups();
       } catch (error) {
         set({ error: error instanceof Error ? error.message : 'Failed to update group' });
       }
@@ -183,24 +181,22 @@ const useLightsStore = create<LightsState>()(
 
     deleteGroup: async (id: string) => {
       try {
-        const response = await fetch(`/api/groups/${id}`, {
-          method: 'DELETE',
-        });
-        
-        if (!response.ok) throw new Error('Failed to delete group');
-        
-        set((state) => ({
-          groups: state.groups.filter((group) => group.id !== id),
-        }));
+        await groupsApi.initialize();
+        const res = await groupsApi.deleteGroup(id);
+        if (!res.success) throw new Error(res.error || 'Failed to delete group');
+        await get().fetchGroups();
       } catch (error) {
         set({ error: error instanceof Error ? error.message : 'Failed to delete group' });
       }
     },
 
     toggleGroup: async (id: string) => {
-      const group = get().groups.find((g) => g.id === id);
-      if (group) {
-        await get().updateGroup(id, { isOn: !group.isOn });
+      try {
+        await groupsApi.initialize();
+        await groupsApi.toggleGroup(id);
+        await get().fetchGroups();
+      } catch (error) {
+        set({ error: error instanceof Error ? error.message : 'Failed to toggle group' });
       }
     },
 
@@ -215,10 +211,8 @@ const useLightsStore = create<LightsState>()(
     // Scene actions
     fetchScenes: async () => {
       try {
-        const response = await fetch('/api/scenes');
-        if (!response.ok) throw new Error('Failed to fetch scenes');
-        
-        const scenes = await response.json();
+        await scenesApiService.initialize();
+        const scenes = await scenesApiService.getScenes();
         set({ scenes });
       } catch (error) {
         set({ error: error instanceof Error ? error.message : 'Failed to fetch scenes' });
@@ -227,16 +221,10 @@ const useLightsStore = create<LightsState>()(
 
     createScene: async (scene) => {
       try {
-        const response = await fetch('/api/scenes', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(scene),
-        });
-        
-        if (!response.ok) throw new Error('Failed to create scene');
-        
-        const newScene = await response.json();
-        set((state) => ({ scenes: [...state.scenes, newScene] }));
+        await scenesApiService.initialize();
+        const res = await scenesApiService.createScene(scene as any);
+        if (!res.success) throw new Error(res.error || 'Failed to create scene');
+        await get().fetchScenes();
       } catch (error) {
         set({ error: error instanceof Error ? error.message : 'Failed to create scene' });
       }
@@ -244,21 +232,10 @@ const useLightsStore = create<LightsState>()(
 
     updateScene: async (id: string, updates: Partial<Scene>) => {
       try {
-        const response = await fetch(`/api/scenes/${id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(updates),
-        });
-        
-        if (!response.ok) throw new Error('Failed to update scene');
-        
-        const updatedScene = await response.json();
-        
-        set((state) => ({
-          scenes: state.scenes.map((scene) =>
-            scene.id === id ? { ...scene, ...updatedScene } : scene
-          ),
-        }));
+        await scenesApiService.initialize();
+        const res = await scenesApiService.updateScene(id, updates as any);
+        if (!res.success) throw new Error(res.error || 'Failed to update scene');
+        await get().fetchScenes();
       } catch (error) {
         set({ error: error instanceof Error ? error.message : 'Failed to update scene' });
       }
@@ -266,12 +243,9 @@ const useLightsStore = create<LightsState>()(
 
     deleteScene: async (id: string) => {
       try {
-        const response = await fetch(`/api/scenes/${id}`, {
-          method: 'DELETE',
-        });
-        
-        if (!response.ok) throw new Error('Failed to delete scene');
-        
+        await scenesApiService.initialize();
+        const res = await scenesApiService.deleteScene(id);
+        if (!res.success) throw new Error(res.error || 'Failed to delete scene');
         set((state) => ({
           scenes: state.scenes.filter((scene) => scene.id !== id),
           activeScene: state.activeScene === id ? null : state.activeScene,
@@ -283,31 +257,22 @@ const useLightsStore = create<LightsState>()(
 
     activateScene: async (id: string) => {
       try {
-        const response = await fetch(`/api/scenes/${id}/activate`, {
-          method: 'POST',
-        });
-        
-        if (!response.ok) throw new Error('Failed to activate scene');
-        
+        await scenesApiService.initialize();
+        const scene = get().scenes.find(s => s.id === id);
+        const groupId = (scene as any)?.group || '0';
+        const res = await scenesApiService.recallScene(groupId, id, {});
+        if (!res.success) throw new Error(res.error || 'Failed to activate scene');
         set({ activeScene: id });
-        await get().fetchLights(); // Refresh lights to show scene state
+        await get().fetchLights();
       } catch (error) {
         set({ error: error instanceof Error ? error.message : 'Failed to activate scene' });
       }
     },
 
     deactivateScene: async () => {
-      try {
-        const response = await fetch('/api/scenes/deactivate', {
-          method: 'POST',
-        });
-        
-        if (!response.ok) throw new Error('Failed to deactivate scene');
-        
-        set({ activeScene: null });
-      } catch (error) {
-        set({ error: error instanceof Error ? error.message : 'Failed to deactivate scene' });
-      }
+      // No direct API; set activeScene null and refresh
+      set({ activeScene: null });
+      await get().fetchLights();
     },
 
     // Selection actions
