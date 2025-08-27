@@ -16,22 +16,21 @@ interface LightCatalogItem {
 import { useLights } from '@/hooks/useLights';
 import { 
   Search, Plus, Power, Lightbulb, Trash2, Edit, 
-  Palette, Thermometer, Sun, Loader2, CheckCircle,
+  Palette, Sun, Loader2, CheckCircle,
   AlertCircle, Grid, List, RefreshCw, Zap, ZapOff,
-  Sparkles, Settings, Sliders
+  Sparkles, Settings, Eye
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 
 interface LightRowProps {
   light: any;
-  lightTypes: string[];
+  lightTypes: any[];
   onToggle: (id: string) => void;
   onBrightnessChange: (id: string, bri: number) => void;
-  onColorChange: (id: string, hue: number, sat: number) => void;
-  onColorTempChange: (id: string, ct: number) => void;
   onRename: (id: string, name: string) => void;
   onDelete: (id: string) => void;
   onTypeChange: (id: string, modelId: string) => void;
+  onIdentify: (id: string) => void;
 }
 
 const LightRow: React.FC<LightRowProps> = ({
@@ -39,11 +38,10 @@ const LightRow: React.FC<LightRowProps> = ({
   lightTypes,
   onToggle,
   onBrightnessChange,
-  onColorChange,
-  onColorTempChange,
   onRename,
   onDelete,
-  onTypeChange
+  onTypeChange,
+  onIdentify
 }) => {
   const [editingName, setEditingName] = useState(false);
   const [newName, setNewName] = useState(light.name);
@@ -73,13 +71,13 @@ const LightRow: React.FC<LightRowProps> = ({
               <div className="flex items-center gap-2">
                 <div className={cn(
                   "w-8 h-8 rounded-full flex items-center justify-center transition-all",
-                  light.state?.on 
+                  light.isOn 
                     ? "bg-gradient-to-br from-yellow-400 to-orange-500 shadow-lg" 
                     : "bg-gray-800"
                 )}>
                   <Lightbulb className={cn(
                     "w-4 h-4",
-                    light.state?.on ? 'text-gray-900' : 'text-gray-400'
+                    light.isOn ? 'text-gray-900' : 'text-gray-400'
                   )} />
                 </div>
                 <span className="font-medium text-white">{light.name}</span>
@@ -97,12 +95,12 @@ const LightRow: React.FC<LightRowProps> = ({
           <div className="md:col-span-2">
             <select
               className="w-full p-2 text-sm bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-yellow-500"
-              value={light.modelid || ''}
+              value={light.model || ''}
               onChange={(e) => onTypeChange(light.id, e.target.value)}
             >
               <option value="">Select model</option>
               {lightTypes.map(type => (
-                <option key={type} value={type}>{type}</option>
+                <option key={type.id} value={type.id}>{type.name}</option>
               ))}
             </select>
           </div>
@@ -110,65 +108,45 @@ const LightRow: React.FC<LightRowProps> = ({
           {/* Power */}
           <div className="md:col-span-1 flex justify-center">
             <Switch
-              checked={light.state?.on || false}
+              checked={light.isOn || false}
               onCheckedChange={() => onToggle(light.id)}
             />
           </div>
 
           {/* Brightness */}
-          <div className="md:col-span-2">
+          <div className="md:col-span-3">
             <div className="flex items-center gap-2">
               <Sun className={cn(
                 "w-4 h-4 transition-colors",
-                light.state?.on ? "text-yellow-400" : "text-gray-400"
+                light.isOn ? "text-yellow-400" : "text-gray-400"
               )} />
               <Slider
-                value={[light.state?.bri || 0]}
+                value={[light.brightness || 0]}
                 onValueChange={([value]) => onBrightnessChange(light.id, value)}
-                max={254}
+                max={100}
                 className="flex-1"
+                disabled={!light.isOn}
               />
-              <span className="text-xs w-8 text-gray-400">{Math.round((light.state?.bri || 0) / 2.54)}%</span>
+              <span className="text-xs w-12 text-gray-400">{light.brightness || 0}%</span>
             </div>
           </div>
 
-          {/* Color Temp */}
-          <div className="md:col-span-2">
-            <div className="flex items-center gap-2">
-              <Thermometer className="w-4 h-4 text-gray-400" />
-              <Input
-                type="number"
-                min={153}
-                max={500}
-                value={light.state?.ct || 300}
-                onChange={(e) => onColorTempChange(light.id, parseInt(e.target.value))}
-                className="h-8"
-              />
-            </div>
-          </div>
-
-          {/* Hue & Saturation */}
-          <div className="md:col-span-2">
-            <div className="flex gap-1">
-              <Input
-                type="number"
-                min={0}
-                max={65535}
-                value={light.state?.hue || 0}
-                onChange={(e) => onColorChange(light.id, parseInt(e.target.value), light.state?.sat || 0)}
-                placeholder="Hue"
-                className="h-8"
-              />
-              <Input
-                type="number"
-                min={0}
-                max={254}
-                value={light.state?.sat || 0}
-                onChange={(e) => onColorChange(light.id, light.state?.hue || 0, parseInt(e.target.value))}
-                placeholder="Sat"
-                className="h-8"
-              />
-            </div>
+          {/* Actions */}
+          <div className="md:col-span-2 flex gap-2">
+            <button
+              className="p-2 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 transition-colors"
+              onClick={() => onIdentify(light.id)}
+              title="Identify light"
+            >
+              <Eye className="w-4 h-4" />
+            </button>
+            <button
+              className="p-2 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 transition-colors"
+              onClick={() => setEditingName(true)}
+              title="Edit settings"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
           </div>
 
           {/* Delete */}
@@ -199,6 +177,7 @@ const LightsComplete: React.FC = () => {
     renameLight,
     deleteLight,
     setLightType,
+    identifyLight,
     allLightsOn,
     allLightsOff
   } = useLights(true, 5000);
@@ -259,9 +238,13 @@ const LightsComplete: React.FC = () => {
     }
   };
 
-  const handleColorChange = (lightId: string, hue: number, sat: number) => {
-    setHue(lightId, hue);
-    setSaturation(lightId, sat);
+  const handleIdentify = async (lightId: string) => {
+    try {
+      await identifyLight(lightId);
+      toast.success('Light will blink briefly');
+    } catch (error) {
+      toast.error('Failed to identify light');
+    }
   };
 
   const filteredLights = lights.filter(light => 
@@ -382,14 +365,13 @@ const LightsComplete: React.FC = () => {
             <LightRow
               key={light.id}
               light={light}
-              lightTypes={modelIds}
+              lightTypes={lightTypes}
               onToggle={toggleLight}
-              onBrightnessChange={setBrightness}
-              onColorChange={handleColorChange}
-              onColorTempChange={setColorTemperature}
+              onBrightnessChange={(id, bri) => setBrightness(id, Math.round((bri / 100) * 254))}
               onRename={renameLight}
               onDelete={deleteLight}
               onTypeChange={setLightType}
+              onIdentify={handleIdentify}
             />
           ))}
         </div>
@@ -400,26 +382,26 @@ const LightsComplete: React.FC = () => {
                 key={light.id}
                 className={cn(
                   "glass-card p-6 light-beam",
-                  light.state?.on && "holo-card"
+                  light.isOn && "holo-card"
                 )}
               >
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-3">
                     <div className={cn(
                       "w-10 h-10 rounded-full flex items-center justify-center transition-all interactive-glow",
-                      light.state?.on 
+                      light.isOn 
                         ? "bg-gradient-to-br from-yellow-400 to-orange-500 shadow-lg" 
                         : "bg-gray-800"
                     )}>
                       <Lightbulb className={cn(
                         "w-5 h-5",
-                        light.state?.on ? 'text-gray-900' : 'text-gray-400'
+                        light.isOn ? 'text-gray-900' : 'text-gray-400'
                       )} />
                     </div>
                     <h3 className="text-lg font-semibold text-white">{light.name}</h3>
                   </div>
                   <Switch
-                    checked={light.state?.on || false}
+                    checked={light.isOn || false}
                     onCheckedChange={() => toggleLight(light.id)}
                   />
                 </div>
@@ -427,28 +409,19 @@ const LightsComplete: React.FC = () => {
                   <div>
                     <label className="text-xs text-gray-400 mb-2 block">Brightness</label>
                     <Slider
-                      value={[light.state?.bri || 0]}
-                      onValueChange={([value]) => setBrightness(light.id, value)}
-                      max={254}
+                      value={[light.brightness || 0]}
+                      onValueChange={([value]) => setBrightness(light.id, Math.round((value / 100) * 254))}
+                      max={100}
+                      disabled={!light.isOn}
                     />
                   </div>
-                  {light.capabilities?.control?.ct && (
-                    <div>
-                      <label className="text-xs text-gray-400 mb-2 block">Color Temperature</label>
-                      <Slider
-                        value={[light.state?.ct || 300]}
-                        onValueChange={([value]) => setColorTemperature(light.id, value)}
-                        min={153}
-                        max={500}
-                      />
-                    </div>
-                  )}
                   <div className="flex gap-2 mt-4">
                     <button 
-                      className="flex-1 px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-gray-300 transition-all flex items-center justify-center gap-1"
+                      onClick={() => handleIdentify(light.id)}
+                      className="flex-1 px-3 py-2 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 transition-all flex items-center justify-center gap-1"
                     >
-                      <Settings className="w-3 h-3" />
-                      Configure
+                      <Eye className="w-3 h-3" />
+                      Identify
                     </button>
                     <button 
                       onClick={() => deleteLight(light.id)}

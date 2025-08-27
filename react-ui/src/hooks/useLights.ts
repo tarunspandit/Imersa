@@ -18,6 +18,7 @@ export interface UseLightsReturn {
   renameLight: (lightId: string, name: string) => Promise<void>;
   deleteLight: (lightId: string) => Promise<void>;
   setLightType: (lightId: string, modelId: string) => Promise<void>;
+  identifyLight: (lightId: string) => Promise<void>;
   allLightsOn: () => Promise<void>;
   allLightsOff: () => Promise<void>;
   clearError: () => void;
@@ -150,6 +151,16 @@ export function useLights(
     }
   }, [isInitialized, refreshLights]);
 
+  const identifyLight = useCallback(async (lightId: string) => {
+    if (!isInitialized) return;
+
+    try {
+      await lightsApiService.identifyLight(lightId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to identify light');
+    }
+  }, [isInitialized]);
+
   // Bulk actions
   const allLightsOn = useCallback(async () => {
     if (!isInitialized) return;
@@ -229,6 +240,7 @@ export function useLights(
     renameLight,
     deleteLight,
     setLightType,
+    identifyLight,
     allLightsOn,
     allLightsOff,
     clearError,

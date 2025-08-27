@@ -265,6 +265,29 @@ class LightsApiService {
     this.debounceTimers.set(key, timer);
   }
 
+  // Identify light by blinking
+  async identifyLight(lightId: string): Promise<any> {
+    try {
+      // Send alert select to make the light blink
+      const response = await fetch(`${this.baseUrl}/lights/${lightId}/state`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ alert: 'select' }),
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Failed to identify light: ${response.statusText}`);
+      }
+      
+      return response.json();
+    } catch (error) {
+      console.error(`Failed to identify light ${lightId}:`, error);
+      throw error;
+    }
+  }
+
   // Cleanup method
   cleanup(): void {
     this.debounceTimers.forEach(timer => clearTimeout(timer));

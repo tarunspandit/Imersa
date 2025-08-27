@@ -3,6 +3,7 @@ import React from 'react';
 import { Check, Circle } from 'lucide-react';
 import { WizardStep } from '@/hooks/useWizard';
 import { cn } from '@/utils';
+import '@/styles/design-system.css';
 
 interface WizardStepsProps {
   steps: WizardStep[];
@@ -20,11 +21,11 @@ export const WizardSteps: React.FC<WizardStepsProps> = ({
   className,
 }) => {
   return (
-    <div className={cn('w-full', className)}>
+    <div className={cn('w-full glass-card p-6', className)}>
       {/* Progress Bar */}
-      <div className="w-full bg-gray-200 rounded-full h-2 mb-6">
+      <div className="w-full bg-white/10 rounded-full h-2 mb-6">
         <div 
-          className="bg-gradient-to-r from-blue-500 to-emerald-500 h-2 rounded-full transition-all duration-300 ease-in-out"
+          className="bg-gradient-to-r from-yellow-400 to-orange-500 h-2 rounded-full transition-all duration-300 ease-in-out"
           style={{ width: `${progress}%` }}
         />
       </div>
@@ -46,11 +47,11 @@ export const WizardSteps: React.FC<WizardStepsProps> = ({
                   isCompleted
                     ? 'bg-emerald-500 border-emerald-500 text-white'
                     : isActive
-                    ? 'bg-blue-500 border-blue-500 text-white'
+                    ? 'bg-gradient-to-br from-yellow-400 to-orange-500 border-yellow-400 text-gray-900'
                     : isPast
-                    ? 'bg-gray-300 border-gray-300 text-gray-600'
-                    : 'bg-white border-gray-300 text-gray-400',
-                  isClickable && 'cursor-pointer hover:scale-105'
+                    ? 'bg-imersa-surface border-gray-600 text-gray-300'
+                    : 'bg-imersa-void border-gray-700 text-gray-400',
+                  isClickable && 'cursor-pointer hover:scale-105 interactive-glow'
                 )}
                 onClick={() => isClickable && onStepClick(step.id)}
               >
@@ -62,7 +63,7 @@ export const WizardSteps: React.FC<WizardStepsProps> = ({
                 
                 {/* Active Step Pulse Effect */}
                 {isActive && (
-                  <div className="absolute inset-0 rounded-full border-2 border-blue-300 animate-pulse" />
+                  <div className="absolute inset-0 rounded-full border-2 border-yellow-400/50 animate-pulse" />
                 )}
               </div>
 
@@ -72,10 +73,10 @@ export const WizardSteps: React.FC<WizardStepsProps> = ({
                   className={cn(
                     'text-sm font-medium',
                     isActive
-                      ? 'text-blue-600'
+                      ? 'text-imersa-glow-primary'
                       : isCompleted
-                      ? 'text-emerald-600'
-                      : 'text-gray-500'
+                      ? 'text-emerald-400'
+                      : 'text-gray-400'
                   )}
                 >
                   {step.title}
@@ -84,10 +85,10 @@ export const WizardSteps: React.FC<WizardStepsProps> = ({
                   className={cn(
                     'text-xs mt-1 max-w-24',
                     isActive
-                      ? 'text-blue-500'
+                      ? 'text-yellow-400/80'
                       : isCompleted
-                      ? 'text-emerald-500'
-                      : 'text-gray-400'
+                      ? 'text-emerald-400/80'
+                      : 'text-gray-500'
                   )}
                 >
                   {step.description}
@@ -96,15 +97,15 @@ export const WizardSteps: React.FC<WizardStepsProps> = ({
 
               {/* Connector Line */}
               {index < steps.length - 1 && (
-                <div className="absolute top-5 left-1/2 w-full h-0.5 bg-gray-200 -z-10">
+                <div className="absolute top-5 left-1/2 w-full h-0.5 bg-white/10 -z-10">
                   <div
                     className={cn(
                       'h-full transition-all duration-300',
                       step.isCompleted
                         ? 'bg-emerald-500'
                         : isActive && progress > (step.id - 1) * 25
-                        ? 'bg-blue-500'
-                        : 'bg-gray-200'
+                        ? 'bg-gradient-to-r from-yellow-400 to-orange-500'
+                        : 'bg-white/10'
                     )}
                     style={{
                       width: isCompleted ? '100%' : isActive ? `${Math.min(100, (progress - (step.id - 1) * 25) * 4)}%` : '0%'
@@ -119,10 +120,10 @@ export const WizardSteps: React.FC<WizardStepsProps> = ({
 
       {/* Current Step Info */}
       <div className="text-center">
-        <h2 className="text-xl font-semibold text-gray-900 mb-2">
+        <h2 className="text-xl font-semibold text-white mb-2">
           {steps.find(s => s.id === currentStep)?.title}
         </h2>
-        <p className="text-gray-600 text-sm">
+        <p className="text-gray-400 text-sm">
           {steps.find(s => s.id === currentStep)?.description}
         </p>
       </div>
