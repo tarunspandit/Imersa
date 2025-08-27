@@ -7,7 +7,8 @@ import {
   Play, 
   Palette,
   Settings, 
-  Users, 
+  Users,
+  UserCheck,
   BarChart3,
   Zap,
   Gamepad2,
@@ -15,7 +16,9 @@ import {
   HelpCircle,
   ChevronLeft,
   ChevronRight,
-  Activity
+  Activity,
+  Server,
+  Plug
 } from 'lucide-react';
 import { Button } from '@/components/ui';
 import { useAppStore } from '@/stores';
@@ -44,9 +47,12 @@ const navItems: NavItem[] = [
   { icon: Zap, label: 'WLED', path: '/wled' },
   { icon: Calendar, label: 'Scheduler', path: '/scheduler' },
   { icon: Activity, label: 'Sensors', path: '/sensors' },
-  { icon: BarChart3, label: 'Analytics', path: '/analytics' },
   { icon: Users, label: 'Devices', path: '/devices' },
+  { icon: UserCheck, label: 'App Users', path: '/users' },
+  { icon: Server, label: 'Bridge', path: '/bridge' },
   { icon: Settings, label: 'Settings', path: '/settings' },
+  { icon: Plug, label: 'Integrations', path: '/integrations' },
+  { icon: BarChart3, label: 'Analytics', path: '/analytics' },
   { icon: HelpCircle, label: 'Help', path: '/help' },
 ];
 

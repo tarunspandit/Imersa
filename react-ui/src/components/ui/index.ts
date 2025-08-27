@@ -15,3 +15,4 @@ export {
 } from './Modal';
 export { Slider } from './Slider';
 export { Switch } from './Switch';
+export { Wizard } from './Wizard';
