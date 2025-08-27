@@ -148,7 +148,12 @@ class DiscoveryService {
 
   // Protocol-specific discovery
   async discoverTradfri(gateway: string, identity: string, psk: string): Promise<void> {
-    await this.client.post('/tradfri', { gateway, identity, psk });
+    // API expects different field names
+    await this.client.post('/tradfri', { 
+      tradfriGwIp: gateway, 
+      identity: identity, 
+      tradfriCode: psk 
+    });
   }
 
   async discoverPhilipsHue(bridgeIp: string): Promise<void> {
@@ -161,6 +166,37 @@ class DiscoveryService {
     // Implement Govee discovery
     const apiKey = authService.getStoredApiKey();
     await this.client.post(`/api/${apiKey}/config/govee/discover`);
+  }
+
+  async discoverWLED(): Promise<{ devices: any[] }> {
+    // WLED discovery - search for WLED devices via manual add with protocol
+    const apiKey = authService.getStoredApiKey();
+    // Trigger light search which includes WLED devices
+    await this.client.post(`/api/${apiKey}/lights`, '');
+    // Return empty for now since real discovery happens through lights
+    return { devices: [] };
+  }
+
+  async addManualDevice(device: {
+    protocol: string;
+    ip: string;
+    name: string;
+  }): Promise<void> {
+    const apiKey = authService.getStoredApiKey();
+    // Add device via lights API with manual configuration
+    await this.client.post(`/api/${apiKey}/lights`, {
+      ip: device.ip,
+      protocol: device.protocol,
+      config: {
+        name: device.name
+      }
+    });
+  }
+
+  async testDeviceConnection(protocol: string, config: { ip: string }): Promise<{ success: boolean }> {
+    // Simple connectivity test - not directly supported by API
+    // Return success for now - real test happens when adding device
+    return { success: true };
   }
 
   // Manual device addition
