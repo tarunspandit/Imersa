@@ -126,12 +126,20 @@ def entertainmentService(group, user):
     hueGroup = -1
     hueGroupLights = {}
     non_UDP_update_counter = 0
+    
+    # Track if we're in tunnel mode for Hue bridge
+    hue_tunnel_mode = False
+    hue_tunnel_process = None
+    hue_light_count = 0
+    total_light_count = 0
 
     for light in group.lights:
         lights_v1[int(light().id_v1)] = light()
+        total_light_count += 1
         if light().protocol == "hue" and get_hue_entertainment_group(light(), group.name) != -1:
             hueGroup = get_hue_entertainment_group(light(), group.name)
             hueGroupLights[int(light().protocol_cfg["id"])] = []  # Add light id to list
+            hue_light_count += 1
         bridgeConfig["lights"][light().id_v1].state["mode"] = "streaming"
         bridgeConfig["lights"][light().id_v1].state["on"] = True
         bridgeConfig["lights"][light().id_v1].state["colormode"] = "xy"
@@ -147,6 +155,11 @@ def entertainmentService(group, user):
 
     logging.debug(lights_v1)
     logging.debug(lights_v2)
+    
+    # Check if we should use tunnel mode (majority of lights are Hue bridge)
+    if hue_light_count > 0 and hue_light_count >= (total_light_count * 0.7):  # 70% or more are Hue lights
+        logging.info(f"Detected {hue_light_count}/{total_light_count} Hue bridge lights - enabling tunnel mode")
+        hue_tunnel_mode = True
 
     opensslCmd = [
         'openssl', 's_server', '-dtls', '-psk', user.client_key,
@@ -172,11 +185,53 @@ def entertainmentService(group, user):
         bridgeConfig["groups"][group.id_v1].stream["owner"] = None
         return
 
-    if hueGroup != -1:
+    # Setup Hue bridge tunnel if in tunnel mode
+    if hueGroup != -1 and hue_tunnel_mode:
+        try:
+            # Start entertainment on real Hue bridge
+            hue_ip = bridgeConfig["config"]["hue"]["ip"]
+            hue_user = bridgeConfig["config"]["hue"]["hueUser"]
+            hue_key = bridgeConfig["config"]["hue"]["hueKey"]
+            
+            # Enable streaming on Hue bridge
+            url = f"http://{hue_ip}/api/{hue_user}/groups/{hueGroup}"
+            r = requests.put(url, json={"stream": {"active": True}}, timeout=2)
+            logging.info(f"Hue bridge streaming enabled: {r.text[:100]}")
+            
+            # Create DTLS tunnel to Hue bridge
+            hue_tunnel_cmd = [
+                'openssl', 's_client', '-quiet', '-cipher', 'PSK-AES128-GCM-SHA256', '-dtls',
+                '-psk', hue_key, '-psk_identity', hue_user,
+                '-connect', f'{hue_ip}:2100'
+            ]
+            hue_tunnel_process = Popen(hue_tunnel_cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
+            sleep(0.5)
+            
+            if hue_tunnel_process.poll() is None:
+                logging.info(f"✓ DTLS tunnel established to Hue bridge at {hue_ip}")
+                h = None  # Don't use HueConnection in tunnel mode
+            else:
+                logging.warning("Failed to establish tunnel to Hue bridge, falling back to API mode")
+                hue_tunnel_mode = False
+                hue_tunnel_process = None
+                h = HueConnection(bridgeConfig["config"]["hue"]["ip"])
+                h.connect(hueGroup, hueGroupLights)
+                if h._connected is False:
+                    hueGroupLights = {}
+        except Exception as e:
+            logging.error(f"Failed to setup Hue tunnel: {e}")
+            hue_tunnel_mode = False
+            h = HueConnection(bridgeConfig["config"]["hue"]["ip"])
+            h.connect(hueGroup, hueGroupLights)
+            if h._connected is False:
+                hueGroupLights = {}
+    elif hueGroup != -1:
         h = HueConnection(bridgeConfig["config"]["hue"]["ip"])
         h.connect(hueGroup, hueGroupLights)
         if h._connected is False:
             hueGroupLights = {}  # on a failed connection, empty the list
+    else:
+        h = None
 
     init = False
     frameBites = 10
@@ -213,9 +268,44 @@ def entertainmentService(group, user):
     else:
         logging.warning("No data received from DTLS within 5 seconds")
     
-    logging.info("Entering main entertainment loop")
+    logging.info(f"Entering main entertainment loop (tunnel_mode={hue_tunnel_mode})")
     try:
         while bridgeConfig["groups"][group.id_v1].stream["active"]:
+            # In tunnel mode, forward raw data directly
+            if hue_tunnel_mode and hue_tunnel_process and init:
+                # Read raw frame data
+                raw_data = p.stdout.read(frameBites)
+                if raw_data:
+                    # Forward directly to Hue bridge without parsing
+                    try:
+                        hue_tunnel_process.stdin.write(raw_data)
+                        hue_tunnel_process.stdin.flush()
+                        frame_count += 1
+                        
+                        # Process non-Hue lights if any
+                        if hue_light_count < total_light_count:
+                            # Parse only for non-Hue lights
+                            # Continue with normal processing for other protocols
+                            pass  # Fall through to normal processing
+                        else:
+                            # All lights are Hue, skip local processing entirely
+                            frames_in_window += 1
+                            now = time.time()
+                            if now - fps_window_start >= 1.0:
+                                current_fps = frames_in_window / (now - fps_window_start)
+                                fps_tracker.append(current_fps)
+                                if now - last_fps_log >= 5.0:
+                                    if fps_tracker:
+                                        avg_fps = sum(fps_tracker) / len(fps_tracker)
+                                        logging.info(f"Tunnel FPS: {avg_fps:.1f} (direct forwarding to Hue bridge)")
+                                    last_fps_log = now
+                                fps_window_start = now
+                                frames_in_window = 0
+                            continue  # Skip all local processing
+                    except:
+                        logging.warning("Failed to forward to Hue bridge, falling back")
+                        hue_tunnel_mode = False
+            
             if not init:
                 # Check if we should still be running
                 if not bridgeConfig["groups"][group.id_v1].stream["active"]:
@@ -418,7 +508,9 @@ def entertainmentService(group, user):
 
                             # HUE passthrough
                             elif proto == "hue" and int(light.protocol_cfg["id"]) in hueGroupLights:
-                                hueGroupLights[int(light.protocol_cfg["id"])] = [r, g, b]
+                                # Skip Hue lights in tunnel mode - they're handled by direct forwarding
+                                if not hue_tunnel_mode:
+                                    hueGroupLights[int(light.protocol_cfg["id"])] = [r, g, b]
 
                             # Home Assistant WS (batch)
                             elif proto == "homeassistant_ws":
@@ -553,7 +645,9 @@ def entertainmentService(group, user):
                                 wledLights[ip]["total_leds"] = max(wledLights[ip]["total_leds"], seg_stop)
 
                             elif proto == "hue" and int(light.protocol_cfg["id"]) in hueGroupLights:
-                                hueGroupLights[int(light.protocol_cfg["id"])] = [r, g, b]
+                                # Skip Hue lights in tunnel mode - they're handled by direct forwarding
+                                if not hue_tunnel_mode:
+                                    hueGroupLights[int(light.protocol_cfg["id"])] = [r, g, b]
 
                             elif proto == "homeassistant_ws":
                                 haLights.append({
@@ -717,8 +811,8 @@ def entertainmentService(group, user):
                             except:
                                 pass
 
-                    # Hue passthrough
-                    if hueGroupLights:
+                    # Hue passthrough (skip if in tunnel mode)
+                    if hueGroupLights and not hue_tunnel_mode:
                         h.send(hueGroupLights, hueGroup)
 
                     # (Yeelight updates are already sent inline in the loops above.)
@@ -779,10 +873,26 @@ def entertainmentService(group, user):
         logging.info(f"Entertainment service stopping after {frame_count} frames")
 
     p.kill()
+    
+    # Clean up Hue tunnel if active
+    if hue_tunnel_process:
+        try:
+            hue_tunnel_process.kill()
+            # Disable streaming on Hue bridge
+            if hueGroup != -1:
+                hue_ip = bridgeConfig["config"]["hue"]["ip"]
+                hue_user = bridgeConfig["config"]["hue"]["hueUser"]
+                url = f"http://{hue_ip}/api/{hue_user}/groups/{hueGroup}"
+                requests.put(url, json={"stream": {"active": False}}, timeout=2)
+                logging.info("Hue bridge tunnel stopped")
+        except:
+            pass
+    
     bridgeConfig["groups"][group.id_v1].stream["owner"] = None
     try:
-        h.disconnect()
-    except UnboundLocalError:
+        if h:
+            h.disconnect()
+    except (UnboundLocalError, AttributeError):
         pass
     bridgeConfig["groups"][group.id_v1].stream["active"] = False
     for light in group.lights:
