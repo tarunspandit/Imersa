@@ -410,8 +410,8 @@ export const MusicSettings: React.FC<MusicSettingsProps> = ({
                       max="65535"
                       value={localMusicSettings.portRange?.start || ''}
                       onChange={(e) => updateMusicSetting('portRange', {
-                        ...localMusicSettings.portRange,
-                        start: parseInt(e.target.value) || 1024
+                        start: parseInt(e.target.value) || 1024,
+                        end: localMusicSettings.portRange?.end ?? 65535
                       })}
                     />
                   </div>
@@ -423,7 +423,7 @@ export const MusicSettings: React.FC<MusicSettingsProps> = ({
                       max="65535"
                       value={localMusicSettings.portRange?.end || ''}
                       onChange={(e) => updateMusicSetting('portRange', {
-                        ...localMusicSettings.portRange,
+                        start: localMusicSettings.portRange?.start ?? 1024,
                         end: parseInt(e.target.value) || 65535
                       })}
                     />

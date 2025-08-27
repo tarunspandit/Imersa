@@ -7,9 +7,9 @@ import { cn } from '@/utils';
 
 interface AreaRowProps {
   area: EntertainmentArea;
-  onToggleStreaming: (areaId: string) => Promise<void>;
+  onToggleStreaming: (areaId: string) => Promise<unknown>;
   onEditPositions: (area: EntertainmentArea) => void;
-  onDelete: (areaId: string) => Promise<void>;
+  onDelete: (areaId: string) => Promise<unknown>;
   isProcessing?: boolean;
 }
 

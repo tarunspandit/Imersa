@@ -327,7 +327,7 @@ const SensorConfig: React.FC<SensorConfigProps> = ({
                           <div className="flex items-center space-x-2">
                             <Switch
                               checked={threshold.enabled}
-                              onChange={(checked) => updateThreshold(index, { enabled: checked })}
+                              onCheckedChange={(checked) => updateThreshold(index, { enabled: !!checked })}
                             />
                             <span className="font-medium">
                               Threshold {index + 1}

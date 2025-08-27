@@ -1,7 +1,7 @@
 // Entertainment Wizard State Management Hook
 import { useState, useCallback, useEffect } from 'react';
 import { entertainmentApi } from '@/services/entertainmentApi';
-import { getLights } from '@/services/lightsApi';
+import lightsApiService from '@/services/lightsApi';
 import { LightPosition, Light, ApiResponse } from '@/types';
 
 export interface WizardStep {
@@ -134,18 +134,17 @@ export function useWizard(options: UseWizardOptions = {}) {
       // Initialize entertainment API
       await entertainmentApi.initialize();
 
-      // Load available lights (ungrouped)
-      const lightsResponse = await getLights();
-      if (lightsResponse.success && lightsResponse.data) {
-        const ungroupedLights = lightsResponse.data.filter(light => 
-          !light.groupIds || light.groupIds.length === 0
-        );
-        
-        setFormData(prev => ({
-          ...prev,
-          availableLights: ungroupedLights,
-        }));
-      }
+      // Load available lights (convert from Hue API)
+      await lightsApiService.initialize();
+      const hueLights = await lightsApiService.fetchLights();
+      const allLights = Object.entries(hueLights).map(([id, hue]) =>
+        lightsApiService.convertHueLightToLight(id, hue)
+      );
+      // Legacy UI surfaces all lights for selection; group membership can be refined later
+      setFormData(prev => ({
+        ...prev,
+        availableLights: allLights,
+      }));
 
       // Validate initial step
       validateCurrentStep();

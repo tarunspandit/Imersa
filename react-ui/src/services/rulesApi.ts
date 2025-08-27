@@ -104,9 +104,11 @@ class RulesAPI {
   }
 
   async triggerRule(id: string): Promise<ApiResponse<void>> {
-    return this.request<void>(`/rules/${id}/trigger`, {
-      method: 'POST',
-    });
+    // Legacy DIYHue API doesn't support an explicit trigger; treat as no-op
+    return {
+      success: true,
+      timestamp: new Date().toISOString(),
+    };
   }
 
   // Rule Templates

@@ -39,12 +39,10 @@ const navItems: NavItem[] = [
   { icon: Lightbulb, label: 'Lights', path: '/lights' },
   { icon: Layers, label: 'Groups', path: '/groups' },
   { icon: Play, label: 'Scenes', path: '/scenes' },
-  { icon: Palette, label: 'Gradients', path: '/gradients' },
   { icon: Gamepad2, label: 'Entertainment', path: '/entertainment' },
-  { icon: Zap, label: 'WLED', path: '/wled' },
   { icon: Calendar, label: 'Scheduler', path: '/scheduler' },
   { icon: Activity, label: 'Sensors', path: '/sensors' },
-  { icon: BarChart3, label: 'Analytics', path: '/analytics' },
+  // Analytics removed for parity with legacy UI
   { icon: Users, label: 'Devices', path: '/devices' },
   { icon: Settings, label: 'Settings', path: '/settings' },
   { icon: HelpCircle, label: 'Help', path: '/help' },

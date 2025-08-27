@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { sensorsApiService } from '@/services/sensorsApi';
+import { useAppStore } from '@/stores';
 import type { 
   Sensor, 
   SensorAlert, 
@@ -46,6 +47,7 @@ export function useSensors(
   autoRefresh: boolean = true,
   refreshInterval: number = 10000
 ): UseSensorsReturn {
+  const { addNotification } = useAppStore();
   const [sensors, setSensors] = useState<Sensor[]>([]);
   const [alerts, setAlerts] = useState<SensorAlert[]>([]);
   const [dashboardStats, setDashboardStats] = useState<SensorDashboardStats | null>(null);
@@ -131,7 +133,9 @@ export function useSensors(
       }
     } catch (err) {
       if (mountedRef.current) {
-        setError(err instanceof Error ? err.message : 'Failed to fetch sensors');
+        const message = err instanceof Error ? err.message : 'Failed to fetch sensors';
+        setError(message);
+        addNotification({ type: 'error', title: 'Sensors', message });
       }
     } finally {
       if (mountedRef.current) {
@@ -150,7 +154,9 @@ export function useSensors(
         setAlerts(alertsData);
       }
     } catch (err) {
-      console.error('Failed to fetch alerts:', err);
+      const message = err instanceof Error ? err.message : 'Failed to fetch alerts';
+      setError(message);
+      addNotification({ type: 'error', title: 'Sensor Alerts', message });
     }
   }, [isInitialized]);
 
@@ -164,7 +170,9 @@ export function useSensors(
         setDashboardStats(stats);
       }
     } catch (err) {
-      console.error('Failed to fetch dashboard stats:', err);
+      const message = err instanceof Error ? err.message : 'Failed to fetch dashboard stats';
+      setError(message);
+      addNotification({ type: 'error', title: 'Sensors', message });
     }
   }, [isInitialized]);
 
@@ -190,6 +198,7 @@ export function useSensors(
       const response = await sensorsApiService.createSensor(sensorData);
       if (response.success && response.data) {
         await refreshSensors();
+        addNotification({ type: 'success', title: 'Sensor Created', message: `Sensor ID ${response.data.id}` });
         return response.data.id;
       } else {
         throw new Error(response.error || 'Failed to create sensor');
@@ -197,6 +206,7 @@ export function useSensors(
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to create sensor';
       setError(message);
+      addNotification({ type: 'error', title: 'Create Sensor', message });
       throw err;
     }
   }, [isInitialized, refreshSensors]);
@@ -208,12 +218,14 @@ export function useSensors(
       const response = await sensorsApiService.updateSensor(sensorId, updateData);
       if (response.success) {
         await refreshSensors();
+        addNotification({ type: 'success', title: 'Sensor Updated', message: sensorId });
       } else {
         throw new Error(response.error || 'Failed to update sensor');
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to update sensor';
       setError(message);
+      addNotification({ type: 'error', title: 'Update Sensor', message });
       throw err;
     }
   }, [isInitialized, refreshSensors]);
@@ -225,12 +237,14 @@ export function useSensors(
       const response = await sensorsApiService.deleteSensor(sensorId);
       if (response.success) {
         await refreshSensors();
+        addNotification({ type: 'success', title: 'Sensor Deleted', message: sensorId });
       } else {
         throw new Error(response.error || 'Failed to delete sensor');
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to delete sensor';
       setError(message);
+      addNotification({ type: 'error', title: 'Delete Sensor', message });
       throw err;
     }
   }, [isInitialized, refreshSensors]);
@@ -242,12 +256,14 @@ export function useSensors(
       const response = await sensorsApiService.updateSensorConfig(sensorId, config);
       if (response.success) {
         await refreshSensors();
+        addNotification({ type: 'success', title: 'Sensor Config Saved', message: sensorId });
       } else {
         throw new Error(response.error || 'Failed to update sensor configuration');
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to update sensor configuration';
       setError(message);
+      addNotification({ type: 'error', title: 'Update Sensor Config', message });
       throw err;
     }
   }, [isInitialized, refreshSensors]);
@@ -261,6 +277,7 @@ export function useSensors(
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to fetch sensor history';
       setError(message);
+      addNotification({ type: 'error', title: 'Sensor History', message });
       throw err;
     }
   }, [isInitialized]);
@@ -273,12 +290,14 @@ export function useSensors(
       const response = await sensorsApiService.bulkAction(action);
       if (response.success) {
         await refreshSensors();
+        addNotification({ type: 'success', title: 'Bulk Sensor Action', message: 'Action completed' });
       } else {
         throw new Error(response.error || 'Failed to perform bulk action');
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to perform bulk action';
       setError(message);
+      addNotification({ type: 'error', title: 'Bulk Sensor Action', message });
       throw err;
     }
   }, [isInitialized, refreshSensors]);
@@ -295,12 +314,14 @@ export function useSensors(
             ? { ...alert, acknowledged: true, acknowledgedAt: new Date().toISOString() }
             : alert
         ));
+        addNotification({ type: 'success', title: 'Alert Acknowledged', message: alertId });
       } else {
         throw new Error(response.error || 'Failed to acknowledge alert');
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to acknowledge alert';
       setError(message);
+      addNotification({ type: 'error', title: 'Acknowledge Alert', message });
       throw err;
     }
   }, [isInitialized]);
@@ -312,12 +333,14 @@ export function useSensors(
       const response = await sensorsApiService.dismissAlert(alertId);
       if (response.success) {
         setAlerts(prev => prev.filter(alert => alert.id !== alertId));
+        addNotification({ type: 'success', title: 'Alert Dismissed', message: alertId });
       } else {
         throw new Error(response.error || 'Failed to dismiss alert');
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to dismiss alert';
       setError(message);
+      addNotification({ type: 'error', title: 'Dismiss Alert', message });
       throw err;
     }
   }, [isInitialized]);

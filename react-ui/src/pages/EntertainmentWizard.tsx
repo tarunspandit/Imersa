@@ -15,9 +15,11 @@ import { PositionMapper } from '@/components/wizard/PositionMapper';
 import { TestPreview } from '@/components/wizard/TestPreview';
 import { useWizard } from '@/hooks/useWizard';
 import { cn } from '@/utils';
+import { useAppStore } from '@/stores';
 
 const EntertainmentWizard: React.FC = () => {
   const navigate = useNavigate();
+  const { addNotification } = useAppStore();
   
   const {
     currentStep,
@@ -48,10 +50,10 @@ const EntertainmentWizard: React.FC = () => {
     clearError,
   } = useWizard({
     onComplete: (areaId) => {
-      console.log('Entertainment area created:', areaId);
+      addNotification({ type: 'success', title: 'Entertainment Area Created', message: areaId });
     },
     onError: (error) => {
-      console.error('Wizard error:', error);
+      addNotification({ type: 'error', title: 'Entertainment Wizard', message: String(error) });
     },
   });
 

@@ -56,7 +56,18 @@ interface GroupsActions {
   initialize: () => Promise<void>;
 }
 
-export function useGroups(options: UseGroupsOptions = {}): GroupsState & GroupsActions {
+interface GroupsComputed {
+  roomGroupsCount: number;
+  entertainmentGroupsCount: number;
+  totalLightsInGroups: number;
+  activeGroups: LightGroup[];
+  availableRooms: string[];
+  ungroupedLights: Light[];
+}
+
+export function useGroups(
+  options: UseGroupsOptions = {}
+): GroupsState & GroupsActions & GroupsComputed {
   const {
     autoRefresh = true,
     refreshInterval = 10000,

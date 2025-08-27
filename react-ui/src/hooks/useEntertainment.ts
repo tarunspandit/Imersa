@@ -48,7 +48,14 @@ interface EntertainmentActions {
   initialize: () => Promise<void>;
 }
 
-export function useEntertainment(options: UseEntertainmentOptions = {}): EntertainmentState & EntertainmentActions {
+interface EntertainmentComputed {
+  activeStreamingAreas: EntertainmentArea[];
+  totalLightsInEntertainment: number;
+}
+
+export function useEntertainment(
+  options: UseEntertainmentOptions = {}
+): EntertainmentState & EntertainmentActions & EntertainmentComputed {
   const {
     autoRefresh = true,
     refreshInterval = 5000,

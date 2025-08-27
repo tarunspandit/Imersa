@@ -11,8 +11,8 @@ interface SceneRowProps {
   onRename: (sceneId: string, newName: string) => Promise<void>;
   onDelete: (sceneId: string) => Promise<void>;
   onRecall: (groupId: string, sceneId: string) => Promise<void>;
-  onStoreLightState: (sceneId: string) => Promise<void>;
-  onPreview: (sceneId: string) => Promise<void>;
+  onStoreLightState?: (sceneId: string) => Promise<void>;
+  onPreview?: (sceneId: string) => Promise<void>;
   onToggleFavorite?: (sceneId: string) => void;
 }
 
@@ -77,7 +77,7 @@ export const SceneRow: React.FC<SceneRowProps> = ({
   const handleStoreLightState = useCallback(async () => {
     setIsActionLoading('store');
     try {
-      await onStoreLightState(scene.id);
+      await onStoreLightState?.(scene.id);
     } finally {
       setIsActionLoading(null);
     }
@@ -86,7 +86,7 @@ export const SceneRow: React.FC<SceneRowProps> = ({
   const handlePreview = useCallback(async () => {
     setIsActionLoading('preview');
     try {
-      await onPreview(scene.id);
+      await onPreview?.(scene.id);
     } finally {
       setIsActionLoading(null);
     }
@@ -217,36 +217,40 @@ export const SceneRow: React.FC<SceneRowProps> = ({
       <td className="px-4 py-3">
         <div className="flex items-center gap-1">
           {/* Preview button */}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handlePreview}
-            disabled={!!isActionLoading}
-            className="h-8 w-8 p-0"
-            title="Preview scene"
-          >
-            {isActionLoading === 'preview' ? (
-              <div className="h-3 w-3 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" />
-            ) : (
-              <Eye className="h-3 w-3" />
-            )}
-          </Button>
+          {onPreview && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handlePreview}
+              disabled={!!isActionLoading}
+              className="h-8 w-8 p-0"
+              title="Preview scene"
+            >
+              {isActionLoading === 'preview' ? (
+                <div className="h-3 w-3 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" />
+              ) : (
+                <Eye className="h-3 w-3" />
+              )}
+            </Button>
+          )}
 
           {/* Store current state */}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleStoreLightState}
-            disabled={!!isActionLoading}
-            className="h-8 w-8 p-0"
-            title="Store current light state"
-          >
-            {isActionLoading === 'store' ? (
-              <div className="h-3 w-3 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" />
-            ) : (
-              <Palette className="h-3 w-3" />
-            )}
-          </Button>
+          {onStoreLightState && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleStoreLightState}
+              disabled={!!isActionLoading}
+              className="h-8 w-8 p-0"
+              title="Store current light state"
+            >
+              {isActionLoading === 'store' ? (
+                <div className="h-3 w-3 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" />
+              ) : (
+                <Palette className="h-3 w-3" />
+              )}
+            </Button>
+          )}
 
           {/* Recall scene button - only show if group is available */}
           {associatedGroup && (

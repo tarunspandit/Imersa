@@ -19,6 +19,7 @@ import {
   X
 } from 'lucide-react';
 import { Button, Card, Input } from '@/components/ui';
+import { useAppStore } from '@/stores';
 import { SensorCard, SensorChart, SensorConfig } from '@/components/sensors';
 import { useSensors } from '@/hooks/useSensors';
 import type { Sensor, SensorAlert, SensorHistoryQuery } from '@/types/sensors';
@@ -29,6 +30,7 @@ type FilterType = 'all' | 'online' | 'offline' | 'error' | 'low_battery';
 type SensorType = 'all' | 'motion' | 'daylight' | 'temperature' | 'switch' | 'generic' | 'humidity' | 'pressure';
 
 const SensorsPage: React.FC = () => {
+  const { addNotification } = useAppStore();
   const {
     sensors,
     alerts,
@@ -123,7 +125,8 @@ const SensorsPage: React.FC = () => {
       const data = await getSensorHistory(query);
       setChartData(data);
     } catch (err) {
-      console.error('Failed to fetch sensor history:', err);
+      const message = err instanceof Error ? err.message : 'Failed to fetch sensor history';
+      addNotification({ type: 'error', title: 'Sensor History', message });
     }
   };
 
@@ -335,7 +338,7 @@ const SensorsPage: React.FC = () => {
               size="sm"
               onClick={() => setViewMode('grid')}
             >
-              <Grid3x3 className="h-4 w-4" />
+              <Grid className="h-4 w-4" />
             </Button>
             <Button
               variant={viewMode === 'list' ? 'default' : 'ghost'}

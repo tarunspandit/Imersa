@@ -12,9 +12,10 @@ interface CreateSceneModalProps {
   isCreating: boolean;
 }
 
-const SCENE_CATEGORIES: Scene['category'][] = ['Evening', 'Party', 'Work', 'Relax', 'Custom'];
+const SCENE_CATEGORIES = ['Evening', 'Party', 'Work', 'Relax', 'Custom'] as const;
+type SceneCategory = typeof SCENE_CATEGORIES[number];
 
-const CATEGORY_ICONS = {
+const CATEGORY_ICONS: Record<SceneCategory, string> = {
   Evening: '🌙',
   Party: '🎉',
   Work: '💼',
@@ -22,7 +23,7 @@ const CATEGORY_ICONS = {
   Custom: '⚙️',
 };
 
-const CATEGORY_DESCRIPTIONS = {
+const CATEGORY_DESCRIPTIONS: Record<SceneCategory, string> = {
   Evening: 'Warm, cozy lighting for evening relaxation',
   Party: 'Vibrant, dynamic lighting for celebrations',
   Work: 'Bright, focused lighting for productivity',
@@ -187,7 +188,7 @@ export const CreateSceneModal: React.FC<CreateSceneModalProps> = ({
           </div>
           {formData.category && (
             <p className="mt-2 text-sm text-gray-600">
-              {CATEGORY_DESCRIPTIONS[formData.category || 'Custom']}
+              {CATEGORY_DESCRIPTIONS[(formData.category || 'Custom') as keyof typeof CATEGORY_DESCRIPTIONS]}
             </p>
           )}
         </div>

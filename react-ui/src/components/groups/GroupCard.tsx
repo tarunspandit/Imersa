@@ -19,14 +19,14 @@ import { cn } from '@/utils';
 interface GroupCardProps {
   group: LightGroup;
   availableLights?: Light[];
-  onToggle: (groupId: string) => Promise<void>;
-  onUpdateBrightness: (groupId: string, brightness: number) => Promise<void>;
-  onUpdateColor: (groupId: string, color: { r: number; g: number; b: number }) => Promise<void>;
-  onApplyAction: (groupId: string, action: GroupAction) => Promise<void>;
+  onToggle: (groupId: string) => Promise<unknown>;
+  onUpdateBrightness: (groupId: string, brightness: number) => Promise<unknown>;
+  onUpdateColor: (groupId: string, color: { r: number; g: number; b: number }) => Promise<unknown>;
+  onApplyAction: (groupId: string, action: GroupAction) => Promise<unknown>;
   onEdit: (group: LightGroup) => void;
-  onDelete: (groupId: string) => Promise<void>;
-  onAddLights: (groupId: string, lightIds: string[]) => Promise<void>;
-  onRemoveLights: (groupId: string, lightIds: string[]) => Promise<void>;
+  onDelete: (groupId: string) => Promise<unknown>;
+  onAddLights: (groupId: string, lightIds: string[]) => Promise<unknown>;
+  onRemoveLights: (groupId: string, lightIds: string[]) => Promise<unknown>;
   isProcessing?: boolean;
   className?: string;
 }

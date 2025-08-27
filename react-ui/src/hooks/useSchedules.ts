@@ -8,6 +8,7 @@ import {
   ScheduleConflict
 } from '@/types';
 import { schedulesApi } from '@/services/schedulesApi';
+import { useAppStore } from '@/stores';
 
 interface UseSchedulesState {
   schedules: Record<string, Schedule>;
@@ -37,6 +38,7 @@ interface UseSchedulesActions {
 export interface UseSchedulesReturn extends UseSchedulesState, UseSchedulesActions {}
 
 export const useSchedules = (): UseSchedulesReturn => {
+  const { addNotification } = useAppStore();
   const [state, setState] = useState<UseSchedulesState>({
     schedules: {},
     loading: true,
@@ -79,12 +81,14 @@ export const useSchedules = (): UseSchedulesReturn => {
           schedules: response.data!,
           loading: false
         }));
+        addNotification({ type: 'success', title: 'Schedules Refreshed', message: `${Object.keys(response.data!).length} schedules` });
       } else {
         setState(prev => ({
           ...prev,
           error: response.error || 'Failed to fetch schedules',
           loading: false
         }));
+        addNotification({ type: 'error', title: 'Schedules', message: response.error || 'Failed to fetch schedules' });
       }
     } catch (error) {
       setState(prev => ({
@@ -109,12 +113,14 @@ export const useSchedules = (): UseSchedulesReturn => {
         }));
         await fetchStats(); // Update stats after creation
         await detectConflicts(); // Check for conflicts
+        addNotification({ type: 'success', title: 'Schedule Created', message: response.data!.name || response.data!.id });
         return true;
       } else {
         setState(prev => ({
           ...prev,
           error: response.error || 'Failed to create schedule'
         }));
+        addNotification({ type: 'error', title: 'Create Schedule', message: response.error || '' });
         return false;
       }
     } catch (error) {
@@ -139,12 +145,14 @@ export const useSchedules = (): UseSchedulesReturn => {
           }
         }));
         await detectConflicts(); // Check for conflicts after update
+        addNotification({ type: 'success', title: 'Schedule Updated', message: id });
         return true;
       } else {
         setState(prev => ({
           ...prev,
           error: response.error || 'Failed to update schedule'
         }));
+        addNotification({ type: 'error', title: 'Update Schedule', message: response.error || '' });
         return false;
       }
     } catch (error) {
@@ -170,12 +178,14 @@ export const useSchedules = (): UseSchedulesReturn => {
           };
         });
         await fetchStats(); // Update stats after deletion
+        addNotification({ type: 'success', title: 'Schedule Deleted', message: id });
         return true;
       } else {
         setState(prev => ({
           ...prev,
           error: response.error || 'Failed to delete schedule'
         }));
+        addNotification({ type: 'error', title: 'Delete Schedule', message: response.error || '' });
         return false;
       }
     } catch (error) {
@@ -309,12 +319,14 @@ export const useSchedules = (): UseSchedulesReturn => {
           };
         });
         await fetchStats();
+        addNotification({ type: 'success', title: 'Schedules Deleted', message: `${ids.length} schedules` });
         return true;
       } else {
         setState(prev => ({
           ...prev,
           error: response.error || 'Failed to bulk delete schedules'
         }));
+        addNotification({ type: 'error', title: 'Bulk Delete Schedules', message: response.error || '' });
         return false;
       }
     } catch (error) {

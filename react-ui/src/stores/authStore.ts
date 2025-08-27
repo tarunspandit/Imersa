@@ -31,7 +31,7 @@ const useAuthStore = create<AuthState>()(
         try {
           // Validate against original DIYHue credentials
           if (email === 'admin@diyhue.org' && password === 'changeme') {
-            const user = {
+            const user: User = {
               id: '1',
               name: 'DIYHue Admin',
               email: 'admin@diyhue.org',

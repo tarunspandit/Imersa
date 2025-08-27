@@ -7,6 +7,7 @@ import {
   RuleTemplate
 } from '@/types';
 import { rulesApi } from '@/services/rulesApi';
+import { useAppStore } from '@/stores';
 
 interface UseRulesState {
   rules: Record<string, AutomationRule>;
@@ -42,6 +43,7 @@ interface UseRulesActions {
 export interface UseRulesReturn extends UseRulesState, UseRulesActions {}
 
 export const useRules = (): UseRulesReturn => {
+  const { addNotification } = useAppStore();
   const [state, setState] = useState<UseRulesState>({
     rules: {},
     loading: true,
@@ -90,6 +92,7 @@ export const useRules = (): UseRulesReturn => {
           error: response.error || 'Failed to fetch rules',
           loading: false
         }));
+        addNotification({ type: 'error', title: 'Rules', message: response.error || 'Failed to fetch rules' });
       }
     } catch (error) {
       setState(prev => ({
@@ -123,12 +126,14 @@ export const useRules = (): UseRulesReturn => {
           }
         }));
         await fetchStats(); // Update stats after creation
+        addNotification({ type: 'success', title: 'Rule Created', message: response.data!.name || response.data!.id });
         return true;
       } else {
         setState(prev => ({
           ...prev,
           error: response.error || 'Failed to create rule'
         }));
+        addNotification({ type: 'error', title: 'Create Rule', message: response.error || '' });
         return false;
       }
     } catch (error) {
@@ -152,12 +157,14 @@ export const useRules = (): UseRulesReturn => {
             [id]: response.data!
           }
         }));
+        addNotification({ type: 'success', title: 'Rule Updated', message: id });
         return true;
       } else {
         setState(prev => ({
           ...prev,
           error: response.error || 'Failed to update rule'
         }));
+        addNotification({ type: 'error', title: 'Update Rule', message: response.error || '' });
         return false;
       }
     } catch (error) {
@@ -183,12 +190,14 @@ export const useRules = (): UseRulesReturn => {
           };
         });
         await fetchStats(); // Update stats after deletion
+        addNotification({ type: 'success', title: 'Rule Deleted', message: id });
         return true;
       } else {
         setState(prev => ({
           ...prev,
           error: response.error || 'Failed to delete rule'
         }));
+        addNotification({ type: 'error', title: 'Delete Rule', message: response.error || '' });
         return false;
       }
     } catch (error) {
@@ -213,12 +222,14 @@ export const useRules = (): UseRulesReturn => {
       const response = await rulesApi.triggerRule(id);
       
       if (response.success) {
+        addNotification({ type: 'success', title: 'Rule Triggered', message: id });
         return true;
       } else {
         setState(prev => ({
           ...prev,
           error: response.error || 'Failed to trigger rule'
         }));
+        addNotification({ type: 'error', title: 'Trigger Rule', message: response.error || '' });
         return false;
       }
     } catch (error) {
@@ -304,12 +315,14 @@ export const useRules = (): UseRulesReturn => {
             rules: updatedRules
           };
         });
+        addNotification({ type: 'success', title: 'Rules Updated', message: `${response.data!.length} rules` });
         return true;
       } else {
         setState(prev => ({
           ...prev,
           error: response.error || 'Failed to bulk update rules'
         }));
+        addNotification({ type: 'error', title: 'Bulk Update Rules', message: response.error || '' });
         return false;
       }
     } catch (error) {
@@ -335,12 +348,14 @@ export const useRules = (): UseRulesReturn => {
           };
         });
         await fetchStats();
+        addNotification({ type: 'success', title: 'Rules Deleted', message: `${ids.length} rules` });
         return true;
       } else {
         setState(prev => ({
           ...prev,
           error: response.error || 'Failed to bulk delete rules'
         }));
+        addNotification({ type: 'error', title: 'Bulk Delete Rules', message: response.error || '' });
         return false;
       }
     } catch (error) {

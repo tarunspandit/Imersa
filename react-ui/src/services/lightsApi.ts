@@ -127,6 +127,40 @@ class LightsApiService {
     return response.json();
   }
 
+  // Discovery and manual add
+  async scanForLights(): Promise<any> {
+    const response = await fetch(`${this.baseUrl}/lights`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to start light discovery: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  async manualAddLight(ip: string, protocol: string, config: any): Promise<any> {
+    const payload = { ip, protocol, config };
+    const response = await fetch(`${this.baseUrl}/lights`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to add light manually: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  async fetchNewLights(): Promise<any> {
+    const response = await fetch(`${this.baseUrl}/lights/new`);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch new lights: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
   // Bulk operations
   async allLightsOn(): Promise<any> {
     return this.bulkAction({ on: true });

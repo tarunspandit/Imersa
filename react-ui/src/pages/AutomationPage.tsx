@@ -505,7 +505,7 @@ const AutomationPage: React.FC = () => {
         }}
         onSubmit={handleCreateRule}
         templates={templates}
-        availableAddresses={availableAddresses}
+        availableAddresses={availableAddresses ?? undefined}
         editRule={editRule}
       />
     </div>

@@ -12,6 +12,7 @@ import Gradients from './pages/Gradients';
 import Entertainment from './pages/Entertainment';
 import EntertainmentWizard from './pages/EntertainmentWizard';
 import WLED from './pages/WLED';
+import Yeelight from './pages/Yeelight';
 import Scheduler from './pages/Scheduler';
 import AutomationPage from './pages/AutomationPage';
 import Analytics from './pages/Analytics';
@@ -80,6 +81,7 @@ function App() {
             <Route path="entertainment" element={<Entertainment />} />
             <Route path="entertainment/wizard" element={<EntertainmentWizard />} />
             <Route path="wled" element={<WLED />} />
+            <Route path="yeelight" element={<Yeelight />} />
             <Route path="scheduler" element={<Scheduler />} />
             <Route path="automation" element={<AutomationPage />} />
             <Route path="sensors" element={<SensorsPage />} />

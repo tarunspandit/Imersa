@@ -68,20 +68,8 @@ const Scenes: React.FC = () => {
       const query = searchQuery.toLowerCase();
       filtered = filtered.filter(scene => 
         scene.name.toLowerCase().includes(query) ||
-        scene.id.toLowerCase().includes(query) ||
-        scene.category?.toLowerCase().includes(query)
+        scene.id.toLowerCase().includes(query)
       );
-    }
-
-    // Apply category/status filter
-    if (selectedFilter !== 'all') {
-      if (selectedFilter === 'active') {
-        filtered = filtered.filter(scene => scene.isActive);
-      } else if (selectedFilter === 'favorites') {
-        filtered = filtered.filter(scene => scene.isFavorite);
-      } else {
-        filtered = getScenesByCategory(selectedFilter);
-      }
     }
 
     // Apply group filter
@@ -108,24 +96,8 @@ const Scenes: React.FC = () => {
     await updateScene(sceneId, { name: newName });
   }, [updateScene]);
 
-  // Scene preview handler
-  const handlePreviewScene = useCallback(async (sceneId: string) => {
-    if (scenePreviews[sceneId] || previewLoading.has(sceneId)) return;
-
-    setPreviewLoading(prev => new Set([...prev, sceneId]));
-    try {
-      const preview = await generatePreview(sceneId);
-      if (preview) {
-        setScenePreviews(prev => ({ ...prev, [sceneId]: preview }));
-      }
-    } finally {
-      setPreviewLoading(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(sceneId);
-        return newSet;
-      });
-    }
-  }, [generatePreview, scenePreviews, previewLoading]);
+  // Preview not part of Hue v1 UI; keep as no-op
+  const handlePreviewScene = useCallback(async (_sceneId: string) => { return; }, []);
 
   // Bulk actions handler
   const handleBulkAction = useCallback(async (action: 'delete' | 'activate' | 'favorite' | 'unfavorite') => {
@@ -208,54 +180,7 @@ const Scenes: React.FC = () => {
         </div>
       )}
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-blue-500" />
-              <span className="text-sm font-medium">Total</span>
-            </div>
-            <p className="text-2xl font-bold">{stats.total}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-green-500" />
-              <span className="text-sm font-medium">Active</span>
-            </div>
-            <p className="text-2xl font-bold">{stats.active}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" />
-              <span className="text-sm font-medium">Favorites</span>
-            </div>
-            <p className="text-2xl font-bold">{stats.favorites}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-purple-500" />
-              <span className="text-sm font-medium">Evening</span>
-            </div>
-            <p className="text-2xl font-bold">{stats.byCategory.Evening}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-pink-500" />
-              <span className="text-sm font-medium">Party</span>
-            </div>
-            <p className="text-2xl font-bold">{stats.byCategory.Party}</p>
-          </CardContent>
-        </Card>
-      </div>
+      {/* Minimal Hue parity: omit extra stats/cards */}
 
       {/* Controls */}
       <div className="flex flex-col sm:flex-row gap-4">
@@ -272,24 +197,8 @@ const Scenes: React.FC = () => {
           </div>
         </div>
 
-        {/* Filters */}
+        {/* Group filter only */}
         <div className="flex items-center gap-2">
-          <Filter className="w-4 h-4 text-gray-500" />
-          <select
-            value={selectedFilter}
-            onChange={(e) => setSelectedFilter(e.target.value as FilterType)}
-            className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-          >
-            <option value="all">All Scenes</option>
-            <option value="active">Active</option>
-            <option value="favorites">Favorites</option>
-            <option value="Evening">Evening</option>
-            <option value="Party">Party</option>
-            <option value="Work">Work</option>
-            <option value="Relax">Relax</option>
-            <option value="Custom">Custom</option>
-          </select>
-
           <select
             value={selectedGroupFilter}
             onChange={(e) => setSelectedGroupFilter(e.target.value)}
@@ -302,61 +211,10 @@ const Scenes: React.FC = () => {
               </option>
             ))}
           </select>
-
-          {/* View Mode Toggle */}
-          <div className="flex border border-gray-300 rounded-md">
-            <Button
-              variant={viewMode === 'table' ? 'default' : 'ghost'}
-              size="sm"
-              onClick={() => setViewMode('table')}
-              className="rounded-r-none"
-            >
-              <List className="w-4 h-4" />
-            </Button>
-            <Button
-              variant={viewMode === 'grid' ? 'default' : 'ghost'}
-              size="sm"
-              onClick={() => setViewMode('grid')}
-              className="rounded-l-none"
-            >
-              <Grid className="w-4 h-4" />
-            </Button>
-          </div>
         </div>
       </div>
 
-      {/* Bulk Actions */}
-      {selectedScenes.length > 0 && (
-        <div className="flex items-center justify-between p-4 bg-blue-50 border border-blue-200 rounded-lg">
-          <div className="flex items-center gap-3">
-            <span className="text-sm font-medium text-blue-900">
-              {selectedScenes.length} scene{selectedScenes.length === 1 ? '' : 's'} selected
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => handleBulkAction('activate')}>
-              <Play className="w-4 h-4 mr-2" />
-              Activate
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => handleBulkAction('favorite')}>
-              <Star className="w-4 h-4 mr-2" />
-              Favorite
-            </Button>
-            <Button 
-              variant="outline" 
-              size="sm" 
-              onClick={() => handleBulkAction('delete')}
-              className="text-red-600 hover:text-red-700 hover:bg-red-50"
-            >
-              <Trash2 className="w-4 h-4 mr-2" />
-              Delete
-            </Button>
-            <Button variant="ghost" size="sm" onClick={clearSelection}>
-              Cancel
-            </Button>
-          </div>
-        </div>
-      )}
+      {/* Bulk actions omitted for Hue parity */}
 
       {/* Scenes Table */}
       <Card>
@@ -432,13 +290,11 @@ const Scenes: React.FC = () => {
                       key={scene.id}
                       scene={scene}
                       groups={groups}
-                      isSelected={selectedScenes.includes(scene.id)}
-                      onSelect={toggleSceneSelection}
+                      isSelected={false}
+                      onSelect={() => {}}
                       onRename={handleRenameScene}
                       onDelete={deleteScene}
                       onRecall={recallScene}
-                      onStoreLightState={storeLightState}
-                      onPreview={handlePreviewScene}
                     />
                   ))}
                 </tbody>

@@ -8,12 +8,16 @@ import {
   CardTitle, 
   Button, 
   Modal,
+  ModalContent,
+  ModalHeader,
+  ModalTitle,
   Input
 } from '@/components/ui';
 import { AreaRow } from '@/components/entertainment/AreaRow';
 import { PositionEditor } from '@/components/entertainment/PositionEditor';
 import { useEntertainment } from '@/hooks/useEntertainment';
 import { useGroups } from '@/hooks/useGroups';
+import type { Light } from '@/types';
 import { EntertainmentArea, CreateAreaRequest } from '@/types';
 import { cn } from '@/utils';
 
@@ -256,12 +260,12 @@ const Entertainment: React.FC = () => {
       )}
 
       {/* Create Area Modal */}
-      <Modal
-        isOpen={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
-        title="Create Entertainment Area"
-      >
-        <div className="space-y-4">
+      <Modal open={showCreateModal} onOpenChange={setShowCreateModal}>
+        <ModalContent>
+          <ModalHeader>
+            <ModalTitle>Create Entertainment Area</ModalTitle>
+          </ModalHeader>
+          <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Area Name
@@ -297,7 +301,7 @@ const Entertainment: React.FC = () => {
               Select Lights ({createForm.lights.length} selected)
             </label>
             <div className="max-h-48 overflow-y-auto border border-gray-200 rounded p-2 space-y-1">
-              {ungroupedLights.map((light) => (
+              {ungroupedLights.map((light: Light) => (
                 <label key={light.id} className="flex items-center space-x-2 p-2 hover:bg-gray-50 rounded">
                   <input
                     type="checkbox"
@@ -349,7 +353,8 @@ const Entertainment: React.FC = () => {
               Create Area
             </Button>
           </div>
-        </div>
+          </div>
+        </ModalContent>
       </Modal>
     </div>
   );

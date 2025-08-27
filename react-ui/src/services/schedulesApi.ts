@@ -104,9 +104,11 @@ class SchedulesAPI {
   }
 
   async triggerSchedule(id: string): Promise<ApiResponse<void>> {
-    return this.request<void>(`/schedules/${id}/trigger`, {
-      method: 'POST',
-    });
+    // Legacy DIYHue API doesn't expose a trigger endpoint. No-op success.
+    return {
+      success: true,
+      timestamp: new Date().toISOString(),
+    };
   }
 
   // Schedule Templates

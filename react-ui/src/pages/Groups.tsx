@@ -21,6 +21,9 @@ import {
   Button, 
   Input,
   Modal,
+  ModalContent,
+  ModalHeader,
+  ModalTitle,
   Switch
 } from '@/components/ui';
 import { GroupCard } from '@/components/groups/GroupCard';
@@ -341,20 +344,12 @@ const Groups: React.FC = () => {
           <div className="flex items-center justify-between mt-4">
             <div className="flex items-center space-x-4">
               <label className="flex items-center space-x-2 text-sm">
-                <Switch
-                  checked={groupByRoom}
-                  onChange={setGroupByRoom}
-                  size="sm"
-                />
+                <Switch checked={groupByRoom} onCheckedChange={setGroupByRoom} />
                 <span>Group by Room</span>
               </label>
 
               <label className="flex items-center space-x-2 text-sm">
-                <Switch
-                  checked={showBulkActions}
-                  onChange={setShowBulkActions}
-                  size="sm"
-                />
+                <Switch checked={showBulkActions} onCheckedChange={setShowBulkActions} />
                 <span>Bulk Actions</span>
               </label>
             </div>
@@ -514,12 +509,12 @@ const Groups: React.FC = () => {
       )}
 
       {/* Create Group Modal */}
-      <Modal
-        isOpen={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
-        title="Create Light Group"
-      >
-        <div className="space-y-4">
+      <Modal open={showCreateModal} onOpenChange={setShowCreateModal}>
+        <ModalContent>
+          <ModalHeader>
+            <ModalTitle>Create Light Group</ModalTitle>
+          </ModalHeader>
+          <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Group Name
@@ -608,10 +603,7 @@ const Groups: React.FC = () => {
           </div>
 
           <div className="flex justify-end space-x-3 pt-4">
-            <Button
-              variant="outline"
-              onClick={() => setShowCreateModal(false)}
-            >
+            <Button variant="outline" onClick={() => setShowCreateModal(false)}>
               Cancel
             </Button>
             <Button
@@ -624,7 +616,8 @@ const Groups: React.FC = () => {
               Create Group
             </Button>
           </div>
-        </div>
+          </div>
+        </ModalContent>
       </Modal>
     </div>
   );

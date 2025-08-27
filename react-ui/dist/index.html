@@ -9,11 +9,31 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
-    <script type="module" crossorigin src="/assets/index-e92c527c.js"></script>
-    <link rel="stylesheet" href="/assets/index-b2c215d1.css">
+    <script type="module" crossorigin src="/assets/index-ebfdfc09.js"></script>
+    <link rel="stylesheet" href="/assets/index-70973661.css">
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      (function() {
+        try {
+          var map = {
+            '#lights': '/lights',
+            '#groups': '/groups',
+            '#scenes': '/scenes',
+            '#sensors': '/sensors',
+            '#rules': '/automation',
+            '#schedules': '/scheduler',
+            '#entertainment': '/entertainment',
+            '#wled-settings': '/wled',
+            '#yeelight-settings': '/settings'
+          };
+          if (location.hash && map[location.hash]) {
+            history.replaceState(null, '', map[location.hash]);
+          }
+        } catch (e) { /* ignore */ }
+      })();
+    </script>
     
   </body>
 </html>
