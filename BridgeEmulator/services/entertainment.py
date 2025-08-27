@@ -13,16 +13,37 @@ from collections import deque
 logging = logManager.logger.get_logger(__name__)
 bridgeConfig = configManager.bridgeConfig.yaml_config
 
-cieTolerance = 0.008  # color delta tolerance (reduced for better accuracy)
-briTolerange = 6     # brightness delta tolerance (reduced for smoother transitions)
+# Adaptive tolerances based on system resources
+cieTolerance, briTolerange = get_tolerances()
+logging.debug(f"Using tolerances - CIE: {cieTolerance}, Brightness: {briTolerange}")
 lastAppliedFrame = {}
 YeelightConnections = {}
 _music_server = None
 _yeelight_last_send = {}
 udp_socket_pool = {}  # Socket pool to prevent creating 600+ sockets/second
 
-# Performance optimization - Thread pool for parallel processing
-executor = ThreadPoolExecutor(max_workers=4)
+# Performance optimization - Use system resource detection
+try:
+    from functions.system_resources import get_worker_count, get_buffer_size, get_tolerances
+    _use_adaptive = True
+except ImportError:
+    # Fallback if system_resources not available
+    def get_worker_count():
+        import os
+        cpu_count = os.cpu_count() or 1
+        return min(4, max(1, cpu_count // 2))
+    
+    def get_buffer_size():
+        return 32768
+    
+    def get_tolerances():
+        return (0.010, 8)
+    
+    _use_adaptive = False
+
+_worker_count = get_worker_count()
+executor = ThreadPoolExecutor(max_workers=_worker_count)
+logging.info(f"Entertainment service using {_worker_count} worker threads (adaptive: {_use_adaptive})")
 
 # Models that support gradient segments
 GRADIENT_MODELS = {"LCX001", "LCX002", "LCX003", "915005987201", "LCX004", "LCX006"}
@@ -515,7 +536,8 @@ def entertainmentService(group, user):
                                 udpmsg += bytes([light_idx]) + bytes([rgb[0]]) + bytes([rgb[1]]) + bytes([rgb[2]])
                             if ip not in udp_socket_pool:
                                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                                sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
+                                buffer_size = get_buffer_size()
+                                sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, buffer_size)
                                 sock.setblocking(False)
                                 udp_socket_pool[ip] = sock
                             try:
@@ -531,7 +553,8 @@ def entertainmentService(group, user):
                             udpmsg += bytes([0]) + bytes([c[0]]) + bytes([c[1]]) + bytes([c[2]]) + bytes([c[3]])
                             if ip not in udp_socket_pool:
                                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                                sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
+                                buffer_size = get_buffer_size()
+                                sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, buffer_size)
                                 sock.setblocking(False)
                                 udp_socket_pool[ip] = sock
                             try:
@@ -641,7 +664,8 @@ def entertainmentService(group, user):
 
                             if ip not in udp_socket_pool:
                                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                                sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
+                                buffer_size = get_buffer_size()
+                                sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, buffer_size)
                                 sock.setblocking(False)
                                 udp_socket_pool[ip] = sock
                             try:

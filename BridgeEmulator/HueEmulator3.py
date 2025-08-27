@@ -125,7 +125,9 @@ def main():
     Thread(target=stateFetch.syncWithLights, args=[False]).start()
     Thread(target=ssdp.ssdpSearch, args=[HOST_IP, HOST_HTTP_PORT, mac]).start()
     Thread(target=ssdp.ssdpBroadcast, args=[HOST_IP, HOST_HTTP_PORT, mac]).start()
-    Thread(target=mdns.mdnsListener, args=[HOST_IP, HOST_HTTP_PORT, "BSB002", bridgeConfig["config"]["bridgeid"]]).start()
+    # Use async mDNS for better performance on low-resource systems
+    from services import mdns_async
+    Thread(target=mdns_async.mdnsListenerAsync, args=[HOST_IP, HOST_HTTP_PORT, "BSB002", bridgeConfig["config"]["bridgeid"]]).start()
     Thread(target=scheduler.runScheduler).start()
     Thread(target=eventStreamer.messageBroker).start()
     if not DISABLE_HTTPS:
