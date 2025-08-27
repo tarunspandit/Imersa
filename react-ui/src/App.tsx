@@ -10,13 +10,11 @@ import Dashboard from './pages/Dashboard';
 import LightsComplete from './pages/LightsComplete';
 import Groups from './pages/Groups';
 import Scenes from './pages/Scenes';
-import Gradients from './pages/Gradients';
 import Entertainment from './pages/Entertainment';
 import EntertainmentWizard from './pages/EntertainmentWizard';
 import WLED from './pages/WLED';
 import Scheduler from './pages/Scheduler';
 import AutomationPage from './pages/AutomationPage';
-import Analytics from './pages/Analytics';
 import DevicesComplete from './pages/DevicesComplete';
 import SettingsComplete from './pages/SettingsComplete';
 import BridgeManagement from './pages/BridgeManagement';
@@ -105,14 +103,12 @@ function App() {
               <Route path="lights" element={<LightsComplete />} />
               <Route path="groups" element={<Groups />} />
               <Route path="scenes" element={<Scenes />} />
-              <Route path="gradients" element={<Gradients />} />
               <Route path="entertainment" element={<Entertainment />} />
               <Route path="entertainment/wizard" element={<EntertainmentWizard />} />
               <Route path="wled" element={<WLED />} />
               <Route path="scheduler" element={<Scheduler />} />
               <Route path="automation" element={<AutomationPage />} />
               <Route path="sensors" element={<SensorsPage />} />
-              <Route path="analytics" element={<Analytics />} />
               <Route path="devices" element={<DevicesComplete />} />
               <Route path="settings" element={<SettingsComplete />} />
               <Route path="bridge" element={<BridgeManagement />} />
