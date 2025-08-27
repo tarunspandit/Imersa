@@ -1,21 +1,15 @@
 // Entertainment Areas Page - Complete streaming and position management
 import React, { useState, useEffect } from 'react';
-import { Plus, Activity, AlertCircle, RefreshCw, Users, Monitor } from 'lucide-react';
-import { 
-  Card, 
-  CardContent, 
-  CardHeader, 
-  CardTitle, 
-  Button, 
-  Modal,
-  Input
-} from '@/components/ui';
+import { Plus, Activity, AlertCircle, RefreshCw, Users, Monitor, Sparkles, Tv } from 'lucide-react';
+import { Modal } from '@/components/ui';
+import { PageWrapper } from '@/components/layout/PageWrapper';
 import { AreaRow } from '@/components/entertainment/AreaRow';
 import { PositionEditor } from '@/components/entertainment/PositionEditor';
 import { useEntertainment } from '@/hooks/useEntertainment';
 import { useGroups } from '@/hooks/useGroups';
 import { EntertainmentArea, CreateAreaRequest } from '@/types';
 import { cn } from '@/utils';
+import '@/styles/design-system.css';
 
 const Entertainment: React.FC = () => {
   const {
@@ -109,58 +103,44 @@ const Entertainment: React.FC = () => {
   ];
 
   return (
-    <div className="p-6 space-y-6 pb-20">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gradient flex items-center space-x-3">
-            <Activity className="h-8 w-8 text-emerald-600" />
-            <span>Entertainment</span>
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            Set up entertainment areas for immersive lighting experiences
-          </p>
-        </div>
-        
-        <div className="flex items-center space-x-3">
-          <Button
-            variant="outline"
+    <PageWrapper
+      icon={<Tv className="w-8 h-8 text-imersa-dark" />}
+      title="Entertainment"
+      subtitle="Set up entertainment areas for immersive lighting experiences"
+      actions={
+        <>
+          <button
             onClick={refreshAreas}
             disabled={isLoading}
-            className="flex items-center space-x-2"
+            className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-gray-400 transition-all"
           >
-            <RefreshCw className={cn('h-4 w-4', isLoading && 'animate-spin')} />
-            <span>Refresh</span>
-          </Button>
-          
-          <Button
+            <RefreshCw className={cn('w-5 h-5', isLoading && 'animate-spin')} />
+          </button>
+          <button
             onClick={() => window.location.href = '/entertainment/wizard'}
-            className="flex items-center space-x-2"
+            className="btn-glow flex items-center gap-2"
           >
-            <Plus className="h-4 w-4" />
-            <span>Create Area</span>
-          </Button>
-        </div>
-      </div>
+            <Plus className="w-4 h-4" />
+            Create Area
+          </button>
+        </>
+      }
+    >
 
       {/* Error Alert */}
       {error && (
-        <Card className="border-red-200 bg-red-50">
-          <CardContent className="p-4">
-            <div className="flex items-center space-x-2 text-red-800">
-              <AlertCircle className="h-5 w-5" />
-              <span>{error}</span>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={clearError}
-                className="ml-auto text-red-600 hover:text-red-700"
-              >
-                Dismiss
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+        <div className="glass-card p-4 border-red-500/20 bg-red-500/10">
+          <div className="flex items-center gap-3 text-red-400">
+            <AlertCircle className="w-5 h-5" />
+            <span>{error}</span>
+            <button
+              onClick={clearError}
+              className="ml-auto text-red-300 hover:text-white transition-colors"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Stats */}
@@ -168,62 +148,66 @@ const Entertainment: React.FC = () => {
         {stats.map((stat) => {
           const Icon = stat.icon;
           return (
-            <Card key={stat.label}>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">{stat.label}</p>
-                    <p className="text-2xl font-bold">{stat.value}</p>
-                  </div>
-                  <Icon className={cn('h-8 w-8', stat.color)} />
+            <div key={stat.label} className="glass-card p-6 holo-card">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-400">{stat.label}</p>
+                  <p className="text-3xl font-bold text-white">{stat.value}</p>
                 </div>
-              </CardContent>
-            </Card>
+                <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-purple-400 to-indigo-500 flex items-center justify-center">
+                  <Icon className="w-7 h-7 text-white" />
+                </div>
+              </div>
+            </div>
           );
         })}
       </div>
 
       {/* Entertainment Areas Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center space-x-2">
-            <Monitor className="h-5 w-5" />
-            <span>Entertainment Areas</span>
+      <div className="glass-card p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-xl font-semibold text-white flex items-center gap-2">
+            <Monitor className="w-5 h-5" />
+            Entertainment Areas
             {activeStreamingAreas.length > 0 && (
-              <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">
+              <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-emerald-500/20 text-emerald-400">
                 {activeStreamingAreas.length} streaming
               </span>
             )}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
+          </h3>
+        </div>
           {isLoading && areas.length === 0 ? (
             <div className="text-center py-8">
-              <div className="animate-spin h-8 w-8 border border-current border-t-transparent rounded-full mx-auto" />
-              <p className="text-muted-foreground mt-2">Loading entertainment areas...</p>
+              <div className="loading-pulse mx-auto">
+                <Tv className="w-8 h-8 text-imersa-dark" />
+              </div>
+              <p className="text-gray-400 mt-2">Loading entertainment areas...</p>
             </div>
           ) : areas.length === 0 ? (
             <div className="text-center py-8">
-              <Monitor className="h-12 w-12 text-gray-400 mx-auto mb-3" />
-              <p className="text-lg font-medium text-gray-900 mb-2">No entertainment areas found</p>
-              <p className="text-muted-foreground mb-4">
+              <Monitor className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+              <p className="text-lg font-medium text-white mb-2">No entertainment areas found</p>
+              <p className="text-gray-400 mb-4">
                 Create your first entertainment area to start streaming immersive lighting
               </p>
-              <Button onClick={() => window.location.href = '/entertainment/wizard'}>
-                <Plus className="h-4 w-4 mr-2" />
+              <button 
+                onClick={() => window.location.href = '/entertainment/wizard'}
+                className="btn-glow flex items-center gap-2 mx-auto"
+              >
+                <Plus className="w-4 h-4" />
                 Create Entertainment Area
-              </Button>
+              </button>
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
-                  <tr className="border-b border-gray-200">
-                    <th className="text-left py-3 px-6 font-medium text-gray-900">ID</th>
-                    <th className="text-left py-3 px-6 font-medium text-gray-900">Name</th>
-                    <th className="text-left py-3 px-6 font-medium text-gray-900">Lights</th>
-                    <th className="text-left py-3 px-6 font-medium text-gray-900">Status</th>
-                    <th className="text-left py-3 px-6 font-medium text-gray-900">Actions</th>
+                  <tr className="border-b border-white/10">
+                    <th className="text-left py-3 px-6 font-medium text-gray-400">ID</th>
+                    <th className="text-left py-3 px-6 font-medium text-gray-400">Name</th>
+                    <th className="text-left py-3 px-6 font-medium text-gray-400">Lights</th>
+                    <th className="text-left py-3 px-6 font-medium text-gray-400">Status</th>
+                    <th className="text-left py-3 px-6 font-medium text-gray-400">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -241,8 +225,7 @@ const Entertainment: React.FC = () => {
               </table>
             </div>
           )}
-        </CardContent>
-      </Card>
+      </div>
 
       {/* Position Editor */}
       {showPositionEditor && (
@@ -263,25 +246,25 @@ const Entertainment: React.FC = () => {
       >
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-gray-300 mb-1">
               Area Name
             </label>
-            <Input
+            <input
               value={createForm.name}
               onChange={(e) => setCreateForm(prev => ({ ...prev, name: e.target.value }))}
               placeholder="e.g., Living Room Entertainment"
-              className="w-full"
+              className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-500"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-gray-300 mb-1">
               Room Class
             </label>
             <select
               value={createForm.class}
               onChange={(e) => setCreateForm(prev => ({ ...prev, class: e.target.value }))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500"
             >
               <option value="Living room">Living Room</option>
               <option value="Bedroom">Bedroom</option>
@@ -333,25 +316,26 @@ const Entertainment: React.FC = () => {
           </div>
 
           <div className="flex justify-end space-x-3 pt-4">
-            <Button
-              variant="outline"
+            <button
               onClick={() => setShowCreateModal(false)}
+              className="px-4 py-2 rounded-xl bg-imersa-surface border border-gray-700 text-gray-300 hover:border-imersa-glow-primary transition-all"
             >
               Cancel
-            </Button>
-            <Button
+            </button>
+            <button
               onClick={handleCreateArea}
               disabled={!createForm.name || createForm.lights.length === 0 || isLoading}
+              className="btn-glow flex items-center gap-2"
             >
               {isLoading ? (
                 <div className="animate-spin h-4 w-4 border border-current border-t-transparent rounded-full mr-2" />
               ) : null}
               Create Area
-            </Button>
+            </button>
           </div>
         </div>
       </Modal>
-    </div>
+    </PageWrapper>
   );
 };
 

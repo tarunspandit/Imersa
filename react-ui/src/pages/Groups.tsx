@@ -11,7 +11,11 @@ import {
   Grid,
   List,
   Settings,
-  Activity
+  Activity,
+  Sparkles,
+  Layers,
+  Zap,
+  ChevronRight
 } from 'lucide-react';
 import { 
   Card, 
@@ -27,6 +31,7 @@ import { GroupCard } from '@/components/groups/GroupCard';
 import { useGroups } from '@/hooks/useGroups';
 import { GroupCreationRequest, BulkGroupOperation } from '@/types';
 import { cn } from '@/utils';
+import '@/styles/design-system.css';
 
 type ViewMode = 'grid' | 'list';
 type FilterMode = 'all' | 'room' | 'zone' | 'entertainment' | 'custom';
@@ -174,126 +179,134 @@ const Groups: React.FC = () => {
       label: 'Total Groups',
       value: groups.length,
       icon: Users,
-      color: 'text-blue-600',
+      gradient: 'var(--gradient-cool)',
     },
     {
       label: 'Room Groups',
       value: roomGroupsCount,
       icon: Home,
-      color: 'text-green-600',
+      gradient: 'var(--gradient-warm)',
     },
     {
       label: 'Entertainment',
       value: entertainmentGroupsCount,
       icon: Activity,
-      color: 'text-purple-600',
+      gradient: 'var(--gradient-aurora)',
     },
     {
       label: 'Active Groups',
       value: activeGroups.length,
-      icon: Settings,
-      color: 'text-orange-600',
+      icon: Zap,
+      gradient: 'var(--gradient-sunset)',
     },
   ];
 
   return (
-    <div className="p-6 space-y-6 pb-20">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gradient flex items-center space-x-3">
-            <Users className="h-8 w-8 text-blue-600" />
-            <span>Groups</span>
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            Create and manage light groups and rooms
-          </p>
-        </div>
-        
-        <div className="flex items-center space-x-3">
-          <Button
-            variant="outline"
-            onClick={refreshGroups}
-            disabled={isLoading}
-            className="flex items-center space-x-2"
-          >
-            <RefreshCw className={cn('h-4 w-4', isLoading && 'animate-spin')} />
-            <span>Refresh</span>
-          </Button>
-          
-          <Button
-            onClick={() => setShowCreateModal(true)}
-            className="flex items-center space-x-2"
-          >
-            <Plus className="h-4 w-4" />
-            <span>Create Group</span>
-          </Button>
-        </div>
+    <div className="min-h-screen bg-imersa-void relative overflow-hidden">
+      {/* Ambient Background */}
+      <div className="ambient-bg">
+        <div className="ambient-orb ambient-orb-1"></div>
+        <div className="ambient-orb ambient-orb-2"></div>
+        <div className="ambient-orb ambient-orb-3"></div>
       </div>
 
-      {/* Error Alert */}
-      {error && (
-        <Card className="border-red-200 bg-red-50">
-          <CardContent className="p-4">
-            <div className="flex items-center space-x-2 text-red-800">
-              <AlertCircle className="h-5 w-5" />
+      <div className="relative z-10 p-8 space-y-6">
+        {/* Header */}
+        <div className="glass-card p-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="nav-orb">
+                <Layers className="w-8 h-8 text-imersa-dark" />
+              </div>
+              <div>
+                <h1 className="text-3xl font-bold text-white">Groups Management</h1>
+                <p className="text-gray-400 mt-1">
+                  Create and manage light groups and rooms
+                </p>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-3">
+              <button
+                onClick={refreshGroups}
+                disabled={isLoading}
+                className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-gray-400 transition-all"
+              >
+                <RefreshCw className={cn('w-5 h-5', isLoading && 'animate-spin')} />
+              </button>
+              
+              <button
+                onClick={() => setShowCreateModal(true)}
+                className="btn-glow flex items-center gap-2"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Create Group</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Error Alert */}
+        {error && (
+          <div className="glass-card p-4 border-red-500/20 bg-red-500/10">
+            <div className="flex items-center gap-3 text-red-400">
+              <AlertCircle className="w-5 h-5" />
               <span>{error}</span>
-              <Button
-                variant="ghost"
-                size="sm"
+              <button
                 onClick={clearError}
-                className="ml-auto text-red-600 hover:text-red-700"
+                className="ml-auto text-red-300 hover:text-white transition-colors"
               >
                 Dismiss
-              </Button>
+              </button>
             </div>
-          </CardContent>
-        </Card>
-      )}
+          </div>
+        )}
 
-      {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        {stats.map((stat) => {
-          const Icon = stat.icon;
-          return (
-            <Card key={stat.label}>
-              <CardContent className="p-4">
+        {/* Stats */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          {stats.map((stat) => {
+            const Icon = stat.icon;
+            return (
+              <div key={stat.label} className="glass-card p-6 holo-card">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-muted-foreground">{stat.label}</p>
-                    <p className="text-2xl font-bold">{stat.value}</p>
+                    <p className="text-sm text-gray-400">{stat.label}</p>
+                    <p className="text-3xl font-bold text-white mt-1">{stat.value}</p>
                   </div>
-                  <Icon className={cn('h-8 w-8', stat.color)} />
+                  <div 
+                    className="w-14 h-14 rounded-xl flex items-center justify-center"
+                    style={{ background: stat.gradient }}
+                  >
+                    <Icon className="w-7 h-7 text-white" />
+                  </div>
                 </div>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
+              </div>
+            );
+          })}
+        </div>
 
-      {/* Controls */}
-      <Card>
-        <CardContent className="p-4">
-          <div className="flex items-center justify-between space-x-4">
+        {/* Controls */}
+        <div className="glass-card p-4">
+          <div className="flex items-center justify-between gap-4">
             {/* Search */}
             <div className="flex-1 max-w-md">
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                <Input
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
                   placeholder="Search groups..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10"
+                  className="w-full pl-10 pr-4 py-2 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-500"
                 />
               </div>
             </div>
 
             {/* Filters */}
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center gap-2">
               <select
                 value={filterMode}
                 onChange={(e) => setFilterMode(e.target.value as FilterMode)}
-                className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500"
               >
                 <option value="all">All Types</option>
                 <option value="room">Room Groups</option>
@@ -305,7 +318,7 @@ const Groups: React.FC = () => {
               <select
                 value={sortMode}
                 onChange={(e) => setSortMode(e.target.value as SortMode)}
-                className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500"
               >
                 <option value="name">Sort by Name</option>
                 <option value="type">Sort by Type</option>
@@ -315,32 +328,36 @@ const Groups: React.FC = () => {
             </div>
 
             {/* View Mode */}
-            <div className="flex items-center space-x-2">
-              <div className="flex items-center space-x-1 border border-gray-300 rounded">
-                <Button
-                  variant={viewMode === 'grid' ? 'default' : 'ghost'}
-                  size="sm"
-                  onClick={() => setViewMode('grid')}
-                  className="p-2"
-                >
-                  <Grid className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant={viewMode === 'list' ? 'default' : 'ghost'}
-                  size="sm"
-                  onClick={() => setViewMode('list')}
-                  className="p-2"
-                >
-                  <List className="h-4 w-4" />
-                </Button>
-              </div>
+            <div className="flex items-center gap-2">
+              <button
+                className={cn(
+                  "p-2 rounded-lg transition-all",
+                  viewMode === 'grid' 
+                    ? "bg-gradient-to-br from-yellow-400 to-orange-500 text-gray-900" 
+                    : "bg-white/10 hover:bg-white/20 text-gray-400"
+                )}
+                onClick={() => setViewMode('grid')}
+              >
+                <Grid className="w-4 h-4" />
+              </button>
+              <button
+                className={cn(
+                  "p-2 rounded-lg transition-all",
+                  viewMode === 'list' 
+                    ? "bg-gradient-to-br from-yellow-400 to-orange-500 text-gray-900" 
+                    : "bg-white/10 hover:bg-white/20 text-gray-400"
+                )}
+                onClick={() => setViewMode('list')}
+              >
+                <List className="w-4 h-4" />
+              </button>
             </div>
           </div>
 
           {/* Additional Options */}
           <div className="flex items-center justify-between mt-4">
-            <div className="flex items-center space-x-4">
-              <label className="flex items-center space-x-2 text-sm">
+            <div className="flex items-center gap-4">
+              <label className="flex items-center gap-2 text-sm text-gray-400">
                 <Switch
                   checked={groupByRoom}
                   onCheckedChange={setGroupByRoom}
@@ -348,7 +365,7 @@ const Groups: React.FC = () => {
                 <span>Group by Room</span>
               </label>
 
-              <label className="flex items-center space-x-2 text-sm">
+              <label className="flex items-center gap-2 text-sm text-gray-400">
                 <Switch
                   checked={showBulkActions}
                   onCheckedChange={setShowBulkActions}
@@ -358,83 +375,81 @@ const Groups: React.FC = () => {
             </div>
 
             {showBulkActions && selectedGroupIds.length > 0 && (
-              <div className="flex items-center space-x-2">
-                <span className="text-sm text-gray-600">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-400">
                   {selectedGroupIds.length} selected
                 </span>
-                <Button
-                  variant="outline"
-                  size="sm"
+                <button
                   onClick={() => handleBulkAction('on')}
+                  className="px-3 py-1 rounded-lg bg-green-500/20 text-green-400 hover:bg-green-500/30 transition-all"
                 >
                   Turn On
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
+                </button>
+                <button
                   onClick={() => handleBulkAction('off')}
+                  className="px-3 py-1 rounded-lg bg-gray-500/20 text-gray-400 hover:bg-gray-500/30 transition-all"
                 >
                   Turn Off
-                </Button>
-                <Button
-                  variant="destructive"
-                  size="sm"
+                </button>
+                <button
                   onClick={() => handleBulkAction('delete')}
+                  className="px-3 py-1 rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-all"
                 >
                   Delete
-                </Button>
+                </button>
               </div>
             )}
           </div>
-        </CardContent>
-      </Card>
+        </div>
 
-      {/* Groups Display */}
-      {isLoading && groups.length === 0 ? (
-        <Card>
-          <CardContent className="p-8">
+        {/* Groups Display */}
+        {isLoading && groups.length === 0 ? (
+          <div className="glass-card p-8">
             <div className="text-center">
-              <div className="animate-spin h-8 w-8 border border-current border-t-transparent rounded-full mx-auto" />
-              <p className="text-muted-foreground mt-2">Loading groups...</p>
+              <div className="loading-pulse mx-auto">
+                <Layers className="w-8 h-8 text-imersa-dark" />
+              </div>
+              <p className="text-gray-400 mt-2">Loading groups...</p>
             </div>
-          </CardContent>
-        </Card>
-      ) : filteredAndSortedGroups.length === 0 ? (
-        <Card>
-          <CardContent className="p-8">
+          </div>
+        ) : filteredAndSortedGroups.length === 0 ? (
+          <div className="glass-card p-8">
             <div className="text-center">
-              <Users className="h-12 w-12 text-gray-400 mx-auto mb-3" />
-              <p className="text-lg font-medium text-gray-900 mb-2">
+              <Users className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+              <p className="text-lg font-medium text-white mb-2">
                 {searchQuery || filterMode !== 'all' ? 'No matching groups' : 'No groups found'}
               </p>
-              <p className="text-muted-foreground mb-4">
+              <p className="text-gray-400 mb-4">
                 {searchQuery || filterMode !== 'all'
                   ? 'Try adjusting your search or filters'
                   : 'Create your first group to organize your lights'
                 }
               </p>
-              <Button onClick={() => setShowCreateModal(true)}>
-                <Plus className="h-4 w-4 mr-2" />
+              <button 
+                onClick={() => setShowCreateModal(true)}
+                className="btn-glow flex items-center gap-2 mx-auto"
+              >
+                <Plus className="w-4 h-4" />
                 Create Group
-              </Button>
+              </button>
             </div>
-          </CardContent>
-        </Card>
+          </div>
       ) : groupByRoom ? (
-        // Grouped by Room
-        <div className="space-y-6">
-          {Object.entries(groupsByRoom).map(([roomName, roomGroups]) => (
-            <Card key={roomName}>
-              <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
-                  <Home className="h-5 w-5" />
-                  <span>{roomName}</span>
-                  <span className="text-sm font-normal text-muted-foreground">
-                    ({roomGroups.length} groups)
-                  </span>
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
+          // Grouped by Room
+          <div className="space-y-6">
+            {Object.entries(groupsByRoom).map(([roomName, roomGroups]) => (
+              <div key={roomName} className="glass-card p-6">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-yellow-400 to-orange-500 flex items-center justify-center">
+                    <Home className="w-5 h-5 text-white" />
+                  </div>
+                  <h3 className="text-xl font-semibold text-white">
+                    {roomName}
+                    <span className="text-sm font-normal text-gray-400 ml-2">
+                      ({roomGroups.length} groups)
+                    </span>
+                  </h3>
+                </div>
                 <div className={cn(
                   'grid gap-4',
                   viewMode === 'grid' 
@@ -469,18 +484,17 @@ const Groups: React.FC = () => {
                     </div>
                   ))}
                 </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      ) : (
-        // All Groups
-        <div className={cn(
-          'grid gap-4',
-          viewMode === 'grid' 
-            ? 'grid-cols-1 lg:grid-cols-2 xl:grid-cols-3'
-            : 'grid-cols-1'
-        )}>
+              </div>
+            ))}
+          </div>
+          ) : (
+          // All Groups
+          <div className={cn(
+            'grid gap-4',
+            viewMode === 'grid' 
+              ? 'grid-cols-1 lg:grid-cols-2 xl:grid-cols-3'
+              : 'grid-cols-1'
+          )}>
           {filteredAndSortedGroups.map((group) => (
             <div key={group.id} className="relative">
               {showBulkActions && (
@@ -508,11 +522,11 @@ const Groups: React.FC = () => {
               />
             </div>
           ))}
-        </div>
-      )}
+          </div>
+        )}
 
-      {/* Create Group Modal */}
-      <Modal
+        {/* Create Group Modal */}
+        <Modal
         isOpen={showCreateModal}
         onClose={() => setShowCreateModal(false)}
         title="Create Light Group"
@@ -624,6 +638,7 @@ const Groups: React.FC = () => {
           </div>
         </div>
       </Modal>
+      </div>
     </div>
   );
 };

@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, Button } from '@/components/ui';
+import { PageWrapper } from '@/components/layout/PageWrapper';
+import '@/styles/design-system.css';
+import { cn } from '@/utils';
 import { useSchedules } from '@/hooks/useSchedules';
 import { Schedule, CreateScheduleRequest } from '@/types';
 import ScheduleRow from '@/components/schedules/ScheduleRow';
@@ -107,211 +109,207 @@ const Scheduler: React.FC = () => {
 
   if (loading && schedulesArray.length === 0) {
     return (
-      <div className="p-6 space-y-6 pb-20">
-        <div className="animate-pulse">
-          <div className="h-8 bg-gray-200 rounded w-1/4 mb-2"></div>
-          <div className="h-4 bg-gray-200 rounded w-1/2"></div>
+      <PageWrapper
+        icon={<Clock className="w-8 h-8 text-imersa-dark" />}
+        title="Scheduler"
+        subtitle="Loading schedules..."
+      >
+        <div className="glass-card p-8 text-center">
+          <div className="loading-pulse mx-auto">
+            <Clock className="w-8 h-8 text-imersa-dark" />
+          </div>
+          <p className="text-gray-400 mt-2">Loading schedules...</p>
         </div>
-      </div>
+      </PageWrapper>
     );
   }
 
   return (
-    <div className="p-6 space-y-6 pb-20">
-      {/* Header */}
-      <div className="flex justify-between items-start">
-        <div>
-          <h1 className="text-3xl font-bold text-gradient">Scheduler</h1>
-          <p className="text-muted-foreground mt-1">
-            Manage lighting schedules and automation timing
-          </p>
-        </div>
-        <Button onClick={() => setIsCreateModalOpen(true)} className="flex items-center gap-2">
-          <Plus className="h-4 w-4" />
+    <PageWrapper
+      icon={<Clock className="w-8 h-8 text-imersa-dark" />}
+      title="Scheduler"
+      subtitle="Manage lighting schedules and automation timing"
+      actions={
+        <button 
+          onClick={() => setIsCreateModalOpen(true)} 
+          className="btn-glow flex items-center gap-2"
+        >
+          <Plus className="w-4 h-4" />
           Create Schedule
-        </Button>
-      </div>
+        </button>
+      }
+    >
 
       {/* Error Display */}
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-md p-4">
-          <p className="text-red-600">{error}</p>
-          <Button 
-            variant="outline" 
-            size="sm" 
+        <div className="glass-card p-4 border-red-500/20 bg-red-500/10">
+          <p className="text-red-400">{error}</p>
+          <button 
             onClick={refresh}
-            className="mt-2"
+            className="mt-2 px-3 py-1 rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-all"
           >
             Retry
-          </Button>
+          </button>
         </div>
       )}
 
       {/* Stats Cards */}
       {stats && (
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Card>
-            <CardContent className="p-4 flex items-center gap-3">
-              <Calendar className="h-8 w-8 text-blue-600" />
-              <div>
-                <p className="text-sm text-gray-600">Total Schedules</p>
-                <p className="text-2xl font-bold">{stats.total}</p>
+          <div className="glass-card p-4 holo-card">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center">
+                <Calendar className="w-6 h-6 text-white" />
               </div>
-            </CardContent>
-          </Card>
+              <div>
+                <p className="text-sm text-gray-400">Total Schedules</p>
+                <p className="text-2xl font-bold text-white">{stats.total}</p>
+              </div>
+            </div>
+          </div>
           
-          <Card>
-            <CardContent className="p-4 flex items-center gap-3">
-              <Activity className="h-8 w-8 text-green-600" />
-              <div>
-                <p className="text-sm text-gray-600">Active</p>
-                <p className="text-2xl font-bold">{stats.active}</p>
+          <div className="glass-card p-4 holo-card">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-green-400 to-emerald-500 flex items-center justify-center">
+                <Activity className="w-6 h-6 text-white" />
               </div>
-            </CardContent>
-          </Card>
+              <div>
+                <p className="text-sm text-gray-400">Active</p>
+                <p className="text-2xl font-bold text-white">{stats.active}</p>
+              </div>
+            </div>
+          </div>
           
-          <Card>
-            <CardContent className="p-4 flex items-center gap-3">
-              <TrendingUp className="h-8 w-8 text-purple-600" />
-              <div>
-                <p className="text-sm text-gray-600">Completed</p>
-                <p className="text-2xl font-bold">{stats.completed}</p>
+          <div className="glass-card p-4 holo-card">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-purple-400 to-indigo-500 flex items-center justify-center">
+                <TrendingUp className="w-6 h-6 text-white" />
               </div>
-            </CardContent>
-          </Card>
+              <div>
+                <p className="text-sm text-gray-400">Completed</p>
+                <p className="text-2xl font-bold text-white">{stats.completed}</p>
+              </div>
+            </div>
+          </div>
           
-          <Card>
-            <CardContent className="p-4 flex items-center gap-3">
-              <AlertTriangle className="h-8 w-8 text-red-600" />
-              <div>
-                <p className="text-sm text-gray-600">Conflicts</p>
-                <p className="text-2xl font-bold">{conflicts.length}</p>
+          <div className="glass-card p-4 holo-card">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-orange-400 to-red-500 flex items-center justify-center">
+                <AlertTriangle className="w-6 h-6 text-white" />
               </div>
-            </CardContent>
-          </Card>
+              <div>
+                <p className="text-sm text-gray-400">Conflicts</p>
+                <p className="text-2xl font-bold text-white">{conflicts.length}</p>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
       {/* Conflicts Alert */}
       {conflicts.length > 0 && showConflicts && (
-        <Card className="border-red-200 bg-red-50">
-          <CardContent className="p-4">
-            <div className="flex items-start justify-between">
-              <div className="flex items-center gap-2">
-                <AlertTriangle className="h-5 w-5 text-red-600" />
-                <div>
-                  <h3 className="font-semibold text-red-800">Schedule Conflicts Detected</h3>
-                  <p className="text-red-700 text-sm mt-1">
-                    {conflicts.length} conflict{conflicts.length > 1 ? 's' : ''} found that may affect scheduling
-                  </p>
-                </div>
+        <div className="glass-card p-4 border-red-500/20 bg-red-500/10">
+          <div className="flex items-start justify-between">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-red-400" />
+              <div>
+                <h3 className="font-semibold text-red-400">Schedule Conflicts Detected</h3>
+                <p className="text-red-300 text-sm mt-1">
+                  {conflicts.length} conflict{conflicts.length > 1 ? 's' : ''} found that may affect scheduling
+                </p>
               </div>
-              <Button 
-                variant="ghost" 
-                size="sm"
-                onClick={() => setShowConflicts(false)}
-                className="text-red-600 hover:text-red-700"
-              >
-                Dismiss
-              </Button>
             </div>
-            <div className="mt-3 space-y-2">
-              {conflicts.map((conflict, index) => (
-                <div key={index} className="text-sm text-red-700 bg-red-100 p-2 rounded">
-                  <strong>{conflict.conflictType.replace('_', ' ')}:</strong> {conflict.description}
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+            <button 
+              onClick={() => setShowConflicts(false)}
+              className="px-3 py-1 rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-all text-sm"
+            >
+              Dismiss
+            </button>
+          </div>
+          <div className="mt-3 space-y-2">
+            {conflicts.map((conflict, index) => (
+              <div key={index} className="text-sm text-red-300 bg-red-500/10 p-2 rounded-lg">
+                <strong>{conflict.conflictType.replace('_', ' ')}:</strong> {conflict.description}
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
       {/* Bulk Actions */}
       {selectedSchedules.length > 0 && (
-        <Card className="border-blue-200 bg-blue-50">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <p className="text-blue-800">
-                {selectedSchedules.length} schedule{selectedSchedules.length > 1 ? 's' : ''} selected
-              </p>
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => handleBulkAction('enable')}
-                  className="flex items-center gap-1"
-                >
-                  <Play className="h-3 w-3" />
-                  Enable
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => handleBulkAction('disable')}
-                  className="flex items-center gap-1"
-                >
-                  <Pause className="h-3 w-3" />
-                  Disable
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => handleBulkAction('delete')}
-                  className="text-red-600 hover:text-red-700 flex items-center gap-1"
-                >
-                  Delete
-                </Button>
-              </div>
+        <div className="glass-card p-4 border-blue-500/20 bg-blue-500/10">
+          <div className="flex items-center justify-between">
+            <p className="text-blue-400">
+              {selectedSchedules.length} schedule{selectedSchedules.length > 1 ? 's' : ''} selected
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleBulkAction('enable')}
+                className="px-3 py-1 rounded-lg bg-green-500/20 text-green-400 hover:bg-green-500/30 transition-all flex items-center gap-1 text-sm"
+              >
+                <Play className="h-3 w-3" />
+                Enable
+              </button>
+              <button
+                onClick={() => handleBulkAction('disable')}
+                className="px-3 py-1 rounded-lg bg-orange-500/20 text-orange-400 hover:bg-orange-500/30 transition-all flex items-center gap-1 text-sm"
+              >
+                <Pause className="h-3 w-3" />
+                Disable
+              </button>
+              <button
+                onClick={() => handleBulkAction('delete')}
+                className="px-3 py-1 rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-all flex items-center gap-1 text-sm"
+              >
+                Delete
+              </button>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       )}
 
       {/* Schedules Table */}
-      <Card>
-        <CardHeader>
-          <div className="flex justify-between items-center">
-            <CardTitle className="flex items-center gap-2">
-              <Clock className="h-5 w-5" />
-              Schedules ({schedulesArray.length})
-            </CardTitle>
-            <div className="flex gap-2">
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                onClick={selectAllSchedules}
-              >
-                {selectedSchedules.length === Object.keys(schedules).length ? 'Deselect All' : 'Select All'}
-              </Button>
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                onClick={refresh}
-              >
-                Refresh
-              </Button>
-            </div>
+      <div className="glass-card p-6">
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-xl font-bold text-white flex items-center gap-2">
+            <Clock className="h-5 w-5" />
+            Schedules ({schedulesArray.length})
+          </h2>
+          <div className="flex gap-2">
+            <button 
+              onClick={selectAllSchedules}
+              className="px-3 py-1 rounded-lg bg-white/10 text-gray-300 hover:bg-white/20 transition-all text-sm"
+            >
+              {selectedSchedules.length === Object.keys(schedules).length ? 'Deselect All' : 'Select All'}
+            </button>
+            <button 
+              onClick={refresh}
+              className="px-3 py-1 rounded-lg bg-white/10 text-gray-300 hover:bg-white/20 transition-all text-sm"
+            >
+              Refresh
+            </button>
           </div>
-        </CardHeader>
-        <CardContent>
+        </div>
+        <div>
           {schedulesArray.length === 0 ? (
             <div className="text-center py-12">
               <Clock className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-              <h3 className="text-lg font-medium text-gray-900 mb-2">No schedules yet</h3>
-              <p className="text-gray-600 mb-4">
+              <h3 className="text-lg font-medium text-white mb-2">No schedules yet</h3>
+              <p className="text-gray-400 mb-4">
                 Create your first schedule to automate your lighting system
               </p>
-              <Button onClick={() => setIsCreateModalOpen(true)}>
-                <Plus className="h-4 w-4 mr-2" />
+              <button onClick={() => setIsCreateModalOpen(true)} className="btn-glow flex items-center gap-2 mx-auto">
+                <Plus className="h-4 w-4" />
                 Create Schedule
-              </Button>
+              </button>
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
-                  <tr className="border-b border-gray-200">
-                    <th className="text-left py-3 px-4 font-medium">
+                  <tr className="border-b border-gray-700">
+                    <th className="text-left py-3 px-4 font-medium text-gray-300">
                       <input
                         type="checkbox"
                         checked={selectedSchedules.length === schedulesArray.length}
@@ -319,10 +317,10 @@ const Scheduler: React.FC = () => {
                         className="rounded"
                       />
                     </th>
-                    <th className="text-left py-3 px-4 font-medium">Schedule</th>
-                    <th className="text-left py-3 px-4 font-medium">Time</th>
-                    <th className="text-left py-3 px-4 font-medium">Status</th>
-                    <th className="text-left py-3 px-4 font-medium">Actions</th>
+                    <th className="text-left py-3 px-4 font-medium text-gray-300">Schedule</th>
+                    <th className="text-left py-3 px-4 font-medium text-gray-300">Time</th>
+                    <th className="text-left py-3 px-4 font-medium text-gray-300">Status</th>
+                    <th className="text-left py-3 px-4 font-medium text-gray-300">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -350,8 +348,8 @@ const Scheduler: React.FC = () => {
               </table>
             </div>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
       {/* Create/Edit Schedule Modal */}
       <CreateScheduleModal
@@ -364,7 +362,7 @@ const Scheduler: React.FC = () => {
         templates={templates}
         editSchedule={editSchedule}
       />
-    </div>
+    </PageWrapper>
   );
 };
 

@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useMemo } from 'react';
-import { Button, Input, Card, CardContent, CardHeader, CardTitle } from '@/components/ui';
+import { PageWrapper } from '@/components/layout/PageWrapper';
 import { SceneRow } from '@/components/scenes/SceneRow';
 import { CreateSceneModal } from '@/components/scenes/CreateSceneModal';
 import { useScenes } from '@/hooks/useScenes';
@@ -19,8 +19,12 @@ import {
   Upload,
   Settings,
   Eye,
-  AlertCircle
+  AlertCircle,
+  Sparkles,
+  Palette
 } from 'lucide-react';
+import { cn } from '@/utils';
+import '@/styles/design-system.css';
 
 type ViewMode = 'table' | 'grid';
 type FilterType = 'all' | 'active' | 'favorites' | Scene['category'];
@@ -169,108 +173,100 @@ const Scenes: React.FC = () => {
   }), [scenes]);
 
   return (
-    <div className="p-6 space-y-6 pb-20">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gradient">Scenes</h1>
-          <p className="text-muted-foreground mt-1">
-            Create and manage lighting scenes • {stats.total} scenes total
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Button
-            variant="outline"
-            size="sm"
+    <PageWrapper
+      icon={<Palette className="w-8 h-8 text-imersa-dark" />}
+      title="Scenes"
+      subtitle={`Create and manage lighting scenes • ${stats.total} scenes total`}
+      actions={
+        <>
+          <button
             onClick={refreshScenes}
             disabled={isLoading}
+            className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-gray-400 transition-all"
           >
-            <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
-            Refresh
-          </Button>
-          <Button onClick={() => setIsCreateModalOpen(true)}>
-            <Plus className="w-4 h-4 mr-2" />
+            <RefreshCw className={cn("w-5 h-5", isLoading && "animate-spin")} />
+          </button>
+          <button 
+            onClick={() => setIsCreateModalOpen(true)}
+            className="btn-glow flex items-center gap-2"
+          >
+            <Plus className="w-4 h-4" />
             Create Scene
-          </Button>
-        </div>
-      </div>
+          </button>
+        </>
+      }
+    >
 
       {/* Error Display */}
       {error && (
-        <div className="flex items-center gap-3 p-4 bg-red-50 border border-red-200 rounded-lg">
-          <AlertCircle className="w-5 h-5 text-red-500" />
-          <div className="flex-1">
-            <p className="text-red-800">{error}</p>
+        <div className="glass-card p-4 border-red-500/20 bg-red-500/10">
+          <div className="flex items-center gap-3 text-red-400">
+            <AlertCircle className="w-5 h-5" />
+            <span>{error}</span>
+            <button
+              onClick={clearError}
+              className="ml-auto text-red-300 hover:text-white transition-colors"
+            >
+              Dismiss
+            </button>
           </div>
-          <Button variant="ghost" size="sm" onClick={clearError}>
-            Dismiss
-          </Button>
         </div>
       )}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        <Card>
-          <CardContent className="p-4">
+        <div className="glass-card p-4 holo-card">
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-blue-500" />
-              <span className="text-sm font-medium">Total</span>
+              <span className="text-sm font-medium text-gray-400">Total</span>
             </div>
-            <p className="text-2xl font-bold">{stats.total}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
+            <p className="text-2xl font-bold text-white">{stats.total}</p>
+        </div>
+        <div className="glass-card p-4 holo-card">
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-green-500" />
-              <span className="text-sm font-medium">Active</span>
+              <span className="text-sm font-medium text-gray-400">Active</span>
             </div>
-            <p className="text-2xl font-bold">{stats.active}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
+            <p className="text-2xl font-bold text-white">{stats.active}</p>
+        </div>
+        <div className="glass-card p-4 holo-card">
             <div className="flex items-center gap-2">
               <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" />
-              <span className="text-sm font-medium">Favorites</span>
+              <span className="text-sm font-medium text-gray-400">Favorites</span>
             </div>
-            <p className="text-2xl font-bold">{stats.favorites}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
+            <p className="text-2xl font-bold text-white">{stats.favorites}</p>
+        </div>
+        <div className="glass-card p-4 holo-card">
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-purple-500" />
-              <span className="text-sm font-medium">Evening</span>
+              <span className="text-sm font-medium text-gray-400">Evening</span>
             </div>
-            <p className="text-2xl font-bold">{stats.byCategory.Evening}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
+            <p className="text-2xl font-bold text-white">{stats.byCategory.Evening}</p>
+        </div>
+        <div className="glass-card p-4 holo-card">
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-pink-500" />
-              <span className="text-sm font-medium">Party</span>
+              <span className="text-sm font-medium text-gray-400">Party</span>
             </div>
-            <p className="text-2xl font-bold">{stats.byCategory.Party}</p>
-          </CardContent>
-        </Card>
+            <p className="text-2xl font-bold text-white">{stats.byCategory.Party}</p>
+        </div>
       </div>
 
       {/* Controls */}
-      <div className="flex flex-col sm:flex-row gap-4">
-        {/* Search */}
-        <div className="flex-1">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <Input
-              placeholder="Search scenes by name, ID, or category..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9"
-            />
+      <div className="glass-card p-4">
+        <div className="flex flex-col sm:flex-row gap-4">
+          {/* Search */}
+          <div className="flex-1">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input
+                placeholder="Search scenes by name, ID, or category..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-500"
+              />
+            </div>
           </div>
-        </div>
 
         {/* Filters */}
         <div className="flex items-center gap-2">
@@ -278,7 +274,7 @@ const Scenes: React.FC = () => {
           <select
             value={selectedFilter}
             onChange={(e) => setSelectedFilter(e.target.value as FilterType)}
-            className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            className="px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500"
           >
             <option value="all">All Scenes</option>
             <option value="active">Active</option>
@@ -293,7 +289,7 @@ const Scenes: React.FC = () => {
           <select
             value={selectedGroupFilter}
             onChange={(e) => setSelectedGroupFilter(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            className="px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500"
           >
             <option value="">All Groups</option>
             {groups.map((group) => (
@@ -304,88 +300,102 @@ const Scenes: React.FC = () => {
           </select>
 
           {/* View Mode Toggle */}
-          <div className="flex border border-gray-300 rounded-md">
-            <Button
-              variant={viewMode === 'table' ? 'default' : 'ghost'}
-              size="sm"
+          <div className="flex items-center gap-2">
+            <button
+              className={cn(
+                "p-2 rounded-lg transition-all",
+                viewMode === 'table' 
+                  ? "bg-gradient-to-br from-yellow-400 to-orange-500 text-gray-900" 
+                  : "bg-white/10 hover:bg-white/20 text-gray-400"
+              )}
               onClick={() => setViewMode('table')}
-              className="rounded-r-none"
             >
               <List className="w-4 h-4" />
-            </Button>
-            <Button
-              variant={viewMode === 'grid' ? 'default' : 'ghost'}
-              size="sm"
+            </button>
+            <button
+              className={cn(
+                "p-2 rounded-lg transition-all",
+                viewMode === 'grid' 
+                  ? "bg-gradient-to-br from-yellow-400 to-orange-500 text-gray-900" 
+                  : "bg-white/10 hover:bg-white/20 text-gray-400"
+              )}
               onClick={() => setViewMode('grid')}
-              className="rounded-l-none"
             >
               <Grid className="w-4 h-4" />
-            </Button>
+            </button>
           </div>
+        </div>
         </div>
       </div>
 
       {/* Bulk Actions */}
       {selectedScenes.length > 0 && (
-        <div className="flex items-center justify-between p-4 bg-blue-50 border border-blue-200 rounded-lg">
-          <div className="flex items-center gap-3">
-            <span className="text-sm font-medium text-blue-900">
-              {selectedScenes.length} scene{selectedScenes.length === 1 ? '' : 's'} selected
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => handleBulkAction('activate')}>
-              <Play className="w-4 h-4 mr-2" />
-              Activate
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => handleBulkAction('favorite')}>
-              <Star className="w-4 h-4 mr-2" />
-              Favorite
-            </Button>
-            <Button 
-              variant="outline" 
-              size="sm" 
-              onClick={() => handleBulkAction('delete')}
-              className="text-red-600 hover:text-red-700 hover:bg-red-50"
-            >
-              <Trash2 className="w-4 h-4 mr-2" />
-              Delete
-            </Button>
-            <Button variant="ghost" size="sm" onClick={clearSelection}>
-              Cancel
-            </Button>
+        <div className="glass-card p-4 border-imersa-glow-primary/20">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-sm font-medium text-white">
+                {selectedScenes.length} scene{selectedScenes.length === 1 ? '' : 's'} selected
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => handleBulkAction('activate')}
+                className="px-3 py-1 rounded-lg bg-green-500/20 text-green-400 hover:bg-green-500/30 transition-all flex items-center gap-2"
+              >
+                <Play className="w-4 h-4" />
+                Activate
+              </button>
+              <button 
+                onClick={() => handleBulkAction('favorite')}
+                className="px-3 py-1 rounded-lg bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30 transition-all flex items-center gap-2"
+              >
+                <Star className="w-4 h-4" />
+                Favorite
+              </button>
+              <button 
+                onClick={() => handleBulkAction('delete')}
+                className="px-3 py-1 rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-all flex items-center gap-2"
+              >
+                <Trash2 className="w-4 h-4" />
+                Delete
+              </button>
+              <button 
+                onClick={clearSelection}
+                className="px-3 py-1 rounded-lg bg-gray-500/20 text-gray-400 hover:bg-gray-500/30 transition-all"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}
 
       {/* Scenes Table */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle>Lighting Scenes</CardTitle>
-            <div className="flex items-center gap-2">
-              {filteredScenes.length !== scenes.length && (
-                <span className="text-sm text-gray-500">
-                  {filteredScenes.length} of {scenes.length} scenes
-                </span>
-              )}
-              <Button variant="ghost" size="sm" onClick={selectAllScenes}>
-                Select All
-              </Button>
-            </div>
+      <div className="glass-card p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-xl font-semibold text-white">Lighting Scenes</h3>
+          <div className="flex items-center gap-2">
+            {filteredScenes.length !== scenes.length && (
+              <span className="text-sm text-gray-400">
+                {filteredScenes.length} of {scenes.length} scenes
+              </span>
+            )}
+            <button 
+              onClick={selectAllScenes}
+              className="px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-gray-400 transition-all"
+            >
+              Select All
+            </button>
           </div>
-        </CardHeader>
-        <CardContent className="p-0">
+        </div>
           {filteredScenes.length === 0 ? (
             <div className="p-8 text-center text-gray-500">
               {searchQuery || selectedFilter !== 'all' || selectedGroupFilter ? (
                 <div>
                   <Eye className="w-12 h-12 mx-auto mb-4 text-gray-300" />
                   <p>No scenes found matching your filters</p>
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    className="mt-2"
+                  <button 
+                    className="mt-2 px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-gray-400 transition-all"
                     onClick={() => {
                       setSearchQuery('');
                       setSelectedFilter('all');
@@ -393,24 +403,28 @@ const Scenes: React.FC = () => {
                     }}
                   >
                     Clear filters
-                  </Button>
+                  </button>
                 </div>
               ) : (
                 <div>
                   <Plus className="w-12 h-12 mx-auto mb-4 text-gray-300" />
                   <p>No scenes created yet</p>
-                  <Button onClick={() => setIsCreateModalOpen(true)} className="mt-2">
+                  <button 
+                    onClick={() => setIsCreateModalOpen(true)} 
+                    className="mt-2 btn-glow flex items-center gap-2 mx-auto"
+                  >
+                    <Plus className="w-4 h-4" />
                     Create your first scene
-                  </Button>
+                  </button>
                 </div>
               )}
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full">
-                <thead className="bg-gray-50 border-b">
+                <thead className="border-b border-white/10">
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
                       <input
                         type="checkbox"
                         checked={selectedScenes.length === filteredScenes.length && filteredScenes.length > 0}
@@ -418,15 +432,15 @@ const Scenes: React.FC = () => {
                         className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                       />
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Group</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Updated</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">ID</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Name</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Type</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Group</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Updated</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
+                <tbody className="divide-y divide-white/5">
                   {filteredScenes.map((scene) => (
                     <SceneRow
                       key={scene.id}
@@ -445,8 +459,7 @@ const Scenes: React.FC = () => {
               </table>
             </div>
           )}
-        </CardContent>
-      </Card>
+      </div>
 
       {/* Create Scene Modal */}
       <CreateSceneModal
@@ -457,7 +470,7 @@ const Scenes: React.FC = () => {
         availableLights={lights}
         isCreating={isCreatingScene}
       />
-    </div>
+    </PageWrapper>
   );
 };
 

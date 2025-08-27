@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, Button } from '@/components/ui';
+import { PageWrapper } from '@/components/layout/PageWrapper';
+import '@/styles/design-system.css';
+import { cn } from '@/utils';
 import { 
   Book, HelpCircle, MessageSquare, FileText, 
   ExternalLink, Github, Globe, Mail, ChevronDown, ChevronUp
@@ -45,9 +47,12 @@ const Help: React.FC = () => {
   };
 
   return (
-    <div className="p-6 space-y-6 pb-20">
-      <div>
-        <h1 className="text-3xl font-bold">Help Center</h1>
+    <PageWrapper
+      icon={<HelpCircle className="w-8 h-8 text-imersa-dark" />}
+      title="Help Center"
+      subtitle="Get help with Imersa"
+    >
+      <div className="space-y-6">
         <p className="text-muted-foreground mt-1">
           Documentation, tutorials, and support resources
         </p>
@@ -258,7 +263,7 @@ const Help: React.FC = () => {
           </div>
         </CardContent>
       </Card>
-    </div>
+    </PageWrapper>
   );
 };
 

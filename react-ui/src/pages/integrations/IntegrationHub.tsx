@@ -1,9 +1,11 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui';
+import { PageWrapper } from '@/components/layout/PageWrapper';
+import '@/styles/design-system.css';
+import { cn } from '@/utils';
 import { 
   Home, Lightbulb, Wifi, Network, Server, 
-  Shield, ChevronRight, CheckCircle
+  Shield, ChevronRight, CheckCircle, Plug
 } from 'lucide-react';
 
 interface Integration {
@@ -51,7 +53,7 @@ const integrations: Integration[] = [
   {
     id: 'home-assistant',
     name: 'Home Assistant',
-    description: 'Advanced home automation platform integration',
+    description: 'Integrate with Home Assistant for advanced automation',
     icon: Home,
     path: '/integrations/home-assistant',
     status: 'available'
@@ -59,7 +61,7 @@ const integrations: Integration[] = [
   {
     id: 'mqtt',
     name: 'MQTT',
-    description: 'IoT messaging protocol for custom devices',
+    description: 'Connect devices via MQTT messaging protocol',
     icon: Network,
     path: '/integrations/mqtt',
     status: 'available'
@@ -73,14 +75,14 @@ const IntegrationHub: React.FC = () => {
     switch (status) {
       case 'connected':
         return (
-          <div className="flex items-center gap-1 text-green-500">
+          <div className="flex items-center gap-1 text-green-400">
             <CheckCircle className="w-4 h-4" />
             <span className="text-xs">Connected</span>
           </div>
         );
       case 'coming-soon':
         return (
-          <span className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded">
+          <span className="text-xs text-gray-500 bg-white/10 px-2 py-1 rounded">
             Coming Soon
           </span>
         );
@@ -90,66 +92,57 @@ const IntegrationHub: React.FC = () => {
   };
 
   return (
-    <div className="p-6 space-y-6 pb-20">
-      <div>
-        <h1 className="text-3xl font-bold">Integrations</h1>
-        <p className="text-muted-foreground mt-1">
-          Connect your smart home devices and platforms to DIYHue
-        </p>
-      </div>
-
+    <PageWrapper
+      icon={<Plug className="w-8 h-8 text-imersa-dark" />}
+      title="Integrations"
+      subtitle="Connect your smart home devices and platforms to Imersa"
+    >
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {integrations.map((integration) => (
-          <Card 
+          <div 
             key={integration.id}
-            className="hover:shadow-lg transition-shadow cursor-pointer"
+            className="glass-card p-6 hover:border-imersa-glow-primary/30 transition-all cursor-pointer holo-card"
             onClick={() => {
               if (integration.status !== 'coming-soon') {
                 navigate(integration.path);
               }
             }}
           >
-            <CardHeader>
-              <div className="flex justify-between items-start">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-primary/10 rounded-lg">
-                    <integration.icon className="w-6 h-6 text-primary" />
-                  </div>
-                  <CardTitle className="text-lg">{integration.name}</CardTitle>
+            <div className="flex justify-between items-start mb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-gradient-to-br from-yellow-400 to-orange-500 rounded-lg">
+                  <integration.icon className="w-6 h-6 text-gray-900" />
                 </div>
-                {getStatusBadge(integration.status)}
+                <h3 className="text-lg font-semibold text-white">{integration.name}</h3>
               </div>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground mb-3">
-                {integration.description}
-              </p>
-              {integration.status !== 'coming-soon' && (
-                <div className="flex items-center justify-end text-primary">
-                  <span className="text-sm">Configure</span>
-                  <ChevronRight className="w-4 h-4 ml-1" />
-                </div>
-              )}
-            </CardContent>
-          </Card>
+              {getStatusBadge(integration.status)}
+            </div>
+            <p className="text-sm text-gray-400 mb-3">
+              {integration.description}
+            </p>
+            {integration.status !== 'coming-soon' && (
+              <div className="flex items-center justify-end text-imersa-glow-primary">
+                <span className="text-sm">Configure</span>
+                <ChevronRight className="w-4 h-4 ml-1" />
+              </div>
+            )}
+          </div>
         ))}
       </div>
 
-      <Card className="bg-blue-500/10 border-blue-500/50">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Shield className="w-5 h-5" />
-            Integration Security
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm">
-            All integrations use secure authentication methods. API keys and tokens are encrypted 
-            and stored locally. No credentials are sent to external servers.
-          </p>
-        </CardContent>
-      </Card>
-    </div>
+      <div className="glass-card p-6 mt-6 border-blue-500/20 bg-blue-500/5">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center">
+            <Shield className="w-5 h-5 text-white" />
+          </div>
+          <h3 className="text-xl font-semibold text-white">Integration Security</h3>
+        </div>
+        <p className="text-sm text-gray-400">
+          All integrations use secure authentication methods. API keys and tokens are encrypted 
+          and stored locally. No credentials are sent to external servers.
+        </p>
+      </div>
+    </PageWrapper>
   );
 };
 

@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, Button, Input } from '@/components/ui';
+import { PageWrapper } from '@/components/layout/PageWrapper';
+import '@/styles/design-system.css';
+import { cn } from '@/utils';
+import { Modal } from '@/components/ui';
 import discoveryService from '@/services/discoveryApi';
 import authService from '@/services/authApi';
 import { 
   Search, RefreshCw, Plus, Wifi, Power, Battery, 
   Thermometer, Sun, Activity, AlertTriangle, CheckCircle,
-  Trash2, Settings, TestTube, Loader2
+  Trash2, Settings, TestTube, Loader2, Monitor
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 
@@ -72,81 +75,79 @@ const DeviceCard: React.FC<DeviceCardProps> = ({ device, onDelete, onUpdate }) =
   };
 
   return (
-    <Card className="hover:shadow-lg transition-shadow">
-      <CardHeader>
-        <div className="flex justify-between items-start">
-          <div className="flex items-center gap-2">
+    <div className="glass-card p-4 hover:bg-white/10 transition-all">
+      <div className="flex justify-between items-start mb-3">
+        <div className="flex items-center gap-2">
+          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center">
             {getDeviceIcon()}
-            <div>
-              <CardTitle className="text-base">{device.name}</CardTitle>
-              <p className="text-xs text-muted-foreground">
-                {device.protocol || 'Unknown'}
-              </p>
-            </div>
           </div>
-          <div className="flex items-center gap-1">
-            {device.config.battery && getBatteryIcon(device.config.battery)}
-            <span className={`w-2 h-2 rounded-full ${
-              device.config.reachable ? 'bg-green-500' : 'bg-red-500'
-            }`} />
+          <div>
+            <h3 className="text-base font-medium text-white">{device.name}</h3>
+            <p className="text-xs text-gray-400">
+              {device.protocol || 'Unknown'}
+            </p>
           </div>
         </div>
-      </CardHeader>
-      <CardContent className="space-y-3">
+        <div className="flex items-center gap-1">
+          {device.config?.battery && getBatteryIcon(device.config.battery)}
+          <span className={`w-2 h-2 rounded-full ${
+            device.config?.reachable ? 'bg-green-500' : 'bg-red-500'
+          }`} />
+        </div>
+      </div>
+      <div className="space-y-3">
         {/* Device State */}
         <div className="grid grid-cols-2 gap-2 text-sm">
-          {device.state.presence !== undefined && (
+          {device.state?.presence !== undefined && (
             <div className="flex justify-between">
-              <span className="text-muted-foreground">Presence:</span>
-              <span>{device.state.presence ? 'Detected' : 'Clear'}</span>
+              <span className="text-gray-400">Presence:</span>
+              <span className="text-white">{device.state.presence ? 'Detected' : 'Clear'}</span>
             </div>
           )}
-          {device.state.temperature !== undefined && (
+          {device.state?.temperature !== undefined && (
             <div className="flex justify-between">
-              <span className="text-muted-foreground">Temperature:</span>
-              <span>{(device.state.temperature / 100).toFixed(1)}°C</span>
+              <span className="text-gray-400">Temperature:</span>
+              <span className="text-white">{(device.state.temperature / 100).toFixed(1)}°C</span>
             </div>
           )}
-          {device.state.lightlevel !== undefined && (
+          {device.state?.lightlevel !== undefined && (
             <div className="flex justify-between">
-              <span className="text-muted-foreground">Light Level:</span>
-              <span>{device.state.lightlevel} lux</span>
+              <span className="text-gray-400">Light Level:</span>
+              <span className="text-white">{device.state.lightlevel} lux</span>
             </div>
           )}
-          {device.state.buttonevent !== undefined && (
+          {device.state?.buttonevent !== undefined && (
             <div className="flex justify-between">
-              <span className="text-muted-foreground">Button:</span>
-              <span>{device.state.buttonevent}</span>
+              <span className="text-gray-400">Button:</span>
+              <span className="text-white">{device.state.buttonevent}</span>
             </div>
           )}
         </div>
         
         {/* Last Update */}
         <div className="flex justify-between items-center text-xs">
-          <span className="text-muted-foreground">Last update:</span>
-          <span>{formatLastUpdate(device.state.lastupdated)}</span>
+          <span className="text-gray-400">Last update:</span>
+          <span className="text-gray-300">{formatLastUpdate(device.state?.lastupdated)}</span>
         </div>
         
         {/* Actions */}
         <div className="flex gap-2">
-          <Button 
-            size="sm" 
-            variant="outline"
+          <button 
             onClick={() => onUpdate(device.id, { name: prompt('New name:', device.name) })}
+            className="flex-1 px-3 py-1 rounded-lg bg-white/10 text-gray-300 hover:bg-white/20 transition-all flex items-center justify-center gap-1 text-sm"
           >
-            <Settings className="w-3 h-3 mr-1" />
+            <Settings className="w-3 h-3" />
             Configure
-          </Button>
-          <Button 
-            size="sm" 
-            variant="destructive"
+          </button>
+          <button 
             onClick={() => onDelete(device.id)}
+            className="px-3 py-1 rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-all flex items-center justify-center gap-1 text-sm"
           >
             <Trash2 className="w-3 h-3" />
-          </Button>
+          </button>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 };
 
@@ -278,66 +279,69 @@ const DevicesComplete: React.FC = () => {
   );
 
   return (
-    <div className="p-6 space-y-6 pb-20">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold">Device Management</h1>
-          <p className="text-muted-foreground mt-1">
-            Manage sensors and smart devices
-          </p>
-        </div>
-        <div className="flex gap-3">
-          <Button 
+    <PageWrapper
+      icon={<Monitor className="w-8 h-8 text-imersa-dark" />}
+      title="Device Management"
+      subtitle="Manage sensors and smart devices"
+      actions={
+        <>
+          <button 
             onClick={handleScan}
             disabled={isScanning}
-            variant="outline"
+            className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-gray-400 transition-all flex items-center gap-2"
           >
             {isScanning ? (
               <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                <Loader2 className="w-4 h-4 animate-spin" />
                 Scanning...
               </>
             ) : (
               <>
-                <Search className="w-4 h-4 mr-2" />
+                <Search className="w-4 h-4" />
                 Scan for Devices
               </>
             )}
-          </Button>
-          <Button onClick={() => setShowAddModal(true)}>
-            <Plus className="w-4 h-4 mr-2" />
+          </button>
+          <button 
+            onClick={() => setShowAddModal(true)}
+            className="btn-glow flex items-center gap-2"
+          >
+            <Plus className="w-4 h-4" />
             Add Manually
-          </Button>
-        </div>
-      </div>
+          </button>
+        </>
+      }
+    >
 
       {/* Protocol Filter */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Filter by Protocol</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              variant={selectedProtocol === 'all' ? 'default' : 'outline'}
-              onClick={() => setSelectedProtocol('all')}
+      <div className="glass-card p-6">
+        <h3 className="text-lg font-medium text-white mb-4">Filter by Protocol</h3>
+        <div className="flex flex-wrap gap-2">
+          <button
+            className={`px-3 py-1 rounded-lg transition-all text-sm ${
+              selectedProtocol === 'all' 
+                ? 'bg-imersa-accent text-white' 
+                : 'bg-white/10 text-gray-300 hover:bg-white/20'
+            }`}
+            onClick={() => setSelectedProtocol('all')}
+          >
+            All Protocols
+          </button>
+          {protocols.map(protocol => (
+            <button
+              key={protocol}
+              className={`px-3 py-1 rounded-lg transition-all text-sm ${
+                selectedProtocol === protocol 
+                  ? 'bg-imersa-accent text-white' 
+                  : 'bg-white/10 text-gray-300 hover:bg-white/20'
+              }`}
+              onClick={() => setSelectedProtocol(protocol)}
             >
-              All Protocols
-            </Button>
-            {protocols.map(protocol => (
-              <Button
-                key={protocol}
-                size="sm"
-                variant={selectedProtocol === protocol ? 'default' : 'outline'}
-                onClick={() => setSelectedProtocol(protocol)}
-              >
-                {protocol}
-              </Button>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
+              {protocol}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {/* Devices Grid */}
       {isLoading ? (
@@ -356,28 +360,25 @@ const DevicesComplete: React.FC = () => {
           ))}
         </div>
       ) : (
-        <Card>
-          <CardContent className="text-center py-12">
-            <Wifi className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-            <p className="text-lg font-medium">No devices found</p>
-            <p className="text-muted-foreground mt-1">
-              Click "Scan for Devices" to discover new devices
-            </p>
-          </CardContent>
-        </Card>
+        <div className="glass-card p-12 text-center">
+          <Wifi className="w-12 h-12 mx-auto mb-4 text-gray-400" />
+          <p className="text-lg font-medium text-white">No devices found</p>
+          <p className="text-gray-400 mt-1">
+            Click "Scan for Devices" to discover new devices
+          </p>
+        </div>
       )}
 
       {/* Add Device Modal */}
       {showAddModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <Card className="w-full max-w-md">
-            <CardHeader>
-              <CardTitle>Add Device Manually</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="glass-card p-6 w-full max-w-md">
+            <h2 className="text-xl font-bold text-white mb-6">Add Device Manually</h2>
+            <div className="space-y-4">
               <div>
-                <label className="text-sm font-medium">Device Name</label>
-                <Input
+                <label className="text-sm font-medium text-gray-300">Device Name</label>
+                <input
+                  className="w-full mt-1 p-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-400"
                   value={manualDevice.name}
                   onChange={(e) => setManualDevice(prev => ({ ...prev, name: e.target.value }))}
                   placeholder="Living Room Sensor"
@@ -385,14 +386,14 @@ const DevicesComplete: React.FC = () => {
               </div>
               
               <div>
-                <label className="text-sm font-medium">Protocol</label>
+                <label className="text-sm font-medium text-gray-300">Protocol</label>
                 <select 
-                  className="w-full p-2 border rounded-lg"
+                  className="w-full mt-1 p-2 bg-white/10 border border-white/20 rounded-lg text-white"
                   value={manualDevice.protocol}
                   onChange={(e) => setManualDevice(prev => ({ ...prev, protocol: e.target.value }))}
                 >
                   {protocols.map(protocol => (
-                    <option key={protocol} value={protocol}>
+                    <option key={protocol} value={protocol} className="bg-imersa-midnight">
                       {protocol}
                     </option>
                   ))}
@@ -400,8 +401,9 @@ const DevicesComplete: React.FC = () => {
               </div>
               
               <div>
-                <label className="text-sm font-medium">IP Address</label>
-                <Input
+                <label className="text-sm font-medium text-gray-300">IP Address</label>
+                <input
+                  className="w-full mt-1 p-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-400"
                   value={manualDevice.ip}
                   onChange={(e) => setManualDevice(prev => ({ ...prev, ip: e.target.value }))}
                   placeholder="192.168.1.100"
@@ -409,8 +411,9 @@ const DevicesComplete: React.FC = () => {
               </div>
               
               <div>
-                <label className="text-sm font-medium">MAC Address (optional)</label>
-                <Input
+                <label className="text-sm font-medium text-gray-300">MAC Address (optional)</label>
+                <input
+                  className="w-full mt-1 p-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-400"
                   value={manualDevice.mac}
                   onChange={(e) => setManualDevice(prev => ({ ...prev, mac: e.target.value }))}
                   placeholder="AA:BB:CC:DD:EE:FF"
@@ -418,8 +421,9 @@ const DevicesComplete: React.FC = () => {
               </div>
               
               <div>
-                <label className="text-sm font-medium">Model (optional)</label>
-                <Input
+                <label className="text-sm font-medium text-gray-300">Model (optional)</label>
+                <input
+                  className="w-full mt-1 p-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-400"
                   value={manualDevice.model}
                   onChange={(e) => setManualDevice(prev => ({ ...prev, model: e.target.value }))}
                   placeholder="Device model"
@@ -427,24 +431,24 @@ const DevicesComplete: React.FC = () => {
               </div>
               
               <div className="flex justify-end gap-3 pt-4">
-                <Button 
-                  variant="outline" 
+                <button 
                   onClick={() => {
                     setShowAddModal(false);
                     setManualDevice({ name: '', protocol: 'native', ip: '', mac: '', model: '' });
                   }}
+                  className="px-4 py-2 rounded-lg bg-white/10 text-gray-300 hover:bg-white/20 transition-all"
                 >
                   Cancel
-                </Button>
-                <Button onClick={handleAddDevice}>
+                </button>
+                <button onClick={handleAddDevice} className="btn-glow">
                   Add Device
-                </Button>
+                </button>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         </div>
       )}
-    </div>
+    </PageWrapper>
   );
 };
 
