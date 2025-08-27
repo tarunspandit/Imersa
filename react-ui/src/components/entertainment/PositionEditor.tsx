@@ -1,9 +1,9 @@
 // 3D Position Editor for Entertainment Lights
 import React, { useState, useEffect, useCallback } from 'react';
 import { Save, RotateCcw, Move, Grid, Eye, EyeOff } from 'lucide-react';
-import { Button, Input, Card, CardHeader, CardTitle, CardContent } from '@/components/ui';
 import { LightPosition, EntertainmentArea } from '@/types';
 import { cn } from '@/utils';
+import '@/styles/design-system.css';
 
 interface PositionEditorProps {
   area: EntertainmentArea | null;
@@ -171,8 +171,9 @@ export const PositionEditor: React.FC<PositionEditorProps> = ({
         <svg
           width={size}
           height={size}
-          className="border border-gray-200 rounded bg-gray-50"
+          className="border border-white/10 rounded-xl"
           viewBox={`0 0 ${size} ${size}`}
+          style={{ background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.03), rgba(236, 72, 153, 0.03))' }}
         >
           {/* Grid */}
           {viewSettings.showGrid && (
@@ -186,7 +187,7 @@ export const PositionEditor: React.FC<PositionEditorProps> = ({
                 <path
                   d={`M ${size / viewSettings.gridSize} 0 L 0 0 0 ${size / viewSettings.gridSize}`}
                   fill="none"
-                  stroke="#e5e7eb"
+                  stroke="rgba(255,255,255,0.05)"
                   strokeWidth="0.5"
                 />
               </pattern>
@@ -198,7 +199,7 @@ export const PositionEditor: React.FC<PositionEditorProps> = ({
           )}
 
           {/* Center cross */}
-          <g stroke="#9ca3af" strokeWidth="1">
+          <g stroke="#fbbf24" strokeWidth="1">
             <line x1={center - 20} y1={center} x2={center + 20} y2={center} />
             <line x1={center} y1={center - 20} x2={center} y2={center + 20} />
           </g>
@@ -216,11 +217,12 @@ export const PositionEditor: React.FC<PositionEditorProps> = ({
                   cx={x}
                   cy={y}
                   r={isSelected ? 12 : 8}
-                  fill={hasError ? '#ef4444' : isSelected ? '#3b82f6' : '#10b981'}
-                  stroke={isSelected ? '#1d4ed8' : '#ffffff'}
+                  fill={hasError ? '#ef4444' : isSelected ? '#8b5cf6' : '#10b981'}
+                  stroke={isSelected ? '#c084fc' : '#ffffff'}
                   strokeWidth={2}
                   className="cursor-pointer transition-all"
                   onClick={() => setSelectedLightId(pos.lightId)}
+                  filter={isSelected ? 'url(#glow)' : ''}
                 />
                 
                 {/* Z-axis indicator (3D mode) */}
@@ -230,7 +232,7 @@ export const PositionEditor: React.FC<PositionEditorProps> = ({
                     y1={y}
                     x2={x + pos.z * 20}
                     y2={y - pos.z * 20}
-                    stroke="#6b7280"
+                    stroke="#94a3b8"
                     strokeWidth="2"
                     markerEnd="url(#arrowhead)"
                   />
@@ -242,7 +244,7 @@ export const PositionEditor: React.FC<PositionEditorProps> = ({
                   y={y + (isSelected ? 20 : 16)}
                   textAnchor="middle"
                   fontSize="10"
-                  fill="#374151"
+                  fill="#cbd5e1"
                   className="pointer-events-none font-mono"
                 >
                   {pos.lightId}
@@ -251,8 +253,16 @@ export const PositionEditor: React.FC<PositionEditorProps> = ({
             );
           })}
 
-          {/* Arrow marker for 3D lines */}
+          {/* Glow filter */}
           <defs>
+            <filter id="glow">
+              <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+              <feMerge>
+                <feMergeNode in="coloredBlur"/>
+                <feMergeNode in="SourceGraphic"/>
+              </feMerge>
+            </filter>
+            {/* Arrow marker for 3D lines */}
             <marker
               id="arrowhead"
               markerWidth="10"
@@ -261,25 +271,25 @@ export const PositionEditor: React.FC<PositionEditorProps> = ({
               refY="3.5"
               orient="auto"
             >
-              <polygon points="0 0, 10 3.5, 0 7" fill="#6b7280" />
+              <polygon points="0 0, 10 3.5, 0 7" fill="#94a3b8" />
             </marker>
           </defs>
         </svg>
 
         {/* Legend */}
-        <div className="absolute top-2 right-2 bg-white bg-opacity-90 rounded p-2 text-xs">
+        <div className="absolute top-2 right-2 glass-surface rounded-xl p-2 text-xs">
           <div className="flex items-center space-x-2">
             <div className="w-3 h-3 bg-emerald-500 rounded-full"></div>
-            <span>Light</span>
+            <span className="text-gray-300">Light</span>
           </div>
           <div className="flex items-center space-x-2 mt-1">
-            <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
-            <span>Selected</span>
+            <div className="w-3 h-3 bg-purple-500 rounded-full"></div>
+            <span className="text-gray-300">Selected</span>
           </div>
           {Object.keys(validationErrors).length > 0 && (
             <div className="flex items-center space-x-2 mt-1">
               <div className="w-3 h-3 bg-red-500 rounded-full"></div>
-              <span>Error</span>
+              <span className="text-gray-300">Error</span>
             </div>
           )}
         </div>
@@ -289,99 +299,99 @@ export const PositionEditor: React.FC<PositionEditorProps> = ({
 
   if (!area) {
     return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center space-x-2">
-            <Move className="h-5 w-5" />
-            <span>Position Editor</span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="text-center py-8 text-gray-500">
-            Select an entertainment area to edit light positions
-          </div>
-        </CardContent>
-      </Card>
+      <div className="glass-card p-6">
+        <h3 className="text-xl font-semibold text-white mb-4 flex items-center gap-2">
+          <Move className="w-5 h-5 text-imersa-glow-primary" />
+          Position Editor
+        </h3>
+        <div className="text-center py-8 text-gray-400">
+          Select an entertainment area to edit light positions
+        </div>
+      </div>
     );
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <CardTitle className="flex items-center space-x-2">
-            <Move className="h-5 w-5" />
-            <span>Edit Positions - {area.name}</span>
-          </CardTitle>
+    <div className="glass-card p-6">
+      <div className="flex items-center justify-between mb-6">
+        <h3 className="text-xl font-semibold text-white flex items-center gap-2">
+          <Move className="w-5 h-5 text-imersa-glow-primary" />
+          Edit Positions - {area.name}
+        </h3>
+        
+        <div className="flex items-center space-x-2">
+          {/* View Controls */}
+          <button
+            onClick={() => setViewSettings(prev => ({ ...prev, showGrid: !prev.showGrid }))}
+            className={cn(
+              'p-2 rounded-xl transition-all',
+              viewSettings.showGrid 
+                ? 'bg-blue-500/20 text-blue-400' 
+                : 'bg-white/5 text-gray-400 hover:bg-white/10'
+            )}
+          >
+            <Grid className="h-4 w-4" />
+          </button>
           
-          <div className="flex items-center space-x-2">
-            {/* View Controls */}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setViewSettings(prev => ({ ...prev, showGrid: !prev.showGrid }))}
-              className={cn(viewSettings.showGrid && 'bg-blue-50')}
-            >
-              <Grid className="h-4 w-4" />
-            </Button>
-            
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setViewSettings(prev => ({ ...prev, show3D: !prev.show3D }))}
-              className={cn(viewSettings.show3D && 'bg-blue-50')}
-            >
-              {viewSettings.show3D ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-            </Button>
+          <button
+            onClick={() => setViewSettings(prev => ({ ...prev, show3D: !prev.show3D }))}
+            className={cn(
+              'p-2 rounded-xl transition-all',
+              viewSettings.show3D 
+                ? 'bg-blue-500/20 text-blue-400' 
+                : 'bg-white/5 text-gray-400 hover:bg-white/10'
+            )}
+          >
+            {viewSettings.show3D ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+          </button>
 
-            {/* Actions */}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={autoArrange}
-              disabled={isLoading || isSaving}
-            >
-              Auto Arrange
-            </Button>
-            
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={resetPositions}
-              disabled={isLoading || isSaving}
-            >
-              <RotateCcw className="h-4 w-4 mr-1" />
-              Reset
-            </Button>
-            
-            <Button
-              onClick={savePositions}
-              disabled={!hasChanges || isLoading || isSaving || Object.keys(validationErrors).some(key => validationErrors[key])}
-              className="min-w-[100px]"
-            >
-              {isSaving ? (
-                <div className="animate-spin h-4 w-4 border border-current border-t-transparent rounded-full" />
-              ) : (
-                <>
-                  <Save className="h-4 w-4 mr-1" />
-                  Save
-                </>
-              )}
-            </Button>
-          </div>
+          {/* Actions */}
+          <button
+            onClick={autoArrange}
+            disabled={isLoading || isSaving}
+            className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 transition-all disabled:opacity-50"
+          >
+            Auto Arrange
+          </button>
+          
+          <button
+            onClick={resetPositions}
+            disabled={isLoading || isSaving}
+            className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 transition-all disabled:opacity-50 flex items-center gap-1"
+          >
+            <RotateCcw className="h-4 w-4" />
+            Reset
+          </button>
+          
+          <button
+            onClick={savePositions}
+            disabled={!hasChanges || isLoading || isSaving || Object.keys(validationErrors).some(key => validationErrors[key])}
+            className="btn-glow px-4 py-1.5 flex items-center gap-2 disabled:opacity-50"
+          >
+            {isSaving ? (
+              <div className="animate-spin h-4 w-4 border border-current border-t-transparent rounded-full" />
+            ) : (
+              <>
+                <Save className="h-4 w-4" />
+                Save
+              </>
+            )}
+          </button>
         </div>
-      </CardHeader>
+      </div>
       
-      <CardContent className="space-y-6">
+      <div className="space-y-6">
         {isLoading && (
           <div className="text-center py-4">
-            <div className="animate-spin h-6 w-6 border border-current border-t-transparent rounded-full mx-auto" />
-            <p className="text-sm text-gray-500 mt-2">Loading positions...</p>
+            <div className="loading-pulse mx-auto">
+              <Move className="w-6 h-6 text-imersa-dark" />
+            </div>
+            <p className="text-sm text-gray-400 mt-2">Loading positions...</p>
           </div>
         )}
 
         {!isLoading && localPositions.length === 0 && (
-          <div className="text-center py-8 text-gray-500">
+          <div className="text-center py-8 text-gray-400">
             No lights found in this entertainment area
           </div>
         )}
@@ -390,12 +400,12 @@ export const PositionEditor: React.FC<PositionEditorProps> = ({
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Visual Editor */}
             <div>
-              <h3 className="text-sm font-medium text-gray-900 mb-3">
+              <h3 className="text-sm font-medium text-white mb-3">
                 Visual Position Editor
               </h3>
               {renderPositionVisualization()}
               
-              <div className="text-xs text-gray-500 mt-2">
+              <div className="text-xs text-gray-400 mt-2">
                 <p>• Click lights to select and edit</p>
                 <p>• Coordinates range from -1 to 1</p>
                 <p>• Z-axis represents depth (forward/backward)</p>
@@ -404,18 +414,18 @@ export const PositionEditor: React.FC<PositionEditorProps> = ({
 
             {/* Position Table */}
             <div>
-              <h3 className="text-sm font-medium text-gray-900 mb-3">
+              <h3 className="text-sm font-medium text-white mb-3">
                 Precise Coordinates
               </h3>
               
-              <div className="max-h-80 overflow-y-auto border border-gray-200 rounded">
+              <div className="max-h-80 overflow-y-auto border border-white/10 rounded-xl glass-surface">
                 <table className="w-full text-sm">
-                  <thead className="bg-gray-50 sticky top-0">
+                  <thead className="bg-white/5 sticky top-0">
                     <tr>
-                      <th className="px-3 py-2 text-left font-medium text-gray-900">Light</th>
-                      <th className="px-3 py-2 text-left font-medium text-gray-900">X</th>
-                      <th className="px-3 py-2 text-left font-medium text-gray-900">Y</th>
-                      <th className="px-3 py-2 text-left font-medium text-gray-900">Z</th>
+                      <th className="px-3 py-2 text-left font-medium text-gray-300">Light</th>
+                      <th className="px-3 py-2 text-left font-medium text-gray-300">X</th>
+                      <th className="px-3 py-2 text-left font-medium text-gray-300">Y</th>
+                      <th className="px-3 py-2 text-left font-medium text-gray-300">Z</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -423,17 +433,17 @@ export const PositionEditor: React.FC<PositionEditorProps> = ({
                       <tr
                         key={pos.lightId}
                         className={cn(
-                          'border-b border-gray-100',
-                          selectedLightId === pos.lightId && 'bg-blue-50',
-                          validationErrors[pos.lightId] && 'bg-red-50'
+                          'border-b border-white/5',
+                          selectedLightId === pos.lightId && 'bg-purple-500/10',
+                          validationErrors[pos.lightId] && 'bg-red-500/10'
                         )}
                       >
                         <td className="px-3 py-2">
                           <div
-                            className="cursor-pointer hover:text-blue-600"
+                            className="cursor-pointer hover:text-imersa-glow-primary transition-colors"
                             onClick={() => setSelectedLightId(pos.lightId)}
                           >
-                            <div className="font-mono text-xs">{pos.lightId}</div>
+                            <div className="font-mono text-xs text-gray-300">{pos.lightId}</div>
                             <div className="text-xs text-gray-500 truncate">
                               {pos.lightName}
                             </div>
@@ -442,7 +452,7 @@ export const PositionEditor: React.FC<PositionEditorProps> = ({
                         
                         {['x', 'y', 'z'].map((axis) => (
                           <td key={axis} className="px-3 py-2">
-                            <Input
+                            <input
                               type="number"
                               min="-1"
                               max="1"
@@ -450,8 +460,10 @@ export const PositionEditor: React.FC<PositionEditorProps> = ({
                               value={pos[axis as keyof Pick<LightPosition, 'x' | 'y' | 'z'>]}
                               onChange={(e) => updatePosition(pos.lightId, axis as 'x' | 'y' | 'z', parseFloat(e.target.value) || 0)}
                               className={cn(
-                                'w-16 h-8 text-xs',
-                                validationErrors[pos.lightId] && 'border-red-300 focus:ring-red-500'
+                                'w-16 h-8 text-xs px-2 bg-white/5 border rounded-lg text-white',
+                                validationErrors[pos.lightId] 
+                                  ? 'border-red-500/50 focus:ring-red-500' 
+                                  : 'border-white/10 focus:ring-yellow-500 focus:outline-none focus:ring-2'
                               )}
                             />
                           </td>
@@ -463,7 +475,7 @@ export const PositionEditor: React.FC<PositionEditorProps> = ({
               </div>
               
               {Object.keys(validationErrors).length > 0 && (
-                <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-600">
+                <div className="mt-2 p-2 bg-red-500/10 border border-red-500/20 rounded-xl text-xs text-red-400">
                   {Object.entries(validationErrors).map(([lightId, error]) => (
                     error && <div key={lightId}>Light {lightId}: {error}</div>
                   ))}
@@ -475,17 +487,17 @@ export const PositionEditor: React.FC<PositionEditorProps> = ({
 
         {/* Status */}
         {hasChanges && (
-          <div className="flex items-center justify-between p-3 bg-orange-50 border border-orange-200 rounded">
-            <span className="text-sm text-orange-700">
+          <div className="flex items-center justify-between p-3 glass-card bg-orange-500/10 border border-orange-500/20">
+            <span className="text-sm text-orange-400">
               You have unsaved changes
             </span>
-            <span className="text-xs text-orange-600">
+            <span className="text-xs text-orange-300">
               {localPositions.length} lights positioned
             </span>
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 };
 

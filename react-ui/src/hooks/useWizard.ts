@@ -16,7 +16,7 @@ export interface WizardFormData {
   // Step 1: Basic Info
   name: string;
   configurationType: 'screen' | '3dspace';
-  roomClass: string;
+  roomClass: string; // Internal default value - not shown to user
   
   // Step 2: Light Selection
   selectedLights: string[];
@@ -86,7 +86,7 @@ export function useWizard(options: UseWizardOptions = {}) {
   const [formData, setFormData] = useState<WizardFormData>({
     name: 'Entertainment Area',
     configurationType: 'screen',
-    roomClass: 'Living room',
+    roomClass: 'Other', // Default value - not shown to user
     selectedLights: [],
     availableLights: [],
     positions: {},
@@ -419,7 +419,7 @@ export function useWizard(options: UseWizardOptions = {}) {
         name: formData.name,
         lights: formData.selectedLights,
         type: 'Entertainment',
-        class: formData.roomClass,
+        class: 'Other', // Default value - no room selection shown to user
       });
       
       if (!createResult.success) {
@@ -488,7 +488,7 @@ export function useWizard(options: UseWizardOptions = {}) {
     setFormData({
       name: 'Entertainment Area',
       configurationType: 'screen',
-      roomClass: 'Living room',
+      roomClass: 'Other', // Default value - not shown to user
       selectedLights: [],
       availableLights: formData.availableLights, // Keep loaded lights
       positions: {},

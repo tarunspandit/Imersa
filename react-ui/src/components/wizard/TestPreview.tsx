@@ -252,10 +252,6 @@ export const TestPreview: React.FC<TestPreviewProps> = ({
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-sm text-gray-400">Room:</span>
-                <span className="text-sm font-medium text-white">{formData.roomClass}</span>
-              </div>
-              <div className="flex justify-between">
                 <span className="text-sm text-gray-400">Lights:</span>
                 <span className="text-sm font-medium text-white">
                   {formData.selectedLights.length} selected
