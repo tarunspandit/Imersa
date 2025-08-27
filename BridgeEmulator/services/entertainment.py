@@ -114,7 +114,10 @@ def get_hue_entertainment_group(light, groupname):
 def entertainmentService(group, user):
     logging.info(f"Starting entertainment service for group {group.id_v1}")
     logging.debug("User: " + user.username)
-    logging.debug("Key: " + user.client_key)
+    logging.debug(f"Key: {user.client_key[:16]}...")  # Only log part of key for security
+    
+    # Ensure stream is marked as active from the start
+    bridgeConfig["groups"][group.id_v1].stream["active"] = True
     bridgeConfig["groups"][group.id_v1].stream["owner"] = user.username
     bridgeConfig["groups"][group.id_v1].state = {"all_on": True, "any_on": True}
 
@@ -150,9 +153,19 @@ def entertainmentService(group, user):
         '-psk_identity', user.username, '-nocert', '-accept', '2100', '-quiet'
     ]
     
-    logging.info("Starting DTLS server on port 2100")
+    logging.info(f"Starting DTLS server on port 2100 with key: {user.client_key[:8]}...")
     try:
         p = Popen(opensslCmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
+        # Give OpenSSL time to start
+        sleep(0.5)
+        # Check if process started successfully
+        if p.poll() is not None:
+            stderr = p.stderr.read().decode('utf-8') if p.stderr else "No error output"
+            logging.error(f"OpenSSL process died immediately: {stderr}")
+            bridgeConfig["groups"][group.id_v1].stream["active"] = False
+            bridgeConfig["groups"][group.id_v1].stream["owner"] = None
+            return
+        logging.info("DTLS server started successfully, waiting for client connection...")
     except Exception as e:
         logging.error(f"Failed to start DTLS server: {e}")
         bridgeConfig["groups"][group.id_v1].stream["active"] = False
@@ -183,23 +196,49 @@ def entertainmentService(group, user):
     # Add frame counter for debugging
     frame_count = 0
     
-    p.stdout.read(1)  # read one byte so the init function will correctly detect the frameBites
+    # Check if stream is still active before entering loop
+    if not bridgeConfig["groups"][group.id_v1].stream["active"]:
+        logging.warning("Stream was deactivated before entering main loop")
+        p.kill()
+        return
+    
+    logging.info("Waiting for initial data from DTLS connection...")
+    
+    # Wait for initial byte with timeout
+    import select
+    ready, _, _ = select.select([p.stdout], [], [], 5.0)  # 5 second timeout
+    if ready:
+        p.stdout.read(1)  # read one byte so the init function will correctly detect the frameBites
+        logging.info("Initial byte received, entering main loop")
+    else:
+        logging.warning("No data received from DTLS within 5 seconds")
     
     logging.info("Entering main entertainment loop")
     try:
         while bridgeConfig["groups"][group.id_v1].stream["active"]:
             if not init:
+                # Check if we should still be running
+                if not bridgeConfig["groups"][group.id_v1].stream["active"]:
+                    logging.info("Stream deactivated during initialization")
+                    break
+                    
                 readByte = p.stdout.read(1)
-                logging.debug(readByte)
+                if not readByte:
+                    logging.warning("EOF during initialization")
+                    break
+                    
+                logging.debug(f"Init byte {frameID}: {readByte.hex() if readByte else 'None'}")
                 if readByte in b'\x48\x75\x65\x53\x74\x72\x65\x61\x6d':  # "HueStream"
                     initMatchBytes += 1
                 else:
                     initMatchBytes = 0
                 if initMatchBytes == 9:
                     frameBites = frameID - 8
-                    logging.info(f"HueStream header detected! Frame size: {frameBites} bytes")
+                    logging.info(f"✓ HueStream header detected! Frame size: {frameBites} bytes - Connection established")
                     p.stdout.read(frameBites - 9)  # sync streaming bytes
                     init = True
+                    # Ensure stream is still marked as active
+                    bridgeConfig["groups"][group.id_v1].stream["active"] = True
                 frameID += 1
             else:
                 data = p.stdout.read(frameBites)

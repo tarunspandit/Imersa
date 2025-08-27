@@ -619,18 +619,48 @@ class ClipV2ResourceId(Resource):
             if "action" in putDict:
                 if putDict["action"] == "start":
                     logging.info("start hue entertainment")
-                    Thread(target=entertainmentService, args=[
-                           object, authorisation["user"]]).start()
+                    
+                    # Set stream active FIRST, before starting thread
+                    object.update_attr({"stream": {"active": True, "owner": authorisation["user"].username, "proxymode": "auto", "proxynode": "/bridge"}})
+                    
+                    # Update light modes
                     for light in object.lights:
                         light().update_attr({"state": {"mode": "streaming"}})
-                    object.update_attr({"stream": {"active": True, "owner": authorisation["user"].username, "proxymode": "auto", "proxynode": "/bridge"}})
-                    sleep(1)
+                    
+                    # Start the entertainment service in a daemon thread
+                    entertainment_thread = Thread(target=entertainmentService, args=[object, authorisation["user"]])
+                    entertainment_thread.daemon = True  # Thread will die with main process
+                    entertainment_thread.start()
+                    
+                    # Small delay to ensure thread starts
+                    sleep(0.1)
                 elif putDict["action"] == "stop":
                     logging.info("stop entertainment")
+                    # First set stream to inactive to signal the service to stop gracefully
+                    object.update_attr({"stream": {"active": False}})
+                    
+                    # Update light states
                     for light in object.lights:
                         light().update_attr({"state": {"mode": "homeautomation"}})
-                    Popen(["killall", "openssl"])
-                    object.update_attr({"stream": {"active": False}})
+                    
+                    # Give the service a moment to stop gracefully before killing OpenSSL
+                    sleep(0.5)
+                    
+                    # Only kill OpenSSL if absolutely necessary (use more targeted approach)
+                    try:
+                        # Try to kill only the DTLS server on port 2100
+                        import subprocess
+                        result = subprocess.run(["lsof", "-ti", ":2100"], capture_output=True, text=True)
+                        if result.stdout:
+                            pid = result.stdout.strip()
+                            subprocess.run(["kill", pid])
+                            logging.debug(f"Killed OpenSSL process {pid} on port 2100")
+                    except:
+                        # Fallback to killall if lsof doesn't work
+                        try:
+                            Popen(["killall", "openssl"])
+                        except:
+                            pass
         elif resource == "scene":
             if "recall" in putDict:
                 object.activate(putDict)
