@@ -15,7 +15,7 @@ RUN cd react-ui \
     && npm ci --no-audit --no-fund
 COPY ./react-ui ./react-ui
 RUN cd react-ui \
-    && npm run build:prod
+    && npm install && npm run build:prod
 
 # ============================ Actual image from here ====================
 FROM debian:stable-slim AS prod
