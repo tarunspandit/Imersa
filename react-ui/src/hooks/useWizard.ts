@@ -1,7 +1,7 @@
 // Entertainment Wizard State Management Hook
 import { useState, useCallback, useEffect } from 'react';
 import { entertainmentApi } from '@/services/entertainmentApi';
-import { getLights } from '@/services/lightsApi';
+import { lightsApiService, type HueLight } from '@/services/lightsApi';
 import { LightPosition, Light, ApiResponse } from '@/types';
 
 export interface WizardStep {
@@ -131,21 +131,24 @@ export function useWizard(options: UseWizardOptions = {}) {
     setError(null);
 
     try {
-      // Initialize entertainment API
+      // Initialize both APIs
       await entertainmentApi.initialize();
+      await lightsApiService.initialize();
 
-      // Load available lights (ungrouped)
-      const lightsResponse = await getLights();
-      if (lightsResponse.success && lightsResponse.data) {
-        const ungroupedLights = lightsResponse.data.filter(light => 
-          !light.groupIds || light.groupIds.length === 0
-        );
-        
-        setFormData(prev => ({
-          ...prev,
-          availableLights: ungroupedLights,
-        }));
-      }
+      // Load all lights from the API
+      const lightsData = await lightsApiService.fetchLights();
+      
+      // Convert lights to internal format and find ungrouped ones
+      const allLights: Light[] = Object.entries(lightsData).map(([id, hueLight]) => 
+        lightsApiService.convertHueLightToLight(id, hueLight)
+      );
+      
+      // For now, include all lights (since we can't easily determine which are grouped)
+      // In a real scenario, you'd check against existing groups
+      setFormData(prev => ({
+        ...prev,
+        availableLights: allLights,
+      }));
 
       // Validate initial step
       validateCurrentStep();

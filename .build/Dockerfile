@@ -12,10 +12,10 @@ WORKDIR /build
 # Install and build the React UI
 COPY ./react-ui/package*.json ./react-ui/
 RUN cd react-ui \
-    && npm ci --no-audit --no-fund
+    && npm install && npm ci --no-audit --no-fund
 COPY ./react-ui ./react-ui
 RUN cd react-ui \
-    && npm install && npm run build:prod
+    && npm run build:prod
 
 # ============================ Actual image from here ====================
 FROM debian:stable-slim AS prod
