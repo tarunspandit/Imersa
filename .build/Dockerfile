@@ -7,6 +7,17 @@ WORKDIR /opt/hue-emulator
 ARG TARGETPLATFORM
 
 # ============================ Actual image from here ====================
+FROM node:18-bullseye-slim AS ui-builder
+WORKDIR /build
+# Install and build the React UI
+COPY ./react-ui/package*.json ./react-ui/
+RUN cd react-ui \
+    && npm ci --no-audit --no-fund
+COPY ./react-ui ./react-ui
+RUN cd react-ui \
+    && npm run build:prod
+
+# ============================ Actual image from here ====================
 FROM debian:stable-slim AS prod
 WORKDIR /opt/hue-emulator
 ARG TARGETPLATFORM
@@ -37,16 +48,14 @@ COPY ./BridgeEmulator/HueEmulator3.py /opt/hue-emulator/
 COPY ./BridgeEmulator/githubInstall.sh /opt/hue-emulator/
 
 ## Install the React UI instead of official web interface
-RUN mkdir -p /opt/hue-emulator/react-ui/assets
+RUN mkdir -p /opt/hue-emulator/react-ui
 
-# Copy React UI files
-COPY ./react-ui/dist/index.html /opt/hue-emulator/react-ui/index.html
-COPY ./react-ui/dist/vite.svg /opt/hue-emulator/react-ui/vite.svg
-COPY ./react-ui/dist/assets/* /opt/hue-emulator/react-ui/assets/
+# Copy built React UI from builder stage
+COPY --from=ui-builder /build/react-ui/dist /opt/hue-emulator/react-ui
 
 # Verify files were copied
 RUN ls -la /opt/hue-emulator/react-ui/ && \
-    ls -la /opt/hue-emulator/react-ui/assets/ | head -10
+    ls -la /opt/hue-emulator/react-ui/assets/ | head -10 || true
 
 ## Copy correct (compiled) C file from previous image
 COPY ./BridgeEmulator/genCert.sh ./BridgeEmulator/openssl.conf /opt/hue-emulator/

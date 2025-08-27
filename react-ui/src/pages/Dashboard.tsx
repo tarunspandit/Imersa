@@ -131,7 +131,13 @@ const Dashboard: React.FC = () => {
           <CardContent>
             {recentLights.length > 0 ? (
               <div className="space-y-4">
-                {recentLights.map((light) => (
+                {recentLights.map((light) => {
+                  const r = (light as any)?.color?.r ?? 200;
+                  const g = (light as any)?.color?.g ?? 200;
+                  const b = (light as any)?.color?.b ?? 200;
+                  const brand = (light as any)?.brand ?? (light as any)?.manufacturername ?? 'Unknown';
+                  const type = (light as any)?.type ?? (light as any)?.model ?? 'Light';
+                  return (
                   <div
                     key={light.id}
                     className="flex items-center justify-between p-3 rounded-lg border bg-card"
@@ -140,7 +146,7 @@ const Dashboard: React.FC = () => {
                       <div className="flex items-center space-x-2">
                         <div 
                           className="w-4 h-4 rounded-full"
-                          style={{ backgroundColor: `rgb(${light.color.r}, ${light.color.g}, ${light.color.b})` }}
+                          style={{ backgroundColor: `rgb(${r}, ${g}, ${b})` }}
                         />
                         <Wifi className={`h-4 w-4 ${
                           light.status === 'online' ? 'text-green-500' : 'text-red-500'
@@ -149,7 +155,7 @@ const Dashboard: React.FC = () => {
                       <div>
                         <p className="font-medium">{light.name}</p>
                         <p className="text-sm text-muted-foreground">
-                          {light.type} • {light.brand}
+                          {type} • {brand}
                         </p>
                       </div>
                     </div>
@@ -164,7 +170,7 @@ const Dashboard: React.FC = () => {
                       </p>
                     </div>
                   </div>
-                ))}
+                )})}
                 <div className="pt-2">
                   <Button variant="outline" className="w-full">
                     View All Lights
@@ -235,7 +241,7 @@ const Dashboard: React.FC = () => {
                         {scene.description || 'No description'}
                       </p>
                       <div className="flex items-center justify-between text-xs text-muted-foreground">
-                        <span>{scene.lightSettings.length} lights</span>
+                        <span>{(scene as any).lightSettings?.length ?? (scene as any).lights?.length ?? 0} lights</span>
                         <span className="flex items-center">
                           <Clock className="h-3 w-3 mr-1" />
                           {new Date(scene.updatedAt).toLocaleDateString()}

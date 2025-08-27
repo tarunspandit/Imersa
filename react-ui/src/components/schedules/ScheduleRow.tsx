@@ -92,10 +92,9 @@ const ScheduleRow: React.FC<ScheduleRowProps> = ({
         <div className="flex items-center gap-2">
           <span className="font-medium text-gray-900">{schedule.name}</span>
           {hasConflict && (
-            <AlertTriangle 
-              className="h-4 w-4 text-red-500" 
-              title="Schedule has conflicts"
-            />
+            <span title="Schedule has conflicts">
+              <AlertTriangle className="h-4 w-4 text-red-500" />
+            </span>
           )}
         </div>
         {schedule.description && (
@@ -133,7 +132,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = ({
         <div className="flex items-center gap-2">
           <Switch
             checked={schedule.status === 'enabled'}
-            onChange={handleToggleStatus}
+            onCheckedChange={() => handleToggleStatus()}
             disabled={loading}
             className="mr-2"
           />

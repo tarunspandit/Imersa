@@ -1,11 +1,9 @@
 // Group Card Component with drag-drop support and controls
 import React, { useState, useMemo } from 'react';
 import { 
-  Power, 
   Users, 
   Palette, 
   Sun, 
-  Settings, 
   Trash2, 
   Edit3,
   Home,
@@ -191,9 +189,8 @@ export const GroupCard: React.FC<GroupCardProps> = ({
             {/* Power Toggle */}
             <Switch
               checked={group.isOn}
-              onChange={handleToggle}
+              onCheckedChange={() => handleToggle()}
               disabled={isLoading || isProcessing}
-              size="sm"
             />
 
             {/* Expand/Collapse */}

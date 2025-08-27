@@ -35,7 +35,14 @@ const useAuthStore = create<AuthState>()(
               id: '1',
               name: 'DIYHue Admin',
               email: 'admin@diyhue.org',
-              role: 'admin'
+              role: 'admin',
+              createdAt: new Date().toISOString(),
+              preferences: {
+                theme: 'system',
+                language: 'en',
+                notifications: { email: true, push: false, system: true },
+                dashboard: { compactMode: false, showGrid: true, autoRefresh: true },
+              },
             };
             
             set({

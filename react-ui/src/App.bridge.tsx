@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { Layout } from '@/components/layout';
 import { useAppStore } from '@/stores';
@@ -24,14 +24,13 @@ import SensorsPage from './pages/SensorsPage';
 function App() {
   const { theme } = useAppStore();
   const [loading, setLoading] = useState(true);
-  const [apiKey, setApiKey] = useState<string | null>(null);
+  // API key is stored in localStorage by the bridge
 
   useEffect(() => {
     // Get API key from bridge
     fetch('/get-key')
       .then(res => res.text())
       .then(key => {
-        setApiKey(key);
         // Store it for API calls
         localStorage.setItem('bridge-api-key', key);
         setLoading(false);
