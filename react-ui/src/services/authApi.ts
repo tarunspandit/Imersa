@@ -17,14 +17,14 @@ class AuthService {
 
   constructor() {
     // Get base URL from environment or use current host
-    this.baseUrl = import.meta.env.VITE_API_URL || '';
+    this.baseUrl = (import.meta as any).env?.VITE_API_URL || '';
   }
 
   async getApiKey(): Promise<string> {
     try {
       const response = await axios.get(`${this.baseUrl}/get-key`);
       this.apiKey = response.data;
-      localStorage.setItem('bridge-api-key', this.apiKey);
+      localStorage.setItem('bridge-api-key', this.apiKey || '');
       return this.apiKey;
     } catch (error) {
       console.error('Failed to get API key:', error);
@@ -41,7 +41,7 @@ class AuthService {
       
       if (response.data.success) {
         this.apiKey = response.data.apiKey;
-        localStorage.setItem('bridge-api-key', this.apiKey);
+        localStorage.setItem('bridge-api-key', this.apiKey || '');
         localStorage.setItem('bridge-user', JSON.stringify(response.data.user));
       }
       

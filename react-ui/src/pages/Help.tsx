@@ -45,7 +45,7 @@ const Help: React.FC = () => {
   };
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-6 space-y-6 pb-20">
       <div>
         <h1 className="text-3xl font-bold">Help Center</h1>
         <p className="text-muted-foreground mt-1">

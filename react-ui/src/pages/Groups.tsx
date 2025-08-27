@@ -197,7 +197,7 @@ const Groups: React.FC = () => {
   ];
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-6 space-y-6 pb-20">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -343,8 +343,7 @@ const Groups: React.FC = () => {
               <label className="flex items-center space-x-2 text-sm">
                 <Switch
                   checked={groupByRoom}
-                  onChange={setGroupByRoom}
-                  size="sm"
+                  onCheckedChange={setGroupByRoom}
                 />
                 <span>Group by Room</span>
               </label>
@@ -352,8 +351,7 @@ const Groups: React.FC = () => {
               <label className="flex items-center space-x-2 text-sm">
                 <Switch
                   checked={showBulkActions}
-                  onChange={setShowBulkActions}
-                  size="sm"
+                  onCheckedChange={setShowBulkActions}
                 />
                 <span>Bulk Actions</span>
               </label>

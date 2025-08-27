@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   Lightbulb, 
   Layers, 
@@ -7,14 +7,24 @@ import {
   TrendingUp, 
   Activity,
   Clock,
-  Wifi
+  Wifi,
+  Power,
+  Sun,
+  Moon,
+  Palette,
+  Home
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, Button } from '@/components/ui';
+import { QuickActionBar, presetActions } from '@/components/ui/QuickActionBar';
 import { useLightsStore, useAppStore } from '@/stores';
+import { toast } from 'react-hot-toast';
+import { useNavigate } from 'react-router-dom';
 
 const Dashboard: React.FC = () => {
   const { lights, groups, scenes, fetchLights, fetchGroups, fetchScenes } = useLightsStore();
   const { addNotification } = useAppStore();
+  const navigate = useNavigate();
+  const [showQuickActions, setShowQuickActions] = useState(true);
 
   useEffect(() => {
     // Fetch all data on mount
@@ -52,7 +62,7 @@ const Dashboard: React.FC = () => {
   const recentScenes = scenes.slice(0, 4);
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-6 space-y-6 pb-24">
       {/* Welcome header */}
       <div>
         <h1 className="text-3xl font-bold text-gradient">Dashboard</h1>
@@ -261,6 +271,7 @@ const Dashboard: React.FC = () => {
           )}
         </CardContent>
       </Card>
+
     </div>
   );
 };

@@ -16,3 +16,12 @@ export {
 export { Slider } from './Slider';
 export { Switch } from './Switch';
 export { Wizard } from './Wizard';
+export { QuickActionBar, presetActions } from './QuickActionBar';
+export { UniversalSearch, useUniversalSearch } from './UniversalSearch';
+export { 
+  SkeletonLoader, 
+  CardSkeleton, 
+  LightCardSkeleton, 
+  TableRowSkeleton, 
+  ListSkeleton 
+} from './SkeletonLoader';

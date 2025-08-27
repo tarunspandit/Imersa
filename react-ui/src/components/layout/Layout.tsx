@@ -1,14 +1,21 @@
 import React, { useState } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useNavigate } from 'react-router-dom';
 import { Header } from './Header';
 import { Sidebar } from './Sidebar';
-import { Footer } from './Footer';
+import { SimpleFooter } from './SimpleFooter';
+import { UniversalSearch, useUniversalSearch } from '@/components/ui/UniversalSearch';
+import { QuickActionBar } from '@/components/ui/QuickActionBar';
 import { useAppStore } from '@/stores';
 import { cn } from '@/utils';
+import { Power, Sun, Moon, Play, Home } from 'lucide-react';
+import { toast } from 'react-hot-toast';
 
 const Layout: React.FC = () => {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const { sidebarCollapsed } = useAppStore();
+  const { isOpen: isSearchOpen, close: closeSearch } = useUniversalSearch();
+  const navigate = useNavigate();
+  const [showQuickActions, setShowQuickActions] = useState(true);
 
   const handleMobileMenuToggle = () => {
     setIsMobileSidebarOpen(!isMobileSidebarOpen);
@@ -20,18 +27,14 @@ const Layout: React.FC = () => {
 
   return (
     <div className="min-h-screen flex">
-      {/* Sidebar */}
+      {/* Sidebar - handles both mobile and desktop */}
       <Sidebar 
         isOpen={isMobileSidebarOpen} 
         onClose={closeMobileSidebar}
       />
 
       {/* Main content area */}
-      <div className={cn(
-        "flex-1 flex flex-col transition-all duration-300 ease-in-out",
-        "md:ml-0", // On mobile, sidebar is overlay so no margin needed
-        !sidebarCollapsed ? "md:ml-64" : "md:ml-16" // On desktop, adjust for sidebar
-      )}>
+      <div className="flex-1 flex flex-col">
         {/* Header */}
         <Header onMenuClick={handleMobileMenuToggle} />
 
@@ -42,9 +45,76 @@ const Layout: React.FC = () => {
           </div>
         </main>
 
-        {/* Footer */}
-        <Footer />
+        {/* Simple Footer */}
+        <SimpleFooter />
       </div>
+
+
+      {/* Universal Search Modal */}
+      <UniversalSearch isOpen={isSearchOpen} onClose={closeSearch} />
+
+      {/* Global Quick Action Bar - Desktop Only */}
+      {showQuickActions && (
+        <div className="hidden md:block">
+          <QuickActionBar
+            actions={[
+              {
+                id: 'all-on',
+                label: 'All On',
+                icon: Power,
+                action: () => {
+                  toast.success('All lights turned on');
+                },
+                variant: 'default'
+              },
+              {
+                id: 'all-off',
+                label: 'All Off',
+                icon: Power,
+                action: () => {
+                  toast.success('All lights turned off');
+                },
+                variant: 'outline'
+              },
+              {
+                id: 'bright',
+                label: 'Bright',
+                icon: Sun,
+                action: () => {
+                  toast('Setting all lights to maximum brightness');
+                }
+              },
+              {
+                id: 'dim',
+                label: 'Dim',
+                icon: Moon,
+                action: () => {
+                  toast('Dimming all lights to 30%');
+                }
+              },
+              {
+                id: 'scenes',
+                label: 'Scenes',
+                icon: Play,
+                action: () => {
+                  navigate('/scenes');
+                }
+              },
+              {
+                id: 'rooms',
+                label: 'Rooms',
+                icon: Home,
+                action: () => {
+                  navigate('/groups');
+                }
+              }
+            ]}
+            position="bottom"
+            floating={true}
+            className="mb-4"
+          />
+        </div>
+      )}
     </div>
   );
 };

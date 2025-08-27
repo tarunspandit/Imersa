@@ -97,7 +97,7 @@ const EntertainmentWizard: React.FC = () => {
       case 1:
         return (
           <Card>
-            <CardContent className="p-6 space-y-6">
+            <CardContent className="p-6 space-y-6 pb-20">
               <div>
                 <h3 className="text-lg font-medium text-gray-900 mb-4">
                   Entertainment Area Information
