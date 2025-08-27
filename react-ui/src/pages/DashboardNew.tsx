@@ -10,6 +10,7 @@ import { useLights } from '@/hooks/useLights';
 import { toast } from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '@/utils';
+import { ParticleField } from '@/components/effects/ParticleField';
 
 // Import design system
 import '@/styles/design-system.css';
@@ -19,6 +20,7 @@ const DashboardNew: React.FC = () => {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [selectedRoom, setSelectedRoom] = useState<string | null>(null);
   const [hoveredRoom, setHoveredRoom] = useState<string | null>(null);
+  const [sceneActivating, setSceneActivating] = useState(false);
 
   const {
     groups,
@@ -98,6 +100,7 @@ const DashboardNew: React.FC = () => {
   // Scene activation
   const handleSceneActivate = async (sceneId: string) => {
     try {
+      setSceneActivating(true);
       const scene = scenes.find(s => s.id === sceneId);
       if (!scene) return;
 
@@ -116,6 +119,8 @@ const DashboardNew: React.FC = () => {
       }
     } catch (error) {
       toast.error('Failed to activate scene');
+    } finally {
+      setTimeout(() => setSceneActivating(false), 2000);
     }
   };
 
@@ -147,11 +152,14 @@ const DashboardNew: React.FC = () => {
         <div className="ambient-orb ambient-orb-3"></div>
       </div>
 
+      {/* Particle Effects for Scene Transitions */}
+      <ParticleField active={sceneActivating} count={50} />
+
       {/* Main Content */}
       <div className="relative z-10 p-8 space-y-8">
         
         {/* Header Section */}
-        <div className="glass-card p-8">
+        <div className="glass-card p-8 gradient-border">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-6">
               <div className="nav-orb">
@@ -169,24 +177,27 @@ const DashboardNew: React.FC = () => {
 
             {/* Quick Stats */}
             <div className="flex gap-8">
-              <div className="text-center">
+              <div className="text-center holo-card p-4 rounded-xl">
                 <div className="text-3xl font-bold text-imersa-glow-primary">
                   {totalLightsOn}
                 </div>
                 <div className="text-sm text-gray-400">Lights Active</div>
+                <div className="energy-bar mt-2"></div>
               </div>
-              <div className="text-center">
+              <div className="text-center holo-card p-4 rounded-xl">
                 <div className="text-3xl font-bold text-imersa-glow-warm">
                   {roomGroups.filter(r => r.isOn).length}
                 </div>
                 <div className="text-sm text-gray-400">Rooms Active</div>
+                <div className="energy-bar mt-2"></div>
               </div>
-              <div className="text-center">
-                <div className="text-3xl font-bold text-imersa-glow-cool flex items-center gap-1">
-                  <Zap className="w-6 h-6" />
+              <div className="text-center holo-card p-4 rounded-xl">
+                <div className="text-3xl font-bold text-imersa-glow-cool flex items-center justify-center gap-1">
+                  <Zap className="w-6 h-6 interactive-glow" />
                   {Math.round(energyUsage)}W
                 </div>
                 <div className="text-sm text-gray-400">Energy Usage</div>
+                <div className="energy-bar mt-2"></div>
               </div>
             </div>
           </div>
@@ -239,7 +250,10 @@ const DashboardNew: React.FC = () => {
               return (
                 <div
                   key={room.id}
-                  className="room-card"
+                  className={cn(
+                    "room-card light-beam",
+                    room.isOn && "holo-card"
+                  )}
                   onClick={() => handleRoomToggle(room.id)}
                   onMouseEnter={() => setHoveredRoom(room.id)}
                   onMouseLeave={() => setHoveredRoom(null)}
@@ -247,7 +261,7 @@ const DashboardNew: React.FC = () => {
                   {/* Room Icon & Status */}
                   <div className="flex items-start justify-between mb-4">
                     <div className={cn(
-                      "w-12 h-12 rounded-full flex items-center justify-center transition-all",
+                      "w-12 h-12 rounded-full flex items-center justify-center transition-all interactive-glow",
                       room.isOn 
                         ? "bg-gradient-to-br from-yellow-400 to-orange-500 shadow-lg" 
                         : "bg-gray-800"
@@ -295,14 +309,16 @@ const DashboardNew: React.FC = () => {
 
             {/* Add Room Card */}
             <div 
-              className="room-card flex items-center justify-center cursor-pointer opacity-60 hover:opacity-100"
+              className="gradient-border group cursor-pointer"
               onClick={() => navigate('/groups')}
             >
-              <div className="text-center">
-                <div className="w-16 h-16 rounded-full bg-imersa-surface flex items-center justify-center mx-auto mb-3">
-                  <Plus className="w-8 h-8 text-gray-400" />
+              <div className="room-card flex items-center justify-center opacity-60 group-hover:opacity-100 transition-opacity">
+                <div className="text-center">
+                  <div className="w-16 h-16 rounded-full bg-imersa-surface flex items-center justify-center mx-auto mb-3 interactive-glow">
+                    <Plus className="w-8 h-8 text-gray-400 group-hover:text-imersa-glow-primary transition-colors" />
+                  </div>
+                  <p className="text-gray-400 group-hover:text-white transition-colors">Add Room</p>
                 </div>
-                <p className="text-gray-400">Add Room</p>
               </div>
             </div>
           </div>
