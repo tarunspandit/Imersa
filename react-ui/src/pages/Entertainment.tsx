@@ -41,7 +41,7 @@ const Entertainment: React.FC = () => {
     name: '',
     lights: [],
     type: 'Entertainment' as const,
-    class: 'Other',
+    class: 'Other', // Default value, not shown to user
   });
 
   // Handle create area
@@ -257,23 +257,6 @@ const Entertainment: React.FC = () => {
             />
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">
-              Room Class
-            </label>
-            <select
-              value={createForm.class}
-              onChange={(e) => setCreateForm(prev => ({ ...prev, class: e.target.value }))}
-              className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500"
-            >
-              <option value="Living room">Living Room</option>
-              <option value="Bedroom">Bedroom</option>
-              <option value="Kitchen">Kitchen</option>
-              <option value="Office">Office</option>
-              <option value="Recreation">Recreation</option>
-              <option value="Other">Other</option>
-            </select>
-          </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">

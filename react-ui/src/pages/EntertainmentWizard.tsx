@@ -178,25 +178,6 @@ const EntertainmentWizard: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Room Class */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-2">
-                      Room Type
-                    </label>
-                    <select
-                      value={formData.roomClass}
-                      onChange={(e) => updateFormData({ roomClass: e.target.value })}
-                      className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-yellow-500"
-                    >
-                      <option value="Living room">Living Room</option>
-                      <option value="Bedroom">Bedroom</option>
-                      <option value="Kitchen">Kitchen</option>
-                      <option value="Dining">Dining Room</option>
-                      <option value="Office">Office</option>
-                      <option value="Recreation">Recreation Room</option>
-                      <option value="Other">Other</option>
-                    </select>
-                  </div>
                 </div>
               </div>
             </div>

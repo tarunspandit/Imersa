@@ -10,12 +10,15 @@ import {
   Maximize2,
   Settings,
   Monitor,
-  Box
+  Box,
+  Move3d
 } from 'lucide-react';
-import { Button, Card, CardContent, CardHeader, CardTitle, Input, Slider } from '@/components/ui';
+import { Button, Input, Slider } from '@/components/ui';
+import { Room3DPositioner } from '@/components/entertainment/Room3DPositioner';
 import { LightPosition } from '@/types';
 import { RoomTemplate } from '@/hooks/useWizard';
 import { cn } from '@/utils';
+import '@/styles/design-system.css';
 
 interface PositionMapperProps {
   selectedLights: string[];
@@ -35,6 +38,7 @@ interface ViewSettings {
   showLabels: boolean;
   gridSize: number;
   canvasSize: number;
+  view3DMode: boolean;
 }
 
 interface DragState {
@@ -69,6 +73,7 @@ export const PositionMapper: React.FC<PositionMapperProps> = ({
     showLabels: true,
     gridSize: 10,
     canvasSize: 400,
+    view3DMode: true,
   });
 
   // Filter templates for current configuration type
@@ -367,59 +372,55 @@ export const PositionMapper: React.FC<PositionMapperProps> = ({
     );
   };
 
+  // Convert positions to format expected by 3D positioner
+  const lights3D = useMemo(() => {
+    return selectedLights.map(lightId => ({
+      lightId,
+      lightName: positions[lightId]?.lightName || `Light ${lightId}`,
+      x: positions[lightId]?.x || 0,
+      y: positions[lightId]?.y || 1,
+      z: positions[lightId]?.z || 0,
+    }));
+  }, [selectedLights, positions]);
+
   return (
-    <Card className={className}>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <CardTitle className="flex items-center space-x-2">
-            <Move className="w-5 h-5" />
-            <span>Position Lights</span>
-            <span className="text-sm font-normal text-gray-500">
+    <div className={cn('glass-card p-6', className)}>
+      <div>
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-xl font-semibold text-white flex items-center gap-2">
+            <Move3d className="w-5 h-5 text-imersa-glow-primary" />
+            Position Lights
+            <span className="text-sm font-normal text-gray-400">
               ({configurationType === 'screen' ? '2D Screen' : '3D Space'})
             </span>
-          </CardTitle>
+          </h3>
           
-          <div className="flex items-center space-x-2">
-            {/* View Controls */}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setViewSettings(prev => ({ ...prev, showGrid: !prev.showGrid }))}
-              className={cn(viewSettings.showGrid && 'bg-blue-50')}
+          <div className="flex items-center gap-2">
+            {/* Toggle between 2D and 3D views */}
+            <button
+              onClick={() => setViewSettings(prev => ({ ...prev, view3DMode: !prev.view3DMode }))}
+              className={cn(
+                'px-3 py-2 rounded-lg transition-all flex items-center gap-2',
+                viewSettings.view3DMode
+                  ? 'bg-gradient-to-r from-yellow-400 to-orange-500 text-gray-900'
+                  : 'bg-white/10 hover:bg-white/20 text-gray-300'
+              )}
             >
-              <Grid className="w-4 h-4" />
-            </Button>
-            
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setViewSettings(prev => ({ ...prev, show3D: !prev.show3D }))}
-              className={cn(viewSettings.show3D && 'bg-blue-50')}
-            >
-              {viewSettings.show3D ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
-            </Button>
-            
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setViewSettings(prev => ({ ...prev, showLabels: !prev.showLabels }))}
-              className={cn(viewSettings.showLabels && 'bg-blue-50')}
-            >
-              <Target className="w-4 h-4" />
-            </Button>
+              <Move3d className="w-4 h-4" />
+              {viewSettings.view3DMode ? '3D View' : '2D View'}
+            </button>
           </div>
         </div>
-      </CardHeader>
 
-      <CardContent className="space-y-6">
+      <div className="space-y-6">
         {/* Empty State */}
         {selectedLights.length === 0 && (
           <div className="text-center py-8">
-            <Move className="w-12 h-12 text-gray-400 mx-auto mb-3" />
-            <p className="text-lg font-medium text-gray-900 mb-2">
+            <Move3d className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+            <p className="text-lg font-medium text-white mb-2">
               No lights selected
             </p>
-            <p className="text-gray-600">
+            <p className="text-gray-400">
               Select lights in the previous step to position them here.
             </p>
           </div>
@@ -430,95 +431,80 @@ export const PositionMapper: React.FC<PositionMapperProps> = ({
             {/* Templates Section */}
             {availableTemplates.length > 0 && (
               <div>
-                <h3 className="text-sm font-medium text-gray-900 mb-3 flex items-center space-x-2">
+                <h3 className="text-sm font-medium text-gray-300 mb-3 flex items-center gap-2">
                   {configurationType === 'screen' ? <Monitor className="w-4 h-4" /> : <Box className="w-4 h-4" />}
                   <span>Room Templates</span>
                 </h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {availableTemplates.map((template) => (
-                    <Button
+                    <button
                       key={template.id}
-                      variant="outline"
-                      size="sm"
                       onClick={() => onApplyTemplate(template)}
-                      className="text-left h-auto p-3 hover:bg-blue-50"
+                      className="text-left h-auto p-3 glass-card hover:border-imersa-glow-primary/30 transition-all"
                     >
                       <div>
-                        <div className="font-medium text-sm">{template.name}</div>
-                        <div className="text-xs text-gray-500 mt-1">
+                        <div className="font-medium text-sm text-white">{template.name}</div>
+                        <div className="text-xs text-gray-400 mt-1">
                           {template.description}
                         </div>
                       </div>
-                    </Button>
+                    </button>
                   ))}
                 </div>
               </div>
             )}
 
-            {/* Action Buttons */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={onAutoArrange}
-                >
-                  Auto Arrange
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={onResetPositions}
-                >
-                  <RotateCcw className="w-4 h-4 mr-1" />
-                  Reset
-                </Button>
-              </div>
-              
-              <div className="text-sm text-gray-600">
-                {selectedLights.length} light{selectedLights.length !== 1 ? 's' : ''} to position
-              </div>
-            </div>
+            {/* Show 3D Positioner or 2D Editor */}
+            {viewSettings.view3DMode ? (
+              <Room3DPositioner
+                lights={lights3D}
+                configurationType={configurationType}
+                onUpdatePosition={(lightId, position) => {
+                  onUpdatePosition(lightId, position);
+                }}
+                onAutoArrange={onAutoArrange}
+              />
+            ) : (
 
-            {/* Main Layout */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Visual Editor */}
-              <div className="lg:col-span-2">
-                <h3 className="text-sm font-medium text-gray-900 mb-3">
-                  Visual Position Editor
-                </h3>
+              /* 2D Editor */
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Visual Editor */}
+                <div className="lg:col-span-2">
+                  <h3 className="text-sm font-medium text-gray-300 mb-3">
+                    2D Position Editor
+                  </h3>
                 {renderVisualization()}
-                
-                {/* View Settings */}
-                <div className="mt-4 p-3 bg-gray-50 rounded-lg">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-gray-700">Grid Size</span>
-                    <div className="flex items-center space-x-2">
-                      <span className="text-xs text-gray-500">{viewSettings.gridSize}</span>
-                      <Slider
+                  
+                  {/* View Settings */}
+                  <div className="mt-4 p-3 glass-card">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium text-gray-300">Grid Size</span>
+                      <div className="flex items-center space-x-2">
+                        <span className="text-xs text-gray-400">{viewSettings.gridSize}</span>
+                        <Slider
                         value={[viewSettings.gridSize]}
                         onValueChange={([value]) => setViewSettings(prev => ({ ...prev, gridSize: value }))}
                         min={5}
                         max={20}
                         step={1}
-                        className="w-20"
-                      />
+                          className="w-20"
+                        />
+                      </div>
                     </div>
                   </div>
-                </div>
                 
-                <div className="text-xs text-gray-500 mt-2 space-y-1">
-                  <p>• Drag lights to position them in your space</p>
-                  <p>• Coordinates range from -1 to 1 in each axis</p>
-                  <p>• {configurationType === 'screen' ? 'Y=0.6 is typical for screen height' : 'Use Z-axis for depth positioning'}</p>
+                  <div className="text-xs text-gray-400 mt-2 space-y-1">
+                    <p>• Drag lights to position them in your space</p>
+                    <p>• Coordinates range from -1 to 1 in each axis</p>
+                    <p>• {configurationType === 'screen' ? 'Y=0.6 is typical for screen height' : 'Use Z-axis for depth positioning'}</p>
+                  </div>
                 </div>
-              </div>
 
-              {/* Position Controls */}
-              <div className="space-y-4">
-                <h3 className="text-sm font-medium text-gray-900">
-                  Precise Coordinates
-                </h3>
+                {/* Position Controls */}
+                <div className="space-y-4">
+                  <h3 className="text-sm font-medium text-gray-300">
+                    Precise Coordinates
+                  </h3>
                 
                 <div className="max-h-80 overflow-y-auto space-y-3">
                   {selectedLights.map((lightId) => {
@@ -577,8 +563,11 @@ export const PositionMapper: React.FC<PositionMapperProps> = ({
             </div>
           </>
         )}
-      </CardContent>
-    </Card>
+            )}
+          </>
+        )}
+      </div>
+    </div>
   );
 };
 
