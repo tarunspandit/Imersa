@@ -761,6 +761,14 @@ class ClipV2ResourceId(Resource):
         if "user" not in authorisation:
             return "", 403
         object = getObject(resource, resourceid)
+        
+        # Clean up Hue bridge entertainment group if deleting entertainment_configuration
+        if resource == "entertainment_configuration" and object:
+            try:
+                from services.entertainment_hue_sync import delete_hue_entertainment_group
+                delete_hue_entertainment_group(object.name)
+            except:
+                pass  # Don't fail deletion if cleanup fails
 
         if hasattr(object, 'getObjectPath'):
             del bridgeConfig[object.getObjectPath()["resource"]
