@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, Button, Input, Switch } from '@/components/ui';
+import { PageWrapper } from '@/components/layout/PageWrapper';
+import '@/styles/design-system.css';
 import bridgeService, { BridgeConfig, SystemInfo } from '@/services/bridgeApi';
 import { 
   Save, Download, Upload, RefreshCw, Shield, Network, 
   Clock, Database, AlertTriangle, CheckCircle, Loader2,
-  FileDown, FileUp, Trash2, Settings, Info, Bug
+  FileDown, FileUp, Trash2, Settings, Info, Bug, Link
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import dayjs from 'dayjs';
@@ -22,7 +23,7 @@ const BridgeManagement: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [activeModal, setActiveModal] = useState<string | null>(null);
+  const [linkButtonTimer, setLinkButtonTimer] = useState(0);
   
   const clientTimezone = dayjs.tz.guess();
 
@@ -31,6 +32,18 @@ const BridgeManagement: React.FC = () => {
     fetchSystemInfo();
     fetchTimezones();
   }, []);
+
+  useEffect(() => {
+    if (linkButtonTimer > 0) {
+      const timer = setTimeout(() => {
+        setLinkButtonTimer(linkButtonTimer - 1);
+      }, 1000);
+      return () => clearTimeout(timer);
+    } else if (linkButtonTimer === 0 && config.linkbutton) {
+      // Auto-disable link button after timer expires
+      handleConfigChange('linkbutton', false);
+    }
+  }, [linkButtonTimer, config.linkbutton]);
 
   const fetchConfig = async () => {
     try {
@@ -79,6 +92,18 @@ const BridgeManagement: React.FC = () => {
   const handleConfigChange = (key: keyof BridgeConfig, value: any) => {
     setConfig(prev => ({ ...prev, [key]: value }));
     setHasChanges(true);
+  };
+
+  const handleLinkButton = async () => {
+    try {
+      handleConfigChange('linkbutton', true);
+      setLinkButtonTimer(30); // 30 second timer
+      toast.success('Link button activated for 30 seconds');
+      // Save the config immediately
+      await bridgeService.updateConfig({ ...config, linkbutton: true });
+    } catch (error) {
+      toast.error('Failed to activate link button');
+    }
   };
 
   const handleSaveConfig = async () => {
@@ -147,460 +172,376 @@ const BridgeManagement: React.FC = () => {
     try {
       await bridgeService.restart();
       toast.success('Bridge restarting...');
-      
-      // Wait and refresh
-      setTimeout(() => {
-        window.location.reload();
-      }, 5000);
+      setTimeout(() => window.location.reload(), 5000);
     } catch (error) {
       toast.error('Failed to restart bridge');
     }
   };
 
-  const handleResetConfig = async () => {
-    if (!confirm('Are you sure you want to reset the configuration to defaults? This will create a backup first.')) return;
+  const handleReset = async () => {
+    if (!confirm('WARNING: This will reset ALL settings and lights. Are you sure?')) return;
+    if (!confirm('This action cannot be undone. Continue?')) return;
     
     try {
       await bridgeService.resetConfig();
-      toast.success('Configuration reset to defaults');
-      await handleRestart();
+      toast.success('Bridge reset successfully');
+      setTimeout(() => window.location.reload(), 3000);
     } catch (error) {
-      toast.error('Failed to reset configuration');
-    }
-  };
-
-  const handleRestoreConfig = async () => {
-    if (!confirm('Are you sure you want to restore from backup? Current configuration will be lost.')) return;
-    
-    try {
-      await bridgeService.restoreConfig();
-      toast.success('Configuration restored from backup');
-      await handleRestart();
-    } catch (error) {
-      toast.error('Failed to restore configuration');
-    }
-  };
-
-  const handleRemoveCertificate = async () => {
-    if (!confirm('Are you sure you want to remove the SSL certificate? This will create a backup first.')) return;
-    
-    try {
-      await bridgeService.removeCertificate();
-      toast.success('Certificate removed');
-      await handleRestart();
-    } catch (error) {
-      toast.error('Failed to remove certificate');
+      toast.error('Failed to reset bridge');
     }
   };
 
   if (isLoading) {
     return (
-      <div className="flex justify-center items-center h-screen">
-        <Loader2 className="w-8 h-8 animate-spin" />
-      </div>
+      <PageWrapper
+        icon={<Settings className="w-8 h-8 text-imersa-dark" />}
+        title="Bridge Management"
+        subtitle="Loading bridge configuration..."
+      >
+        <div className="glass-card p-8 text-center">
+          <Loader2 className="w-8 h-8 animate-spin mx-auto text-imersa-accent" />
+          <p className="text-gray-400 mt-2">Loading configuration...</p>
+        </div>
+      </PageWrapper>
     );
   }
 
   return (
-    <div className="p-6 space-y-6 pb-20">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold">Bridge Management</h1>
-          <p className="text-muted-foreground mt-1">
-            Configure and manage your DiyHue bridge
-          </p>
-        </div>
-        {hasChanges && (
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-yellow-600 flex items-center gap-1">
-              <AlertTriangle className="w-4 h-4" />
-              Unsaved changes
-            </span>
-            <Button onClick={handleSave} disabled={isSaving}>
-              {isSaving ? (
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              ) : (
-                <Save className="w-4 h-4 mr-2" />
-              )}
-              Save Changes
-            </Button>
+    <PageWrapper
+      icon={<Settings className="w-8 h-8 text-imersa-dark" />}
+      title="Bridge Management"
+      subtitle="Configure and manage your Imersa bridge"
+      actions={
+        hasChanges && (
+          <button
+            onClick={handleSave}
+            disabled={isSaving}
+            className="btn-glow flex items-center gap-2"
+          >
+            {isSaving ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Save className="w-4 h-4" />
+            )}
+            Save Changes
+          </button>
+        )
+      }
+    >
+      {/* Link Button Alert */}
+      {linkButtonTimer > 0 && (
+        <div className="glass-card p-4 border-green-500/20 bg-green-500/10 animate-pulse">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-lg bg-green-500/20 flex items-center justify-center">
+                <Link className="w-6 h-6 text-green-400" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-green-400">Link Button Active</h3>
+                <p className="text-green-300 text-sm">
+                  Press the sync button on your app now
+                </p>
+              </div>
+            </div>
+            <div className="text-center">
+              <span className="text-3xl font-mono text-green-400">{linkButtonTimer}s</span>
+              <p className="text-xs text-gray-400">remaining</p>
+            </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Bridge Configuration */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Bridge Configuration</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <label className="text-sm font-medium">Bridge Name</label>
-              <Input
-                value={config.name || ''}
-                onChange={(e) => handleConfigChange('name', e.target.value)}
-                placeholder="DiyHue Bridge"
-              />
+      {/* System Info */}
+      {systemInfo && (
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="glass-card p-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center">
+                <Info className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <p className="text-xs text-gray-400">Version</p>
+                <p className="font-semibold text-white">{systemInfo.version}</p>
+              </div>
             </div>
-
-            <div>
-              <label className="text-sm font-medium">
-                Software Version (auto-updates at {config.swupdate2?.autoinstall?.updatetime})
-              </label>
-              <Input
-                value={config.swversion || ''}
-                onChange={(e) => handleConfigChange('swversion', e.target.value)}
-                placeholder="1935144020"
-              />
-              <a 
-                href="https://www.philips-hue.com/en-gb/support/release-notes/bridge" 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="text-xs text-blue-500 hover:underline"
-              >
-                Check latest versions
-              </a>
+          </div>
+          
+          <div className="glass-card p-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-green-400 to-emerald-500 flex items-center justify-center">
+                <Database className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <p className="text-xs text-gray-400">Lights</p>
+                <p className="font-semibold text-white">{systemInfo.lights_count || 0}</p>
+              </div>
             </div>
-
-            <div>
-              <label className="text-sm font-medium">API Version</label>
-              <Input
-                value={config.apiversion || ''}
-                onChange={(e) => handleConfigChange('apiversion', e.target.value)}
-                placeholder="1.56.0"
-              />
+          </div>
+          
+          <div className="glass-card p-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-purple-400 to-indigo-500 flex items-center justify-center">
+                <Shield className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <p className="text-xs text-gray-400">Users</p>
+                <p className="font-semibold text-white">{systemInfo.whitelist_count || 0}</p>
+              </div>
             </div>
+          </div>
+          
+          <div className="glass-card p-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-orange-400 to-red-500 flex items-center justify-center">
+                <Clock className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <p className="text-xs text-gray-400">Uptime</p>
+                <p className="font-semibold text-white">
+                  {systemInfo.uptime ? `${Math.floor(systemInfo.uptime / 3600)}h` : 'N/A'}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
+      {/* Basic Settings */}
+      <div className="glass-card p-6">
+        <h2 className="text-xl font-bold text-white mb-6">Basic Settings</h2>
+        <div className="space-y-4">
+          <div>
+            <label className="text-sm font-medium text-gray-300 mb-1 block">Bridge Name</label>
+            <input
+              className="w-full p-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-400"
+              value={config.name || ''}
+              onChange={(e) => handleConfigChange('name', e.target.value)}
+              placeholder="My Imersa Bridge"
+            />
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="text-sm font-medium">
-                Timezone (suggested: {clientTimezone})
-              </label>
-              <select 
-                className="w-full p-2 border rounded-lg"
-                value={config.timezone || ''}
+              <label className="text-sm font-medium text-gray-300 mb-1 block">Timezone</label>
+              <select
+                className="w-full p-2 bg-white/10 border border-white/20 rounded-lg text-white"
+                value={config.timezone || clientTimezone}
                 onChange={(e) => handleConfigChange('timezone', e.target.value)}
               >
-                <option value="">Select timezone</option>
+                <option value={clientTimezone} className="bg-imersa-midnight">
+                  {clientTimezone} (Current)
+                </option>
                 {timezones.map(tz => (
-                  <option key={tz} value={tz}>{tz}</option>
+                  <option key={tz} value={tz} className="bg-imersa-midnight">{tz}</option>
                 ))}
               </select>
             </div>
-
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="font-medium">Debug Logging</div>
-                  <div className="text-sm text-muted-foreground">
-                    Enable detailed logging (temporary)
-                  </div>
-                </div>
-                <Switch
-                  checked={config.LogLevel === 'DEBUG'}
-                  onCheckedChange={(checked) => 
-                    handleConfigChange('LogLevel', checked ? 'DEBUG' : 'INFO')
-                  }
-                />
-              </div>
-
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="font-medium">Remote API</div>
-                  <div className="text-sm text-muted-foreground">
-                    Enable remote access to the bridge
-                  </div>
-                </div>
-                <Switch
-                  checked={config['Remote API enabled'] || false}
-                  onCheckedChange={(checked) => 
-                    handleConfigChange('Remote API enabled', checked)
-                  }
-                />
-              </div>
-
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="font-medium">Discovery</div>
-                  <div className="text-sm text-muted-foreground">
-                    Allow bridge to be discovered on network
-                  </div>
-                </div>
-                <Switch
-                  checked={config.discovery !== false}
-                  onCheckedChange={(checked) => 
-                    handleConfigChange('discovery', checked)
-                  }
-                />
-              </div>
-
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="font-medium">Link Button</div>
-                  <div className="text-sm text-muted-foreground">
-                    Allow new applications to connect
-                  </div>
-                </div>
-                <Switch
-                  checked={config.linkbutton || false}
-                  onCheckedChange={(checked) => 
-                    handleConfigChange('linkbutton', checked)
-                  }
-                />
-              </div>
+            
+            <div>
+              <label className="text-sm font-medium text-gray-300 mb-1 block">Port</label>
+              <input
+                type="number"
+                className="w-full p-2 bg-white/10 border border-white/20 rounded-lg text-white"
+                value={config.port || 80}
+                onChange={(e) => handleConfigChange('port', parseInt(e.target.value))}
+                min="1"
+                max="65535"
+              />
             </div>
-          </CardContent>
-        </Card>
-
-        {/* Read-only Information */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Bridge Information</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="text-sm text-muted-foreground">Bridge ID</label>
-                <p className="font-mono text-sm">{config.bridgeid}</p>
-              </div>
-              <div>
-                <label className="text-sm text-muted-foreground">MAC Address</label>
-                <p className="font-mono text-sm">{config.mac}</p>
-              </div>
-              <div>
-                <label className="text-sm text-muted-foreground">IP Address</label>
-                <p className="font-mono text-sm">{config.ipaddress}</p>
-              </div>
-              <div>
-                <label className="text-sm text-muted-foreground">Gateway</label>
-                <p className="font-mono text-sm">{config.gateway}</p>
-              </div>
-              <div>
-                <label className="text-sm text-muted-foreground">Netmask</label>
-                <p className="font-mono text-sm">{config.netmask}</p>
-              </div>
-              <div>
-                <label className="text-sm text-muted-foreground">Zigbee Channel</label>
-                <p className="font-mono text-sm">{config.zigbeechannel}</p>
-              </div>
-            </div>
-
-            {systemInfo && (
-              <div className="pt-4 border-t">
-                <h4 className="font-medium mb-3">System Information</h4>
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">DiyHue Version:</span>
-                    <span className="font-mono">{systemInfo.diyhue}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">WebUI Version:</span>
-                    <span className="font-mono">{systemInfo.webui}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Architecture:</span>
-                    <span className="font-mono">{systemInfo.machine}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">OS:</span>
-                    <span className="font-mono">{systemInfo.sysname}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">OS Version:</span>
-                    <span className="font-mono">{systemInfo.os_version}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">OS Release:</span>
-                    <span className="font-mono">{systemInfo.os_release}</span>
-                  </div>
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Bridge Control */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Bridge Control</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Button
-              variant="outline"
-              className="w-full"
-              onClick={() => setShowAdvanced(!showAdvanced)}
-            >
-              <Settings className="w-4 h-4 mr-2" />
-              {showAdvanced ? 'Hide' : 'Show'} Advanced Options
-            </Button>
-
-            <div className="grid grid-cols-2 gap-3">
-              <Button variant="outline" onClick={handleSaveConfig}>
-                <Save className="w-4 h-4 mr-2" />
-                Save to Disk
-              </Button>
-              <Button variant="outline" onClick={handleBackupConfig}>
-                <Database className="w-4 h-4 mr-2" />
-                Create Backup
-              </Button>
-              <Button variant="outline" onClick={handleDownloadConfig}>
-                <FileDown className="w-4 h-4 mr-2" />
-                Download Config
-              </Button>
-              <Button variant="outline" onClick={() => setActiveModal('debug')}>
-                <Bug className="w-4 h-4 mr-2" />
-                Download Debug
-              </Button>
-            </div>
-
-            {showAdvanced && (
-              <div className="pt-4 border-t space-y-3">
-                <h4 className="font-medium text-red-600">Danger Zone</h4>
-                <div className="grid grid-cols-2 gap-3">
-                  <Button variant="destructive" onClick={handleRestart}>
-                    <RefreshCw className="w-4 h-4 mr-2" />
-                    Restart Bridge
-                  </Button>
-                  <Button variant="destructive" onClick={() => setActiveModal('reset')}>
-                    <AlertTriangle className="w-4 h-4 mr-2" />
-                    Reset Options
-                  </Button>
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Backup & Restore */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Backup & Restore</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="p-4 border-2 border-dashed rounded-lg text-center">
-              <Download className="w-12 h-12 mx-auto mb-3 text-muted-foreground" />
-              <h3 className="font-medium mb-1">Export Configuration</h3>
-              <p className="text-sm text-muted-foreground mb-3">
-                Download a complete backup of all settings
-              </p>
-              <Button onClick={handleDownloadConfig}>
-                <Download className="w-4 h-4 mr-2" />
-                Export Config
-              </Button>
-            </div>
-
-            <div className="p-4 border-2 border-dashed rounded-lg text-center">
-              <Upload className="w-12 h-12 mx-auto mb-3 text-muted-foreground" />
-              <h3 className="font-medium mb-1">Import Configuration</h3>
-              <p className="text-sm text-muted-foreground mb-3">
-                Restore from a previous backup
-              </p>
-              <p className="text-xs text-yellow-600 mb-3">
-                Note: Upload functionality requires backend implementation
-              </p>
-              <Button disabled>
-                <Upload className="w-4 h-4 mr-2" />
-                Import Config
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       </div>
 
-      {/* Modals */}
-      {activeModal === 'debug' && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <Card className="w-full max-w-md">
-            <CardHeader>
-              <CardTitle>Download Debug Information</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p>Choose what debug information to download:</p>
-              <div className="space-y-3">
-                <Button className="w-full" onClick={() => {
-                  handleDownloadDebug();
-                  setActiveModal(null);
-                }}>
-                  <Bug className="w-4 h-4 mr-2" />
-                  Full Debug Package
-                </Button>
-                <Button className="w-full" onClick={() => {
-                  handleDownloadLog();
-                  setActiveModal(null);
-                }}>
-                  <FileDown className="w-4 h-4 mr-2" />
-                  Log File Only
-                </Button>
+      {/* Security Settings */}
+      <div className="glass-card p-6">
+        <h2 className="text-xl font-bold text-white mb-6">Security & Discovery</h2>
+        <div className="space-y-4">
+          {/* Link Button */}
+          <div className="flex items-center justify-between p-4 bg-white/5 rounded-lg">
+            <div>
+              <div className="font-medium text-white">Link Button</div>
+              <div className="text-sm text-gray-400">
+                Allow new applications to connect for 30 seconds
               </div>
-              <Button 
-                variant="outline" 
-                className="w-full"
-                onClick={() => setActiveModal(null)}
-              >
-                Cancel
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+            </div>
+            <button
+              onClick={handleLinkButton}
+              disabled={linkButtonTimer > 0}
+              className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-all ${
+                linkButtonTimer > 0
+                  ? 'bg-green-500/20 text-green-400 cursor-not-allowed'
+                  : 'bg-imersa-accent text-white hover:bg-imersa-accent/80'
+              }`}
+            >
+              <Link className="w-4 h-4" />
+              {linkButtonTimer > 0 ? `Active (${linkButtonTimer}s)` : 'Activate'}
+            </button>
+          </div>
 
-      {activeModal === 'reset' && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <Card className="w-full max-w-md">
-            <CardHeader>
-              <CardTitle className="text-red-600">Reset Options</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-sm">
-                ⚠️ These actions cannot be undone. Please be careful!
-              </p>
-              <div className="space-y-3">
-                <Button 
-                  variant="destructive" 
-                  className="w-full"
-                  onClick={() => {
-                    handleRestoreConfig();
-                    setActiveModal(null);
-                  }}
-                >
-                  <FileUp className="w-4 h-4 mr-2" />
-                  Restore from Backup
-                </Button>
-                <Button 
-                  variant="destructive" 
-                  className="w-full"
-                  onClick={() => {
-                    handleResetConfig();
-                    setActiveModal(null);
-                  }}
-                >
-                  <Trash2 className="w-4 h-4 mr-2" />
-                  Reset to Defaults
-                </Button>
-                <Button 
-                  variant="destructive" 
-                  className="w-full"
-                  onClick={() => {
-                    handleRemoveCertificate();
-                    setActiveModal(null);
-                  }}
-                >
-                  <Shield className="w-4 h-4 mr-2" />
-                  Remove SSL Certificate
-                </Button>
+          {/* Discovery Toggle */}
+          <div className="flex items-center justify-between p-4 bg-white/5 rounded-lg">
+            <div>
+              <div className="font-medium text-white">Bridge Discovery</div>
+              <div className="text-sm text-gray-400">
+                Allow devices to discover this bridge
               </div>
-              <Button 
-                variant="outline" 
-                className="w-full"
-                onClick={() => setActiveModal(null)}
-              >
-                Cancel
-              </Button>
-            </CardContent>
-          </Card>
+            </div>
+            <button
+              onClick={() => handleConfigChange('discovery', !config.discovery)}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                config.discovery !== false ? 'bg-imersa-accent' : 'bg-gray-600'
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  config.discovery !== false ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+
+          {/* UPnP Toggle */}
+          <div className="flex items-center justify-between p-4 bg-white/5 rounded-lg">
+            <div>
+              <div className="font-medium text-white">UPnP</div>
+              <div className="text-sm text-gray-400">
+                Universal Plug and Play for automatic discovery
+              </div>
+            </div>
+            <button
+              onClick={() => handleConfigChange('upnp', !config.upnp)}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                config.upnp ? 'bg-imersa-accent' : 'bg-gray-600'
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  config.upnp ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
         </div>
-      )}
-    </div>
+      </div>
+
+      {/* Bridge Information */}
+      <div className="glass-card p-6">
+        <h2 className="text-xl font-bold text-white mb-6">Bridge Information</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="text-sm text-gray-400">Bridge ID</label>
+            <p className="font-mono text-sm text-white">{config.bridgeid || 'Not configured'}</p>
+          </div>
+          <div>
+            <label className="text-sm text-gray-400">MAC Address</label>
+            <p className="font-mono text-sm text-white">{config.mac || 'Not configured'}</p>
+          </div>
+          <div>
+            <label className="text-sm text-gray-400">IP Address</label>
+            <p className="font-mono text-sm text-white">{config.ipaddress || 'Not configured'}</p>
+          </div>
+          <div>
+            <label className="text-sm text-gray-400">Gateway</label>
+            <p className="font-mono text-sm text-white">{config.gateway || 'Not configured'}</p>
+          </div>
+          <div>
+            <label className="text-sm text-gray-400">Netmask</label>
+            <p className="font-mono text-sm text-white">{config.netmask || 'Not configured'}</p>
+          </div>
+          <div>
+            <label className="text-sm text-gray-400">API Version</label>
+            <p className="font-mono text-sm text-white">{config.apiversion || '1.24.0'}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="glass-card p-6">
+        <h2 className="text-xl font-bold text-white mb-6">Actions</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <button
+            onClick={handleSaveConfig}
+            className="px-4 py-3 bg-white/10 hover:bg-white/20 rounded-lg transition-all flex items-center gap-3 text-white"
+          >
+            <Save className="w-5 h-5" />
+            <div className="text-left">
+              <div className="font-medium">Save Config</div>
+              <div className="text-xs text-gray-400">Write to disk</div>
+            </div>
+          </button>
+          
+          <button
+            onClick={handleBackupConfig}
+            className="px-4 py-3 bg-white/10 hover:bg-white/20 rounded-lg transition-all flex items-center gap-3 text-white"
+          >
+            <Database className="w-5 h-5" />
+            <div className="text-left">
+              <div className="font-medium">Backup</div>
+              <div className="text-xs text-gray-400">Create backup</div>
+            </div>
+          </button>
+          
+          <button
+            onClick={handleDownloadConfig}
+            className="px-4 py-3 bg-white/10 hover:bg-white/20 rounded-lg transition-all flex items-center gap-3 text-white"
+          >
+            <Download className="w-5 h-5" />
+            <div className="text-left">
+              <div className="font-medium">Download Config</div>
+              <div className="text-xs text-gray-400">Export as file</div>
+            </div>
+          </button>
+          
+          <button
+            onClick={handleDownloadDebug}
+            className="px-4 py-3 bg-white/10 hover:bg-white/20 rounded-lg transition-all flex items-center gap-3 text-white"
+          >
+            <Bug className="w-5 h-5" />
+            <div className="text-left">
+              <div className="font-medium">Debug Package</div>
+              <div className="text-xs text-gray-400">Download debug info</div>
+            </div>
+          </button>
+          
+          <button
+            onClick={handleDownloadLog}
+            className="px-4 py-3 bg-white/10 hover:bg-white/20 rounded-lg transition-all flex items-center gap-3 text-white"
+          >
+            <FileDown className="w-5 h-5" />
+            <div className="text-left">
+              <div className="font-medium">Download Log</div>
+              <div className="text-xs text-gray-400">Get log file</div>
+            </div>
+          </button>
+          
+          <button
+            onClick={handleRestart}
+            className="px-4 py-3 bg-yellow-500/10 hover:bg-yellow-500/20 border border-yellow-500/20 rounded-lg transition-all flex items-center gap-3 text-yellow-400"
+          >
+            <RefreshCw className="w-5 h-5" />
+            <div className="text-left">
+              <div className="font-medium">Restart Bridge</div>
+              <div className="text-xs text-yellow-300">Restart service</div>
+            </div>
+          </button>
+        </div>
+
+        {/* Danger Zone */}
+        <div className="mt-8 pt-8 border-t border-red-500/20">
+          <h3 className="text-red-400 font-semibold mb-4">Danger Zone</h3>
+          <button
+            onClick={handleReset}
+            className="px-4 py-3 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-lg transition-all flex items-center gap-3 text-red-400"
+          >
+            <AlertTriangle className="w-5 h-5" />
+            <div className="text-left">
+              <div className="font-medium">Factory Reset</div>
+              <div className="text-xs text-red-300">Reset all settings and lights</div>
+            </div>
+          </button>
+        </div>
+      </div>
+    </PageWrapper>
   );
 };
 

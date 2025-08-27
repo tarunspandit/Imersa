@@ -53,101 +53,91 @@ const Help: React.FC = () => {
       subtitle="Get help with Imersa"
     >
       <div className="space-y-6">
-        <p className="text-muted-foreground mt-1">
+        <p className="text-gray-400 mt-1">
           Documentation, tutorials, and support resources
         </p>
       </div>
 
       {/* Quick Links */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className="hover:shadow-lg transition-shadow cursor-pointer">
-          <CardContent className="p-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-primary/10 rounded-lg">
-                <Book className="w-6 h-6 text-primary" />
-              </div>
-              <div>
-                <p className="font-medium">Getting Started</p>
-                <p className="text-xs text-muted-foreground">Basic setup guide</p>
-              </div>
+        <div className="glass-card p-4 hover:bg-white/10 transition-all cursor-pointer">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-gradient-to-br from-blue-400 to-indigo-500 rounded-lg">
+              <Book className="w-6 h-6 text-white" />
             </div>
-          </CardContent>
-        </Card>
+            <div>
+              <p className="font-medium text-white">Getting Started</p>
+              <p className="text-xs text-gray-400">Basic setup guide</p>
+            </div>
+          </div>
+        </div>
 
-        <Card className="hover:shadow-lg transition-shadow cursor-pointer">
-          <CardContent className="p-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-primary/10 rounded-lg">
-                <FileText className="w-6 h-6 text-primary" />
-              </div>
-              <div>
-                <p className="font-medium">API Docs</p>
-                <p className="text-xs text-muted-foreground">Developer reference</p>
-              </div>
+        <div className="glass-card p-4 hover:bg-white/10 transition-all cursor-pointer">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-gradient-to-br from-green-400 to-emerald-500 rounded-lg">
+              <FileText className="w-6 h-6 text-white" />
             </div>
-          </CardContent>
-        </Card>
+            <div>
+              <p className="font-medium text-white">API Docs</p>
+              <p className="text-xs text-gray-400">Developer reference</p>
+            </div>
+          </div>
+        </div>
 
-        <Card className="hover:shadow-lg transition-shadow cursor-pointer">
-          <CardContent className="p-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-primary/10 rounded-lg">
-                <MessageSquare className="w-6 h-6 text-primary" />
-              </div>
-              <div>
-                <p className="font-medium">Community</p>
-                <p className="text-xs text-muted-foreground">Discord & Forums</p>
-              </div>
+        <div className="glass-card p-4 hover:bg-white/10 transition-all cursor-pointer">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-gradient-to-br from-purple-400 to-indigo-500 rounded-lg">
+              <MessageSquare className="w-6 h-6 text-white" />
             </div>
-          </CardContent>
-        </Card>
+            <div>
+              <p className="font-medium text-white">Community</p>
+              <p className="text-xs text-gray-400">Discord & Forums</p>
+            </div>
+          </div>
+        </div>
 
-        <Card className="hover:shadow-lg transition-shadow cursor-pointer">
-          <CardContent className="p-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-primary/10 rounded-lg">
-                <Github className="w-6 h-6 text-primary" />
-              </div>
-              <div>
-                <p className="font-medium">GitHub</p>
-                <p className="text-xs text-muted-foreground">Source & Issues</p>
-              </div>
+        <div className="glass-card p-4 hover:bg-white/10 transition-all cursor-pointer">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-gradient-to-br from-gray-600 to-gray-800 rounded-lg">
+              <Github className="w-6 h-6 text-white" />
             </div>
-          </CardContent>
-        </Card>
+            <div>
+              <p className="font-medium text-white">GitHub</p>
+              <p className="text-xs text-gray-400">Source & Issues</p>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* FAQ Section */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <HelpCircle className="w-5 h-5" />
-            Frequently Asked Questions
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2">
+      <div className="glass-card p-6">
+        <h2 className="text-xl font-bold text-white flex items-center gap-2 mb-4">
+          <HelpCircle className="w-5 h-5" />
+          Frequently Asked Questions
+        </h2>
+        <div className="space-y-2">
           {faqs.map((faq, index) => (
-            <div key={index} className="border rounded-lg">
+            <div key={index} className="border border-white/10 rounded-lg overflow-hidden">
               <button
                 onClick={() => toggleFaq(index)}
-                className="w-full p-3 text-left flex items-center justify-between hover:bg-muted/50 transition-colors"
+                className="w-full p-3 text-left flex items-center justify-between hover:bg-white/5 transition-colors"
               >
-                <span className="font-medium">{faq.question}</span>
+                <span className="font-medium text-white">{faq.question}</span>
                 {expandedFaq === index ? (
-                  <ChevronUp className="w-4 h-4 text-muted-foreground" />
+                  <ChevronUp className="w-4 h-4 text-gray-400" />
                 ) : (
-                  <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                  <ChevronDown className="w-4 h-4 text-gray-400" />
                 )}
               </button>
               {expandedFaq === index && (
-                <div className="p-3 pt-0 text-sm text-muted-foreground">
+                <div className="p-3 pt-0 text-sm text-gray-400 border-t border-white/10">
                   {faq.answer}
                 </div>
               )}
             </div>
           ))}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
       {/* Resources */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
