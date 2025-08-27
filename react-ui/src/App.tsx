@@ -11,7 +11,7 @@ import LightsComplete from './pages/LightsComplete';
 import Groups from './pages/Groups';
 import Scenes from './pages/Scenes';
 import Entertainment from './pages/Entertainment';
-import EntertainmentWizard from './pages/EntertainmentWizard';
+import EntertainmentWizard from './pages/EntertainmentWizardNew';
 import WLED from './pages/WLED';
 import Scheduler from './pages/Scheduler';
 import AutomationPage from './pages/AutomationPage';
