@@ -391,8 +391,8 @@ def entertainmentService(group, user):
                             if frame_count <= 10:
                                 logging.debug(f"Frame {frame_count + 1}: Tunnel active, forwarding {len(data)} bytes")
                             # PURE PROXY: Forward packet untouched to Hue bridge
-                            # Since DIYHue's UUID now matches the real bridge's UUID,
-                            # the packets already have the correct UUID!
+                            # DIYHue's UUID now matches the real bridge's UUID,
+                            # so packets already have the correct UUID!
                             
                             # Debug logging for first few frames
                             if frame_count <= 5:
@@ -400,7 +400,10 @@ def entertainmentService(group, user):
                                 logging.info(f"Frame {frame_count}: Proxying packet ({len(data)} bytes, v{version}) to Hue bridge")
                                 if frame_count == 1 and version == 2 and len(data) >= 52:
                                     uuid_in_packet = data[16:52].decode('ascii', errors='ignore')
-                                    logging.info(f"UUID in packet (should match Hue bridge): {uuid_in_packet}")
+                                    logging.info(f"UUID in packet: {uuid_in_packet}")
+                                    logging.info(f"Expected UUID: {group.id_v2}")
+                                    if uuid_in_packet == group.id_v2:
+                                        logging.info("✓ UUID matches - packets will work with real bridge!")
                             
                             # Send raw packet - no modification needed!
                             if not hue_tunnel_process.send_packet(data):
