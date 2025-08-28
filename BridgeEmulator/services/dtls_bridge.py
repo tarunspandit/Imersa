@@ -100,6 +100,7 @@ class DTLSBridge:
                 'openssl', 's_client',
                 '-dtls',
                 '-noservername',
+                '-debug',
                 '-psk', self.bridge_key,
                 '-psk_identity', self.bridge_user,
                 '-connect', f'{self.bridge_ip}:{self.bridge_port}',
@@ -107,7 +108,7 @@ class DTLSBridge:
             ]
             
             logging.info(f"Connecting DTLS client to real bridge at {self.bridge_ip}:{self.bridge_port}...")
-            self.client_process = subprocess.run(client_cmd, capture_output=True, timeout=5)
+            self.client_process = Popen(client_cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
             
             time.sleep(0.5)  # Give client time to connect
             
