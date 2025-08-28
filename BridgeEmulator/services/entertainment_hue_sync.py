@@ -198,6 +198,10 @@ def sync_entertainment_group(diyhue_group):
     
     logging.info(f"Found {len(hue_lights)} Hue lights to sync")
     
+    # Log the exact lights and their order
+    for i, light in enumerate(hue_lights):
+        logging.info(f"  Channel {i} → DIYHue light {light.id_v1} → Hue bridge light {light.protocol_cfg['id']}")
+    
     # Create/update group on real Hue bridge
     hue_group_id = create_hue_entertainment_group(
         diyhue_group.name,

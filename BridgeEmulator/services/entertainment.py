@@ -415,20 +415,41 @@ def entertainmentService(group, user):
                             # Debug logging for first frames
                             if frame_count <= 10:
                                 logging.debug(f"Frame {frame_count + 1}: Tunnel active, forwarding {len(data)} bytes")
-                            # CRITICAL: For Hue bridge, we need to modify the packet!
-                            # The packet from Hue Sync contains the DIYHue entertainment area ID
-                            # We need to replace it with the real Hue bridge entertainment area ID
+                            # Forward raw packet to Hue bridge WITHOUT modification
+                            # The bridge knows which group is active from our HTTP activation
                             
-                            # Check if this is API v2 with Entertainment Area UUID
-                            if len(data) >= 52 and data[9] == 2:  # API v2
-                                # Validate packet structure
-                                if data[:9] != b'HueStream':
-                                    logging.warning(f"Invalid HueStream header: {data[:9].hex()}")
-                                    # Forward as-is and hope for the best
-                                    if not hue_tunnel_process.send_packet(data):
-                                        logging.warning("Failed to send packet")
-                                        hue_tunnel_active = False
-                                else:
+                            # Debug logging for first few frames
+                            if frame_count <= 5:
+                                version = data[9] if len(data) > 9 else 0
+                                logging.info(f"Frame {frame_count}: Forwarding raw packet ({len(data)} bytes, v{version}) to Hue bridge")
+                                if frame_count == 1:
+                                    # Log detailed packet structure
+                                    logging.info(f"Packet header (16 bytes): {data[:16].hex()}")
+                                    if version == 2 and len(data) >= 52:
+                                        uuid_in_packet = data[16:52].decode('ascii', errors='ignore')
+                                        logging.info(f"UUID in packet: {uuid_in_packet}")
+                                        # Log channel data
+                                        channel_data = data[52:]
+                                        logging.info(f"Channel data: {len(channel_data)} bytes")
+                                        # Show first few channels
+                                        for i in range(min(4, len(channel_data) // 7)):
+                                            ch_start = i * 7
+                                            ch_data = channel_data[ch_start:ch_start+7]
+                                            if len(ch_data) == 7:
+                                                ch_id = ch_data[0]
+                                                # Decode channel data: [id, x_high, x_low, y_high, y_low, bri_high, bri_low]
+                                                x = ((ch_data[1] << 8) | ch_data[2]) / 65535.0
+                                                y = ((ch_data[3] << 8) | ch_data[4]) / 65535.0
+                                                bri = (ch_data[5] << 8) | ch_data[6]
+                                                logging.info(f"  Channel {ch_id}: x={x:.3f} y={y:.3f} bri={bri} (raw: {ch_data.hex()})")
+                            
+                            # Send raw packet without ANY modification
+                            if not hue_tunnel_process.send_packet(data):
+                                logging.warning("Failed to send packet to Hue bridge")
+                                hue_tunnel_active = False
+                            
+                            # Skip all the UUID modification code
+                            if False:  # Disabled UUID modification
                                     # Extract the entertainment area UUID (bytes 16-52)
                                     diyhue_uuid = data[16:52]
                                     
