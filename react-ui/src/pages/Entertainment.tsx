@@ -8,7 +8,7 @@ import { PositionEditor } from '@/components/entertainment/PositionEditor';
 import { LightMembershipEditor } from '@/components/entertainment/LightMembershipEditor';
 import { useEntertainment } from '@/hooks/useEntertainment';
 import { useGroups } from '@/hooks/useGroups';
-import { EntertainmentArea, CreateAreaRequest, Light } from '@/types';
+import { EntertainmentArea, CreateAreaRequest, Light, LightPosition } from '@/types';
 import { cn } from '@/utils';
 import '@/styles/design-system.css';
 
@@ -41,6 +41,12 @@ const Entertainment: React.FC = () => {
   const [showPositionEditor, setShowPositionEditor] = useState(false);
   const [showLightEditor, setShowLightEditor] = useState(false);
   const [areaForLightEdit, setAreaForLightEdit] = useState<EntertainmentArea | null>(null);
+
+  const lightMap: Record<string, Light> = React.useMemo(() => {
+    const map: Record<string, Light> = {};
+    (availableLights as Light[]).forEach(l => { map[l.id] = l; });
+    return map;
+  }, [availableLights]);
   // Removed create form state - using wizard instead
 
   // Removed handleCreateArea - using wizard instead
@@ -65,10 +71,27 @@ const Entertainment: React.FC = () => {
 
   const handleLightSave = useCallback(async (lightIds: string[]) => {
     if (!areaForLightEdit) return;
-    await updateGroup(areaForLightEdit.id, { lightIds });
+    // 1) Update membership
+    const res = await updateGroup(areaForLightEdit.id, { lightIds });
+    if (!res.success) return;
+
+    // 2) Merge existing positions and auto-arrange missing
+    const current = positions[areaForLightEdit.id] || [];
+    const existingMap = new Map(current.map(p => [p.lightId, p]));
+    const kept: LightPosition[] = lightIds
+      .filter(id => existingMap.has(id))
+      .map(id => existingMap.get(id)!)
+      .map(p => ({ ...p }));
+
+    const missing = lightIds.filter(id => !existingMap.has(id));
+    const missingArranged: LightPosition[] = arrangeMissing(kept, missing);
+
+    const merged = [...kept, ...missingArranged];
+
+    // 3) Save updated positions in bridge
+    await updatePositions(areaForLightEdit.id, merged);
     await refreshAreas();
-    await loadPositions(areaForLightEdit.id);
-  }, [areaForLightEdit, updateGroup, refreshAreas, loadPositions]);
+  }, [areaForLightEdit, positions, updateGroup, updatePositions, refreshAreas, lightMap]);
 
   // Handle update positions
   const handleUpdatePositions = async (areaId: string, positions: any[]) => {
@@ -228,6 +251,7 @@ const Entertainment: React.FC = () => {
         <PositionEditor
           area={selectedArea}
           positions={selectedArea ? positions[selectedArea.id] || [] : []}
+          lightMap={lightMap}
           onUpdatePositions={handleUpdatePositions}
           onLoadPositions={loadPositions}
           isLoading={isLoading}
@@ -253,3 +277,63 @@ const Entertainment: React.FC = () => {
 };
 
 export default Entertainment;
+  // Arrange missing lights based on existing layout (prefer rectangle edges)
+  const arrangeMissing = useCallback((existing: LightPosition[], missingIds: string[]): LightPosition[] => {
+    if (missingIds.length === 0) return [];
+    const eps = 0.15;
+    const counts = { top: 0, bottom: 0, left: 0, right: 0 };
+    existing.forEach(p => {
+      if (p.y >= 0.8 - eps) counts.top++;
+      else if (p.y <= -0.8 + eps) counts.bottom++;
+      else if (p.x >= 0.8 - eps) counts.right++;
+      else if (p.x <= -0.8 + eps) counts.left++;
+    });
+    const sides = ['top','right','bottom','left'] as const;
+    const sideHas = sides.filter(s => counts[s] > 0);
+    if (sideHas.length >= 2) {
+      // Rectangle: distribute to least populated sides
+      const placements: LightPosition[] = [];
+      const totalAfter = existing.length + missingIds.length;
+      const perSideIdeal = Math.ceil(totalAfter / 4);
+      const assignSide = () => {
+        // pick side with smallest count
+        let minSide = 'top' as typeof sides[number];
+        let minCount = Number.MAX_SAFE_INTEGER;
+        for (const s of sides) {
+          const c = counts[s];
+          if (c < minCount) { minCount = c; minSide = s; }
+        }
+        counts[minSide]++;
+        return minSide;
+      };
+      missingIds.forEach((lightId) => {
+        const light = lightMap[lightId];
+        const side = assignSide();
+        // Position along side evenly based on new counts
+        const cSide = counts[side];
+        const idx = cSide - 1;
+        const n = Math.max(1, perSideIdeal);
+        let x = 0, y = 0, z = 0;
+        const t = n === 1 ? 0.5 : idx / (n - 1); // 0..1
+        if (side === 'top') { x = -0.8 + t * 1.6; y = 0.8; }
+        if (side === 'bottom') { x = -0.8 + t * 1.6; y = -0.8; }
+        if (side === 'right') { x = 0.8; y = 0.8 - t * 1.6; }
+        if (side === 'left') { x = -0.8; y = -0.8 + t * 1.6; }
+        placements.push({ lightId, lightName: light?.name || `Light ${lightId}`, x: Number(x.toFixed(3)), y: Number(y.toFixed(3)), z });
+      });
+      return placements;
+    }
+    // Fallback circle
+    const radius = 0.7;
+    return missingIds.map((lightId, index) => {
+      const angle = (index / missingIds.length) * 2 * Math.PI;
+      const light = lightMap[lightId];
+      return {
+        lightId,
+        lightName: light?.name || `Light ${lightId}`,
+        x: Number((Math.cos(angle) * radius).toFixed(3)),
+        y: Number((Math.sin(angle) * radius).toFixed(3)),
+        z: 0,
+      };
+    });
+  }, [lightMap]);

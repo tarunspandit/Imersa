@@ -1,7 +1,7 @@
 // 3D Position Editor for Entertainment Lights
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Save, RotateCcw, Move, Grid, Eye, EyeOff } from 'lucide-react';
-import { LightPosition, EntertainmentArea } from '@/types';
+import { LightPosition, EntertainmentArea, Light } from '@/types';
 import { cn } from '@/utils';
 import '@/styles/design-system.css';
 import { Room3DPositioner } from '@/components/entertainment/Room3DPositioner';
@@ -11,6 +11,7 @@ interface PositionEditorProps {
   positions: LightPosition[];
   onUpdatePositions: (areaId: string, positions: LightPosition[]) => Promise<void>;
   onLoadPositions: (areaId: string) => Promise<void>;
+  lightMap?: Record<string, Light>;
   isLoading?: boolean;
 }
 
@@ -26,6 +27,7 @@ export const PositionEditor: React.FC<PositionEditorProps> = ({
   positions,
   onUpdatePositions,
   onLoadPositions,
+  lightMap,
   isLoading = false,
 }) => {
   const [localPositions, setLocalPositions] = useState<LightPosition[]>([]);
@@ -39,6 +41,7 @@ export const PositionEditor: React.FC<PositionEditorProps> = ({
   });
   const [selectedLightId, setSelectedLightId] = useState<string | null>(null);
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
+  const [rotations, setRotations] = useState<Record<string, number>>({});
 
   // 2D drag state
   const [dragState, setDragState] = useState<{ isDragging: boolean; lightId: string | null; offset: { x: number; y: number } }>({
@@ -155,6 +158,28 @@ export const PositionEditor: React.FC<PositionEditorProps> = ({
 
   const handleMouseUp = useCallback(() => {
     setDragState({ isDragging: false, lightId: null, offset: { x: 0, y: 0 } });
+  }, []);
+
+  // Model-based rendering
+  const getLightKind = useCallback((lightId: string): 'bulb' | 'strip' | 'bar' | 'panel' => {
+    const info = lightMap?.[lightId];
+    const model = (info?.modelid || '').toLowerCase();
+    const pname = (info?.productname || info?.name || '').toLowerCase();
+    if (model.includes('lst') || pname.includes('strip')) return 'strip';
+    if (pname.includes('play') || pname.includes('bar')) return 'bar';
+    if (pname.includes('panel') || pname.includes('tile')) return 'panel';
+    return 'bulb';
+  }, [lightMap]);
+
+  const getRotation = useCallback((pos: LightPosition): number => {
+    const r = rotations[pos.lightId];
+    if (typeof r === 'number') return r;
+    // default orientation from proximity to edges
+    return Math.abs(pos.x) > Math.abs(pos.y) ? 0 : 90;
+  }, [rotations]);
+
+  const setRotation = useCallback((lightId: string, angle: number) => {
+    setRotations(prev => ({ ...prev, [lightId]: ((angle % 360) + 360) % 360 }));
   }, []);
 
   // Reset positions
@@ -276,20 +301,41 @@ export const PositionEditor: React.FC<PositionEditorProps> = ({
             const isSelected = selectedLightId === pos.lightId;
             const hasError = validationErrors[pos.lightId];
 
+            const kind = getLightKind(pos.lightId);
+            const angle = getRotation(pos);
+            const baseFill = hasError ? '#ef4444' : isSelected ? '#8b5cf6' : (kind === 'bulb' ? '#10b981' : kind === 'strip' ? '#3b82f6' : kind === 'bar' ? '#a855f7' : '#f59e0b');
             return (
               <g key={pos.lightId}>
-                <circle
-                  cx={x}
-                  cy={y}
-                  r={isSelected ? 12 : 8}
-                  fill={hasError ? '#ef4444' : isSelected ? '#8b5cf6' : '#10b981'}
-                  stroke={isSelected ? '#c084fc' : '#ffffff'}
-                  strokeWidth={2}
-                  className="cursor-move transition-all"
-                  onMouseDown={(e) => handleMouseDown(pos.lightId, e)}
-                  onClick={() => setSelectedLightId(pos.lightId)}
-                  filter={isSelected ? 'url(#glow)' : ''}
-                />
+                {kind === 'bulb' ? (
+                  <circle
+                    cx={x}
+                    cy={y}
+                    r={isSelected ? 12 : 8}
+                    fill={baseFill}
+                    stroke={isSelected ? '#c084fc' : '#ffffff'}
+                    strokeWidth={2}
+                    className="cursor-move transition-all"
+                    onMouseDown={(e) => handleMouseDown(pos.lightId, e)}
+                    onClick={() => setSelectedLightId(pos.lightId)}
+                    filter={isSelected ? 'url(#glow)' : ''}
+                  />
+                ) : (
+                  <rect
+                    x={x - (kind === 'strip' ? 12 : 10)}
+                    y={y - (kind === 'strip' ? 3 : 6)}
+                    width={kind === 'strip' ? 24 : 20}
+                    height={kind === 'strip' ? 6 : 12}
+                    rx={kind === 'strip' ? 3 : 4}
+                    fill={baseFill}
+                    stroke={isSelected ? '#c084fc' : '#ffffff'}
+                    strokeWidth={2}
+                    className="cursor-move transition-all"
+                    onMouseDown={(e) => handleMouseDown(pos.lightId, e)}
+                    onClick={() => setSelectedLightId(pos.lightId)}
+                    filter={isSelected ? 'url(#glow)' : ''}
+                    transform={`rotate(${angle} ${x} ${y})`}
+                  />
+                )}
                 
                 {/* Z-axis indicator (3D mode) */}
                 {viewSettings.show3D && pos.z !== 0 && (
@@ -346,11 +392,15 @@ export const PositionEditor: React.FC<PositionEditorProps> = ({
         <div className="absolute top-2 right-2 glass-surface rounded-xl p-2 text-xs">
           <div className="flex items-center space-x-2">
             <div className="w-3 h-3 bg-emerald-500 rounded-full"></div>
-            <span className="text-gray-300">Light</span>
+            <span className="text-gray-300">Bulb</span>
           </div>
           <div className="flex items-center space-x-2 mt-1">
-            <div className="w-3 h-3 bg-purple-500 rounded-full"></div>
-            <span className="text-gray-300">Selected</span>
+            <div className="w-3 h-2 bg-blue-500 rounded"></div>
+            <span className="text-gray-300">Lightstrip</span>
+          </div>
+          <div className="flex items-center space-x-2 mt-1">
+            <div className="w-3 h-2 bg-purple-500 rounded"></div>
+            <span className="text-gray-300">Bar</span>
           </div>
           {Object.keys(validationErrors).length > 0 && (
             <div className="flex items-center space-x-2 mt-1">
@@ -552,6 +602,36 @@ export const PositionEditor: React.FC<PositionEditorProps> = ({
                             />
                           </td>
                         ))}
+                        {/* Rotation control for non-bulb types */}
+                        {(() => {
+                          const kind = getLightKind(pos.lightId);
+                          if (kind === 'bulb') return <td className="px-3 py-2"></td>;
+                          const angle = rotations[pos.lightId] ?? getRotation(pos);
+                          return (
+                            <td className="px-3 py-2">
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="range"
+                                  min={0}
+                                  max={360}
+                                  step={5}
+                                  value={angle}
+                                  onChange={(e) => setRotation(pos.lightId, parseInt(e.target.value, 10))}
+                                  className="w-24"
+                                />
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={360}
+                                  step={5}
+                                  value={angle}
+                                  onChange={(e) => setRotation(pos.lightId, parseInt(e.target.value, 10) || 0)}
+                                  className="w-16 h-8 text-xs px-2 bg-white/5 border rounded-lg text-white"
+                                />
+                              </div>
+                            </td>
+                          );
+                        })()}
                       </tr>
                     ))}
                   </tbody>

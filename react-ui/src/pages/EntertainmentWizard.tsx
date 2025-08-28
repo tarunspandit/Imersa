@@ -204,6 +204,7 @@ const EntertainmentWizard: React.FC = () => {
             selectedLights={formData.selectedLights}
             positions={formData.positions}
             configurationType={formData.configurationType}
+            lightMap={Object.fromEntries(formData.availableLights.map(l => [l.id, l]))}
             roomTemplates={roomTemplates}
             onUpdatePosition={updateLightPosition}
             onApplyTemplate={applyTemplate}

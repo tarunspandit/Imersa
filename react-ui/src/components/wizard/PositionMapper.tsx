@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { Room3DPositioner } from '@/components/entertainment/Room3DPositioner';
 import { Slider } from '@/components/ui';
-import { LightPosition } from '@/types';
+import { LightPosition, Light } from '@/types';
 import { cn } from '@/utils';
 import '@/styles/design-system.css';
 
@@ -14,6 +14,7 @@ interface PositionMapperProps {
   selectedLights: string[];
   positions: Record<string, LightPosition>;
   configurationType: 'screen' | '3dspace';
+  lightMap?: Record<string, Light>;
   roomTemplates: Array<{
     id: string;
     name: string;
@@ -47,6 +48,7 @@ export const PositionMapper: React.FC<PositionMapperProps> = ({
   selectedLights,
   positions,
   configurationType,
+  lightMap,
   roomTemplates,
   onUpdatePosition,
   onApplyTemplate,
@@ -161,6 +163,17 @@ export const PositionMapper: React.FC<PositionMapperProps> = ({
     onUpdatePosition(lightId, { [axis]: clampedValue });
   }, [onUpdatePosition]);
 
+  // Determine visualization kind based on model/product
+  const getLightKind = useCallback((lightId: string): 'bulb' | 'strip' | 'bar' | 'panel' => {
+    const info = lightMap?.[lightId];
+    const model = (info?.modelid || '').toLowerCase();
+    const pname = (info?.productname || info?.name || '').toLowerCase();
+    if (model.includes('lst') || pname.includes('strip')) return 'strip';
+    if (pname.includes('play') || pname.includes('bar')) return 'bar';
+    if (pname.includes('panel') || pname.includes('tile')) return 'panel';
+    return 'bulb';
+  }, [lightMap]);
+
   // Render the position visualization
   const renderVisualization = () => {
     const size = viewSettings.canvasSize;
@@ -238,24 +251,37 @@ export const PositionMapper: React.FC<PositionMapperProps> = ({
             const canvasPos = worldToCanvas(position.x, position.y);
             const isSelected = selectedLightId === lightId;
             const isDragging = dragState.lightId === lightId;
+            const kind = getLightKind(lightId);
 
             return (
               <g key={lightId}>
-                {/* Light circle */}
-                <circle
-                  cx={canvasPos.x}
-                  cy={canvasPos.y}
-                  r={isSelected ? 14 : 10}
-                  fill={isSelected ? '#3b82f6' : '#10b981'}
-                  stroke={isDragging ? '#1d4ed8' : '#ffffff'}
-                  strokeWidth={3}
-                  className={cn(
-                    'cursor-move transition-all',
-                    isDragging && 'drop-shadow-lg'
-                  )}
-                  onMouseDown={(e) => handleMouseDown(lightId, e)}
-                  onClick={() => setSelectedLightId(lightId)}
-                />
+                {kind === 'bulb' ? (
+                  <circle
+                    cx={canvasPos.x}
+                    cy={canvasPos.y}
+                    r={isSelected ? 14 : 10}
+                    fill={isSelected ? '#3b82f6' : '#10b981'}
+                    stroke={isDragging ? '#1d4ed8' : '#ffffff'}
+                    strokeWidth={3}
+                    className={cn('cursor-move transition-all', isDragging && 'drop-shadow-lg')}
+                    onMouseDown={(e) => handleMouseDown(lightId, e)}
+                    onClick={() => setSelectedLightId(lightId)}
+                  />
+                ) : (
+                  <rect
+                    x={canvasPos.x - (kind === 'strip' ? 14 : 12)}
+                    y={canvasPos.y - (kind === 'strip' ? 3 : 7)}
+                    width={kind === 'strip' ? 28 : 24}
+                    height={kind === 'strip' ? 6 : 14}
+                    rx={kind === 'strip' ? 3 : 4}
+                    fill={isSelected ? '#3b82f6' : kind === 'strip' ? '#3b82f6' : '#a855f7'}
+                    stroke={isDragging ? '#1d4ed8' : '#ffffff'}
+                    strokeWidth={3}
+                    className={cn('cursor-move transition-all', isDragging && 'drop-shadow-lg')}
+                    onMouseDown={(e) => handleMouseDown(lightId, e)}
+                    onClick={() => setSelectedLightId(lightId)}
+                  />
+                )}
 
                 {/* 3D Z-axis indicator */}
                 {configurationType === '3dspace' && position.z !== 0 && (
