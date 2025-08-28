@@ -293,7 +293,8 @@ def entertainmentService(group, user):
                         try:
                             hue_ip = bridgeConfig["config"]["hue"]["ip"]
                             hue_user = bridgeConfig["config"]["hue"]["hueUser"]
-                            hue_key = bridgeConfig["config"]["hue"]["hueKey"]
+                            hue_cfg = bridgeConfig["config"].get("hue", {})
+                            hue_key = hue_cfg.get("hueClientKey") or hue_cfg.get("hueKey") or hue_user
                             
                             logging.info(f"Activating entertainment on Hue bridge group {hue_bridge_group_id}")
                             

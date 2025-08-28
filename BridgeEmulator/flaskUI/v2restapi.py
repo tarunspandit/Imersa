@@ -665,20 +665,21 @@ class ClipV2ResourceId(Resource):
                                     # Also need to start the real bridge's entertainment mode
                                     try:
                                         hue_user = bridgeConfig["config"]["hue"]["hueUser"]
-                                        # Start streaming on real bridge - V1 API
-                                        stream_data = {"active": True}
+                                        # Start streaming on real bridge - V1 API requires PUT to /groups/{id} with stream payload
+                                        stream_payload = {"stream": {"active": True}}
                                         r = requests.put(
-                                            f"http://{hue_ip}/api/{hue_user}/groups/{hue_group_id}/stream",
-                                            json=stream_data,
+                                            f"http://{hue_ip}/api/{hue_user}/groups/{hue_group_id}",
+                                            json=stream_payload,
                                             timeout=3
                                         )
                                         result = r.json() if r.text else {}
-                                        if isinstance(result, list) and len(result) > 0:
-                                            if "success" in result[0]:
+                                        if isinstance(result, list):
+                                            # Success returns a list of success objects
+                                            ok = any("success" in item for item in result)
+                                            if ok:
                                                 logging.info(f"✓ Started streaming on real bridge group {hue_group_id}")
-                                            elif "error" in result[0]:
-                                                err = result[0]["error"]
-                                                logging.error(f"Failed to start streaming: {err.get('description', err)}")
+                                            else:
+                                                logging.warning(f"Start streaming response: {result}")
                                         else:
                                             logging.info(f"Bridge stream response: {r.text[:200]}")
                                     except Exception as e:
@@ -717,20 +718,20 @@ class ClipV2ResourceId(Resource):
                         try:
                             hue_ip = bridgeConfig["config"]["hue"]["ip"]
                             hue_user = bridgeConfig["config"]["hue"]["hueUser"]
-                            # Stop streaming on real bridge - V1 API
-                            stream_data = {"active": False}
+                            # Stop streaming on real bridge - V1 API requires PUT to /groups/{id} with stream payload
+                            stream_payload = {"stream": {"active": False}}
                             r = requests.put(
-                                f"http://{hue_ip}/api/{hue_user}/groups/{object.hue_bridge_group_id}/stream",
-                                json=stream_data,
+                                f"http://{hue_ip}/api/{hue_user}/groups/{object.hue_bridge_group_id}",
+                                json=stream_payload,
                                 timeout=3
                             )
                             result = r.json() if r.text else {}
-                            if isinstance(result, list) and len(result) > 0:
-                                if "success" in result[0]:
+                            if isinstance(result, list):
+                                ok = any("success" in item for item in result)
+                                if ok:
                                     logging.info(f"✓ Stopped streaming on real bridge group {object.hue_bridge_group_id}")
-                                elif "error" in result[0]:
-                                    err = result[0]["error"]
-                                    logging.warning(f"Failed to stop streaming: {err.get('description', err)}")
+                                else:
+                                    logging.warning(f"Stop streaming response: {result}")
                             else:
                                 logging.info(f"Bridge stream stop response: {r.text[:100]}")
                         except Exception as e:

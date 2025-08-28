@@ -1,6 +1,10 @@
 """
-DTLS Client for Hue Bridge Entertainment
-Provides a stable Python-based DTLS client for forwarding entertainment data
+DTLS Client utilities for Hue Bridge Entertainment
+
+Provides tunnel implementations for forwarding decrypted DIYHue
+entertainment packets to a real Hue bridge using the correct DTLS PSK
+handshake. Prefers an OpenSSL-based client which is known to work with
+Hue bridges; falls back to simplified stubs only if necessary.
 """
 
 import ssl
@@ -9,6 +13,7 @@ import threading
 import time
 import logging
 import struct
+from subprocess import Popen, PIPE
 from queue import Queue, Empty
 
 logging = logging.getLogger(__name__)
@@ -136,6 +141,72 @@ class DTLSClient:
         logging.info("DTLS client disconnected")
 
 
+class OpenSSLClientTunnel:
+    """
+    OpenSSL-based DTLS client for forwarding HueStream packets
+
+    Uses `openssl s_client -dtls -psk <key> -psk_identity <identity>`
+    to establish a real DTLS PSK session to the Hue bridge, and accepts
+    raw HueStream packets through stdin.
+    """
+
+    def __init__(self, host, port, psk_identity, psk_key):
+        self.host = host
+        self.port = port
+        self.psk_identity = psk_identity
+        self.psk_key = psk_key
+        self.process = None
+        self.connected = False
+
+    def connect(self):
+        try:
+            cmd = [
+                'openssl', 's_client', '-quiet', '-cipher', 'PSK-AES128-GCM-SHA256', '-dtls',
+                '-psk', self.psk_key,
+                '-psk_identity', self.psk_identity,
+                '-connect', f'{self.host}:{self.port}'
+            ]
+            self.process = Popen(cmd, stdin=PIPE, stdout=None, stderr=None)
+            # Give openssl a brief moment to fail fast if credentials are wrong
+            time.sleep(0.5)
+            if self.process.poll() is not None:
+                logging.error("OpenSSL DTLS client exited immediately. Check hue PSK credentials.")
+                self.disconnect()
+                return False
+            self.connected = True
+            logging.info(f"✓ OpenSSL DTLS client connected to {self.host}:{self.port}")
+            return True
+        except Exception as e:
+            logging.error(f"Failed to start OpenSSL DTLS client: {e}")
+            self.disconnect()
+            return False
+
+    def send_packet(self, data: bytes):
+        if not self.connected or not self.process or not self.process.stdin:
+            return False
+        try:
+            self.process.stdin.write(data)
+            self.process.stdin.flush()
+            return True
+        except BrokenPipeError:
+            logging.error("OpenSSL DTLS pipe broken")
+            self.disconnect()
+            return False
+        except Exception as e:
+            logging.error(f"Error sending packet via OpenSSL DTLS: {e}")
+            return False
+
+    def disconnect(self):
+        self.connected = False
+        if self.process:
+            try:
+                self.process.terminate()
+                time.sleep(0.1)
+            except Exception:
+                pass
+        self.process = None
+
+
 class SimplePSKTunnel:
     """
     Simplified PSK tunnel for Hue bridge communication
@@ -260,20 +331,32 @@ class SimplePSKTunnel:
 def create_hue_tunnel(host, port, psk_identity, psk_key):
     """
     Factory function to create appropriate tunnel type
-    Tries SimplePSKTunnel first, falls back to DTLSClient
+    Prefers OpenSSL DTLS client, then SimplePSKTunnel, then DTLSClient
     """
-    
-    # Try simple PSK tunnel first (works with most bridges)
-    tunnel = SimplePSKTunnel(host, port, psk_identity, psk_key)
-    if tunnel.connect():
-        return tunnel
-    
-    logging.warning("Simple PSK tunnel failed, trying full DTLS client")
-    
-    # Fall back to full DTLS client
+    # 1) Try OpenSSL DTLS client (most reliable with Hue bridges)
+    try:
+        openssl_client = OpenSSLClientTunnel(host, port, psk_identity, psk_key)
+        if openssl_client.connect():
+            return openssl_client
+    except Exception:
+        pass
+
+    logging.warning("OpenSSL DTLS tunnel failed, trying Simple PSK tunnel")
+
+    # 2) Try simple PSK tunnel
+    try:
+        tunnel = SimplePSKTunnel(host, port, psk_identity, psk_key)
+        if tunnel.connect():
+            return tunnel
+    except Exception:
+        pass
+
+    logging.warning("Simple PSK tunnel failed, trying Python DTLS client")
+
+    # 3) Fall back to Python DTLS client (best-effort)
     client = DTLSClient(host, port, psk_identity, psk_key)
     if client.connect():
         return client
-    
+
     logging.error("All tunnel methods failed")
     return None
