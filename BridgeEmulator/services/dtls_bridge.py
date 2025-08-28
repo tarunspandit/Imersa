@@ -142,20 +142,25 @@ class DTLSBridge:
     def _bridge_loop(self):
         """Main bridge loop - forwards decrypted data between client and bridge"""
         logging.info("DTLS Bridge loop started")
+        logging.info(f"  Waiting for client connection on port {self.listen_port}...")
+        logging.info(f"  Connected to bridge at {self.bridge_ip}:{self.bridge_port}")
         
         buffer_size = 65536
         last_status_log = time.time()
+        no_data_count = 0
         
         while self.running:
             try:
                 # Check if processes are still alive
                 if self.server_process.poll() is not None:
-                    logging.error("DTLS server process died")
+                    stderr = self.server_process.stderr.read().decode('utf-8') if self.server_process.stderr else ""
+                    logging.error(f"DTLS server process died: {stderr}")
                     self.running = False
                     break
                 
                 if self.client_process.poll() is not None:
-                    logging.error("DTLS client process died")
+                    stderr = self.client_process.stderr.read().decode('utf-8') if self.client_process.stderr else ""
+                    logging.error(f"DTLS client process died: {stderr}")
                     self.running = False
                     break
                 
@@ -172,33 +177,49 @@ class DTLSBridge:
                 
                 readable, _, _ = select.select(ready_to_read, [], [], 0.01)
                 
-                for stream in readable:
-                    # Forward data from client to bridge
-                    if stream == self.server_process.stdout:
-                        data = os.read(self.server_process.stdout.fileno(), buffer_size)
-                        if data:
-                            self.packets_processed += 1
-                            self.last_packet_time = time.time()
-                            
-                            # Log first few packets
-                            if self.packets_processed <= 10:
-                                logging.info(f"Client→Bridge packet #{self.packets_processed} ({len(data)} bytes)")
-                                if data.startswith(b'HueStream'):
-                                    logging.info("  ✓ HueStream packet detected")
-                            
-                            # Forward to bridge
-                            if self.client_process.stdin:
-                                self.client_process.stdin.write(data)
-                                self.client_process.stdin.flush()
-                    
-                    # Forward data from bridge to client
-                    elif stream == self.client_process.stdout:
-                        data = os.read(self.client_process.stdout.fileno(), buffer_size)
-                        if data:
-                            # Forward to client
-                            if self.server_process.stdin:
-                                self.server_process.stdin.write(data)
-                                self.server_process.stdin.flush()
+                if readable:
+                    no_data_count = 0
+                    for stream in readable:
+                        # Forward data from client to bridge
+                        if stream == self.server_process.stdout:
+                            data = os.read(self.server_process.stdout.fileno(), buffer_size)
+                            if data:
+                                self.packets_processed += 1
+                                self.last_packet_time = time.time()
+                                
+                                # Always log first packet
+                                if self.packets_processed == 1:
+                                    logging.info(f"✓ First client packet received! ({len(data)} bytes)")
+                                
+                                # Log first few packets
+                                if self.packets_processed <= 10:
+                                    logging.info(f"Client→Bridge packet #{self.packets_processed} ({len(data)} bytes)")
+                                    if data.startswith(b'HueStream'):
+                                        logging.info("  ✓ HueStream packet detected")
+                                    elif self.packets_processed <= 3:
+                                        # Show hex preview for debugging
+                                        preview = data[:32].hex()
+                                        logging.debug(f"  Packet preview: {preview}")
+                                
+                                # Forward to bridge
+                                if self.client_process.stdin:
+                                    self.client_process.stdin.write(data)
+                                    self.client_process.stdin.flush()
+                        
+                        # Forward data from bridge to client
+                        elif stream == self.client_process.stdout:
+                            data = os.read(self.client_process.stdout.fileno(), buffer_size)
+                            if data:
+                                # Forward to client
+                                if self.server_process.stdin:
+                                    self.server_process.stdin.write(data)
+                                    self.server_process.stdin.flush()
+                else:
+                    no_data_count += 1
+                    # Log periodically if we're not getting data
+                    if no_data_count == 500:  # About 5 seconds
+                        logging.info("Waiting for client to send entertainment data...")
+                        no_data_count = 0
                 
                 # Log status periodically
                 if time.time() - last_status_log > 10:

@@ -4,6 +4,7 @@ from HueObjects import Group, EntertainmentConfiguration, Scene, BehaviorInstanc
 import uuid
 import json
 import weakref
+import requests
 from subprocess import Popen
 from flask_restful import Resource
 from flask import request
@@ -664,13 +665,22 @@ class ClipV2ResourceId(Resource):
                                     # Also need to start the real bridge's entertainment mode
                                     try:
                                         hue_user = bridgeConfig["config"]["hue"]["hueUser"]
-                                        # Start streaming on real bridge
+                                        # Start streaming on real bridge - V1 API
+                                        stream_data = {"active": True}
                                         r = requests.put(
                                             f"http://{hue_ip}/api/{hue_user}/groups/{hue_group_id}/stream",
-                                            json={"active": True},
+                                            json=stream_data,
                                             timeout=3
                                         )
-                                        logging.info(f"Started streaming on real bridge: {r.text[:100]}")
+                                        result = r.json() if r.text else {}
+                                        if isinstance(result, list) and len(result) > 0:
+                                            if "success" in result[0]:
+                                                logging.info(f"✓ Started streaming on real bridge group {hue_group_id}")
+                                            elif "error" in result[0]:
+                                                err = result[0]["error"]
+                                                logging.error(f"Failed to start streaming: {err.get('description', err)}")
+                                        else:
+                                            logging.info(f"Bridge stream response: {r.text[:200]}")
                                     except Exception as e:
                                         logging.warning(f"Failed to start streaming on real bridge: {e}")
                                 else:
@@ -707,13 +717,22 @@ class ClipV2ResourceId(Resource):
                         try:
                             hue_ip = bridgeConfig["config"]["hue"]["ip"]
                             hue_user = bridgeConfig["config"]["hue"]["hueUser"]
-                            # Stop streaming on real bridge
+                            # Stop streaming on real bridge - V1 API
+                            stream_data = {"active": False}
                             r = requests.put(
                                 f"http://{hue_ip}/api/{hue_user}/groups/{object.hue_bridge_group_id}/stream",
-                                json={"active": False},
+                                json=stream_data,
                                 timeout=3
                             )
-                            logging.info(f"Stopped streaming on real bridge: {r.text[:100]}")
+                            result = r.json() if r.text else {}
+                            if isinstance(result, list) and len(result) > 0:
+                                if "success" in result[0]:
+                                    logging.info(f"✓ Stopped streaming on real bridge group {object.hue_bridge_group_id}")
+                                elif "error" in result[0]:
+                                    err = result[0]["error"]
+                                    logging.warning(f"Failed to stop streaming: {err.get('description', err)}")
+                            else:
+                                logging.info(f"Bridge stream stop response: {r.text[:100]}")
                         except Exception as e:
                             logging.warning(f"Failed to stop streaming on real bridge: {e}")
                     
