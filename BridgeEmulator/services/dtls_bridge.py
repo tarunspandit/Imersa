@@ -100,11 +100,9 @@ class DTLSBridge:
                 'openssl', 's_client',
                 '-dtls',
                 '-noservername',
-                '-debug',
                 '-psk', self.bridge_key,
                 '-psk_identity', self.bridge_user,
-                '-connect', f'{self.bridge_ip}:{self.bridge_port}',
-                '-quiet'
+                '-connect', f'{self.bridge_ip}:{self.bridge_port}'
             ]
             
             logging.info(f"Connecting DTLS client to real bridge at {self.bridge_ip}:{self.bridge_port}...")
@@ -205,7 +203,8 @@ class DTLSBridge:
                                 
                                 # Forward to bridge
                                 if self.client_process.stdin:
-                                    self.client_process.stdin.write(data)
+                                    for i in range(0, len(data), 1024):
+                                        self.client_process.stdin.write(data[i:i+1024])
                                     self.client_process.stdin.flush()
                         
                         # Forward data from bridge to client
