@@ -198,38 +198,8 @@ def entertainmentService(group, user):
         return
 
     # Setup DTLS tunnel to real Hue bridge if we have Hue lights
-    if has_hue_lights and hue_bridge_group_id:
-        try:
-            hue_ip = bridgeConfig["config"]["hue"]["ip"]
-            hue_user = bridgeConfig["config"]["hue"]["hueUser"]
-            hue_key = bridgeConfig["config"]["hue"]["hueKey"]
-            
-            # Enable streaming on real Hue bridge for our synced group
-            url = f"http://{hue_ip}/api/{hue_user}/groups/{hue_bridge_group_id}"
-            r = requests.put(url, json={"stream": {"active": True}}, timeout=2)
-            logging.info(f"Hue bridge streaming enabled for group {hue_bridge_group_id}")
-            
-            # Create DTLS tunnel to Hue bridge
-            hue_tunnel_cmd = [
-                'openssl', 's_client', '-quiet', '-cipher', 'PSK-AES128-GCM-SHA256', '-dtls',
-                '-psk', hue_key, '-psk_identity', hue_user,
-                '-connect', f'{hue_ip}:2100'
-            ]
-            hue_tunnel_process = Popen(hue_tunnel_cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
-            sleep(0.5)
-            
-            if hue_tunnel_process.poll() is None:
-                logging.info(f"✓ DTLS tunnel established to Hue bridge at {hue_ip} for group {hue_bridge_group_id}")
-            else:
-                logging.warning("Failed to establish tunnel to Hue bridge")
-                has_hue_lights = False
-                hue_tunnel_process = None
-                hue_bridge_group_id = None
-        except Exception as e:
-            logging.error(f"Failed to setup Hue tunnel: {e}")
-            has_hue_lights = False
-            hue_tunnel_process = None
-            hue_bridge_group_id = None
+    # NOTE: We start the tunnel AFTER we receive the first data from client
+    # This ensures proper timing and prevents connection issues
 
     init = False
     frameBites = 10
@@ -248,6 +218,9 @@ def entertainmentService(group, user):
 
     # Add frame counter for debugging
     frame_count = 0
+    
+    # Initialize hue_tunnel_process properly
+    hue_tunnel_process = None
     
     # Check if stream is still active before entering loop
     if not bridgeConfig["groups"][group.id_v1].stream["active"]:
@@ -292,6 +265,67 @@ def entertainmentService(group, user):
                     init = True
                     # Ensure stream is still marked as active
                     bridgeConfig["groups"][group.id_v1].stream["active"] = True
+                    
+                    # NOW setup Hue bridge tunnel after we know client is connected
+                    if has_hue_lights and hue_bridge_group_id and not hue_tunnel_process:
+                        try:
+                            hue_ip = bridgeConfig["config"]["hue"]["ip"]
+                            hue_user = bridgeConfig["config"]["hue"]["hueUser"]
+                            hue_key = bridgeConfig["config"]["hue"]["hueKey"]
+                            
+                            # Enable streaming on real Hue bridge
+                            url = f"http://{hue_ip}/api/{hue_user}/groups/{hue_bridge_group_id}"
+                            stream_data = {
+                                "stream": {
+                                    "active": True,
+                                    "owner": hue_user,
+                                    "proxymode": "manual",
+                                    "proxynode": "/lights"
+                                }
+                            }
+                            r = requests.put(url, json=stream_data, timeout=2)
+                            result = r.json()
+                            if isinstance(result, list) and len(result) > 0:
+                                if "success" in result[0]:
+                                    logging.info(f"Hue bridge streaming activated for group {hue_bridge_group_id}")
+                                else:
+                                    logging.warning(f"Failed to activate streaming: {result}")
+                                    has_hue_lights = False
+                                    hue_bridge_group_id = None
+                            
+                            if has_hue_lights:
+                                # Now create DTLS tunnel
+                                hue_tunnel_cmd = [
+                                    'openssl', 's_client', '-quiet', '-cipher', 'PSK-AES128-GCM-SHA256', '-dtls',
+                                    '-psk', hue_key, '-psk_identity', hue_user,
+                                    '-connect', f'{hue_ip}:2100'
+                                ]
+                                hue_tunnel_process = Popen(hue_tunnel_cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
+                                sleep(0.5)
+                                
+                                # Test the tunnel by checking if process is still alive
+                                if hue_tunnel_process.poll() is None:
+                                    # Send test data to verify connection
+                                    test_stream = b"HueStream" + bytes([1, 0, 0, 0, 0, 0, 0])
+                                    try:
+                                        hue_tunnel_process.stdin.write(test_stream)
+                                        hue_tunnel_process.stdin.flush()
+                                        logging.info(f"✓ DTLS tunnel verified to Hue bridge at {hue_ip}")
+                                    except Exception as e:
+                                        logging.warning(f"DTLS tunnel test failed: {e}")
+                                        hue_tunnel_process.kill()
+                                        hue_tunnel_process = None
+                                        has_hue_lights = False
+                                else:
+                                    stderr = hue_tunnel_process.stderr.read()
+                                    logging.warning(f"DTLS tunnel failed to start: {stderr}")
+                                    hue_tunnel_process = None
+                                    has_hue_lights = False
+                        except Exception as e:
+                            logging.error(f"Failed to setup Hue bridge tunnel: {e}")
+                            has_hue_lights = False
+                            hue_tunnel_process = None
+                    
                 frameID += 1
             else:
                 data = p.stdout.read(frameBites)
