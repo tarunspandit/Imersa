@@ -636,8 +636,14 @@ class ClipV2ResourceId(Resource):
                     except:
                         pass
                     
-                    # Set stream active
-                    object.update_attr({"stream": {"active": True, "owner": authorisation["user"].username, "proxymode": "auto", "proxynode": "/bridge"}})
+                    # Add a delay and retry mechanism to handle race conditions
+                    for i in range(3):
+                        try:
+                            # Set stream active
+                            object.update_attr({"stream": {"active": True, "owner": authorisation["user"].username, "proxymode": "auto", "proxynode": "/bridge"}})
+                            break
+                        except:
+                            sleep(1)
 
                     # Sync with real Hue bridge FIRST to get matching UUID
                     hue_proxy_mode = False

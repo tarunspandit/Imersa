@@ -55,13 +55,7 @@ def create_hue_entertainment_group(group_name, hue_lights, locations):
             "name": diyhue_group_name,
             "type": "Entertainment",
             "lights": light_ids,
-            "class": "TV",
-            "stream": {
-                "active": False,
-                "owner": None,
-                "proxymode": "auto",
-                "proxynode": "/bridge"
-            }
+            "class": "TV"
         }
         
         # Note: Don't add locations in group creation - Hue bridge doesn't support it
@@ -101,11 +95,13 @@ def create_hue_entertainment_group(group_name, hue_lights, locations):
         
         if not group_id:
             # Create new group
+            logging.info(f"Creating Hue group with data: {json.dumps(group_data)}")
             r = requests.post(
                 f"http://{hue_ip}/api/{hue_user}/groups",
                 json=group_data,
                 timeout=3
             )
+            logging.info(f"Hue bridge response: {r.text}")
             result = r.json()
             if isinstance(result, list) and len(result) > 0:
                 if "success" in result[0]:
