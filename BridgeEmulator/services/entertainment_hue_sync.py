@@ -47,37 +47,18 @@ def create_hue_entertainment_group(group_name, hue_lights, locations):
             "name": diyhue_group_name,
             "type": "Entertainment",
             "lights": light_ids,
-            "class": "TV",
-            "stream": {
-                "active": False,
-                "owner": None,
-                "proxymode": "manual",
-                "proxynode": "/lights"
-            }
+            "class": "TV"
         }
         
-        # Add locations if provided
-        if locations:
-            group_locations = []
-            for light in hue_lights:
-                light_id = str(light.protocol_cfg["id"])
-                if light in locations:
-                    # Convert DIYHue location format to Hue format
-                    loc = locations[light]
-                    group_locations.append([
-                        light_id,
-                        loc[0] if len(loc) > 0 else 0,  # X
-                        loc[1] if len(loc) > 1 else 0,  # Y  
-                        loc[2] if len(loc) > 2 else 0   # Z
-                    ])
-            if group_locations:
-                group_data["locations"] = group_locations
+        # Note: Don't add locations in group creation - Hue bridge doesn't support it
+        # Locations must be set after group creation using a separate API call
         
         if group_id:
-            # Update existing group
+            # Update existing group (only update lights, not recreate)
+            update_data = {"lights": light_ids}
             r = requests.put(
                 f"http://{hue_ip}/api/{hue_user}/groups/{group_id}",
-                json=group_data,
+                json=update_data,
                 timeout=3
             )
             logging.info(f"Updated Hue entertainment group {group_id}: {r.text[:100]}")
@@ -89,12 +70,59 @@ def create_hue_entertainment_group(group_name, hue_lights, locations):
                 timeout=3
             )
             result = r.json()
-            if isinstance(result, list) and "success" in result[0]:
-                group_id = result[0]["success"]["id"]
-                logging.info(f"Created new Hue entertainment group: {group_id}")
+            if isinstance(result, list) and len(result) > 0:
+                if "success" in result[0]:
+                    group_id = result[0]["success"]["id"]
+                    logging.info(f"Created new Hue entertainment group: {group_id}")
+                elif "error" in result[0]:
+                    # Log specific error details
+                    error = result[0]["error"]
+                    logging.error(f"Failed to create Hue group - Type: {error.get('type')}, "
+                                f"Address: {error.get('address')}, "
+                                f"Description: {error.get('description')}")
+                    return None
             else:
-                logging.error(f"Failed to create Hue group: {result}")
+                logging.error(f"Unexpected response creating Hue group: {result}")
                 return None
+        
+        # Set locations separately if we have a group ID and locations
+        if group_id and locations:
+            try:
+                location_data = {}
+                for light in hue_lights:
+                    light_id = str(light.protocol_cfg["id"])
+                    if light in locations:
+                        loc = locations[light]
+                        # DIYHue stores positions as array [x, y, z] or dict
+                        if isinstance(loc, (list, tuple)) and len(loc) >= 2:
+                            x = float(loc[0]) if loc[0] is not None else 0.0
+                            y = float(loc[1]) if loc[1] is not None else 0.0
+                            z = float(loc[2]) if len(loc) > 2 and loc[2] is not None else 0.0
+                        elif isinstance(loc, dict):
+                            x = float(loc.get("x", 0))
+                            y = float(loc.get("y", 0))
+                            z = float(loc.get("z", 0))
+                        else:
+                            continue
+                        
+                        # Clamp values to valid range
+                        x = max(-1.0, min(1.0, x))
+                        y = max(-1.0, min(1.0, y))
+                        z = max(-1.0, min(1.0, z))
+                        
+                        location_data[light_id] = [x, y, z]
+                
+                if location_data:
+                    # Update group with locations
+                    r = requests.put(
+                        f"http://{hue_ip}/api/{hue_user}/groups/{group_id}",
+                        json={"locations": location_data},
+                        timeout=3
+                    )
+                    logging.debug(f"Set locations for group {group_id}: {r.text[:100]}")
+            except Exception as e:
+                logging.warning(f"Failed to set locations: {e}")
+                # Don't fail the whole operation if locations can't be set
         
         return int(group_id) if group_id else None
         
