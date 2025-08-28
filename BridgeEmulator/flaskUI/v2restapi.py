@@ -648,6 +648,9 @@ class ClipV2ResourceId(Resource):
                     # Sync with real Hue bridge FIRST to get matching UUID
                     hue_proxy_mode = False
                     try:
+                        from services.uuid_mapper import get_uuid_mapper
+                        mapper = get_uuid_mapper()
+                        mapper.remove_mapping(object.name)
                         from services.entertainment_hue_sync import sync_entertainment_group
                         hue_group_id, entertainment_uuid = sync_entertainment_group(object)
                         
