@@ -85,10 +85,70 @@ def create_hue_entertainment_group(group_name, hue_lights, locations):
                 logging.error(f"Unexpected response creating Hue group: {result}")
                 return None
         
-        # Note: Locations for entertainment groups are complex and often fail
-        # The Hue bridge is very picky about the format
-        # For now, skip setting locations to avoid breaking the sync
-        logging.debug("Skipping location setup - Hue bridge will use default positions")
+        # Set locations for entertainment groups
+        # Hue bridge expects format: {"locations": {"light_id": [x, y, z], ...}}
+        # where x, y, z are floats between -1 and 1
+        if group_id and locations:
+            try:
+                location_dict = {}
+                for light in hue_lights:
+                    light_id = str(light.protocol_cfg["id"])  # Must be string for JSON key
+                    
+                    # Get location for this light, or use default
+                    loc = None
+                    if light in locations:
+                        loc = locations[light]
+                    
+                    # Parse location data
+                    x, y, z = 0.0, 0.0, 0.0  # Default center position
+                    
+                    if loc:
+                        if isinstance(loc, (list, tuple)):
+                            # Array format [x, y] or [x, y, z]
+                            if len(loc) >= 2:
+                                # Round to 2 decimal places to reduce data size
+                                x = round(float(loc[0]) if loc[0] is not None else 0.0, 2)
+                                y = round(float(loc[1]) if loc[1] is not None else 0.0, 2)
+                                z = round(float(loc[2]) if len(loc) > 2 and loc[2] is not None else 0.0, 2)
+                        elif isinstance(loc, dict):
+                            # Dict format {"x": ..., "y": ..., "z": ...}
+                            x = round(float(loc.get("x", 0)), 2)
+                            y = round(float(loc.get("y", 0)), 2) 
+                            z = round(float(loc.get("z", 0)), 2)
+                    
+                    # Clamp to valid range (-1 to 1)
+                    x = max(-1.0, min(1.0, x))
+                    y = max(-1.0, min(1.0, y))
+                    z = max(-1.0, min(1.0, z))
+                    
+                    # Add to dictionary - Hue expects [x, y, z] array per light
+                    location_dict[light_id] = [x, y, z]
+                
+                if location_dict:
+                    # Update group with locations
+                    r = requests.put(
+                        f"http://{hue_ip}/api/{hue_user}/groups/{group_id}",
+                        json={"locations": location_dict},
+                        timeout=3
+                    )
+                    result = r.json()
+                    if isinstance(result, list) and len(result) > 0:
+                        success = False
+                        for item in result:
+                            if "success" in item:
+                                success = True
+                                break
+                        if success:
+                            logging.info(f"✓ Set locations for Hue group {group_id}")
+                        else:
+                            # Log the specific error
+                            for item in result:
+                                if "error" in item:
+                                    err = item["error"]
+                                    logging.warning(f"Location error: {err.get('description', 'Unknown')}")
+            except Exception as e:
+                logging.warning(f"Failed to set locations: {e}")
+                # Don't fail the whole operation if locations can't be set
         
         return int(group_id) if group_id else None
         

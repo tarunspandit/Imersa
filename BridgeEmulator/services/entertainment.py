@@ -298,21 +298,49 @@ def entertainmentService(group, user):
                             if has_hue_lights and stream_active:
                                 # Now create DTLS tunnel
                                 logging.info(f"Creating DTLS tunnel to Hue bridge at {hue_ip}:2100")
-                                hue_tunnel_cmd = [
-                                    'openssl', 's_client', '-quiet', '-cipher', 'PSK-AES128-GCM-SHA256', '-dtls',
-                                    '-psk', hue_key, '-psk_identity', hue_user,
-                                    '-connect', f'{hue_ip}:2100'
-                                ]
-                                hue_tunnel_process = Popen(hue_tunnel_cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
-                                sleep(1.0)  # Give more time for DTLS handshake
+                                logging.debug(f"Using PSK identity: {hue_user}, PSK key: {hue_key[:16]}...")
                                 
-                                # Test the tunnel by checking if process is still alive
+                                # Use the exact same cipher and options that work with Hue bridge
+                                hue_tunnel_cmd = [
+                                    'openssl', 's_client', 
+                                    '-dtls',
+                                    '-psk', hue_key,
+                                    '-psk_identity', hue_user,
+                                    '-cipher', 'PSK-AES128-GCM-SHA256',
+                                    '-connect', f'{hue_ip}:2100',
+                                    '-quiet'
+                                ]
+                                
+                                logging.debug(f"DTLS command: {' '.join(hue_tunnel_cmd[:6])}...")
+                                hue_tunnel_process = Popen(hue_tunnel_cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
+                                
+                                # Wait for DTLS handshake to complete
+                                sleep(1.5)
+                                
+                                # Test the tunnel
                                 if hue_tunnel_process.poll() is None:
-                                    logging.info(f"✓ DTLS tunnel process running for Hue bridge at {hue_ip}")
-                                    # Don't send test data yet - wait for actual frames
+                                    logging.info(f"✓ DTLS tunnel process started for Hue bridge at {hue_ip}")
+                                    
+                                    # The tunnel is established, frames will be forwarded in main loop
+                                    logging.info("DTLS tunnel ready for frame forwarding")
                                 else:
-                                    stderr_output = hue_tunnel_process.stderr.read().decode('utf-8')
-                                    logging.warning(f"DTLS tunnel failed to start: {stderr_output}")
+                                    # Process died, get error details
+                                    stderr_output = hue_tunnel_process.stderr.read().decode('utf-8') if hue_tunnel_process.stderr else "No error output"
+                                    stdout_output = hue_tunnel_process.stdout.read().decode('utf-8') if hue_tunnel_process.stdout else "No output"
+                                    
+                                    logging.error(f"DTLS tunnel failed immediately")
+                                    logging.error(f"STDERR: {stderr_output}")
+                                    logging.error(f"STDOUT: {stdout_output}")
+                                    logging.error(f"Exit code: {hue_tunnel_process.returncode}")
+                                    
+                                    # Check common issues
+                                    if "wrong version number" in stderr_output.lower():
+                                        logging.error("→ Hue bridge may not be accepting DTLS connections")
+                                    elif "connect:errno" in stderr_output.lower():
+                                        logging.error("→ Cannot reach Hue bridge at {hue_ip}:2100")
+                                    elif "psk" in stderr_output.lower():
+                                        logging.error("→ PSK authentication failed - check credentials")
+                                    
                                     hue_tunnel_process = None
                                     has_hue_lights = False
                         except Exception as e:
