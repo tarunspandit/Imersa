@@ -85,55 +85,10 @@ def create_hue_entertainment_group(group_name, hue_lights, locations):
                 logging.error(f"Unexpected response creating Hue group: {result}")
                 return None
         
-        # Set locations separately if we have a group ID and locations
-        if group_id and locations:
-            try:
-                # For entertainment groups, locations should be an array of arrays
-                # Format: [[light_id, x, y, z], [light_id, x, y, z], ...]
-                location_array = []
-                for light in hue_lights:
-                    light_id = int(light.protocol_cfg["id"])  # Must be int, not string
-                    if light in locations:
-                        loc = locations[light]
-                        # DIYHue stores positions as array [x, y, z] or dict
-                        if isinstance(loc, (list, tuple)) and len(loc) >= 2:
-                            x = float(loc[0]) if loc[0] is not None else 0.0
-                            y = float(loc[1]) if loc[1] is not None else 0.0
-                            z = float(loc[2]) if len(loc) > 2 and loc[2] is not None else 0.0
-                        elif isinstance(loc, dict):
-                            x = float(loc.get("x", 0))
-                            y = float(loc.get("y", 0))
-                            z = float(loc.get("z", 0))
-                        else:
-                            # Default position if not specified
-                            x = 0.0
-                            y = 0.0
-                            z = 0.0
-                        
-                        # Clamp values to valid range
-                        x = max(-1.0, min(1.0, x))
-                        y = max(-1.0, min(1.0, y))
-                        z = max(-1.0, min(1.0, z))
-                        
-                        # Add to array in correct format: [light_id, x, y, z]
-                        location_array.append([light_id, x, y, z])
-                
-                if location_array:
-                    # Update group with locations
-                    r = requests.put(
-                        f"http://{hue_ip}/api/{hue_user}/groups/{group_id}",
-                        json={"locations": location_array},
-                        timeout=3
-                    )
-                    result = r.json()
-                    if isinstance(result, list) and len(result) > 0:
-                        if "success" in result[0]:
-                            logging.info(f"Set locations for Hue group {group_id}")
-                        else:
-                            logging.warning(f"Failed to set locations: {result}")
-            except Exception as e:
-                logging.warning(f"Failed to set locations: {e}")
-                # Don't fail the whole operation if locations can't be set
+        # Note: Locations for entertainment groups are complex and often fail
+        # The Hue bridge is very picky about the format
+        # For now, skip setting locations to avoid breaking the sync
+        logging.debug("Skipping location setup - Hue bridge will use default positions")
         
         return int(group_id) if group_id else None
         

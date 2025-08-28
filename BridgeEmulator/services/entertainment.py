@@ -274,51 +274,45 @@ def entertainmentService(group, user):
                             hue_key = bridgeConfig["config"]["hue"]["hueKey"]
                             
                             # Enable streaming on real Hue bridge
+                            # Note: Hue bridge only accepts "active" parameter for stream
                             url = f"http://{hue_ip}/api/{hue_user}/groups/{hue_bridge_group_id}"
-                            stream_data = {
-                                "stream": {
-                                    "active": True,
-                                    "owner": hue_user,
-                                    "proxymode": "manual",
-                                    "proxynode": "/lights"
-                                }
-                            }
+                            stream_data = {"stream": {"active": True}}
                             r = requests.put(url, json=stream_data, timeout=2)
                             result = r.json()
-                            if isinstance(result, list) and len(result) > 0:
-                                if "success" in result[0]:
-                                    logging.info(f"Hue bridge streaming activated for group {hue_bridge_group_id}")
-                                else:
-                                    logging.warning(f"Failed to activate streaming: {result}")
-                                    has_hue_lights = False
-                                    hue_bridge_group_id = None
                             
-                            if has_hue_lights:
+                            # Check if stream was activated (even partial success is OK)
+                            stream_active = False
+                            if isinstance(result, list):
+                                for item in result:
+                                    if "success" in item and "stream/active" in str(item):
+                                        stream_active = True
+                                        break
+                            
+                            if stream_active:
+                                logging.info(f"✓ Hue bridge streaming activated for group {hue_bridge_group_id}")
+                            else:
+                                logging.warning(f"Failed to activate streaming: {result}")
+                                has_hue_lights = False
+                                hue_bridge_group_id = None
+                            
+                            if has_hue_lights and stream_active:
                                 # Now create DTLS tunnel
+                                logging.info(f"Creating DTLS tunnel to Hue bridge at {hue_ip}:2100")
                                 hue_tunnel_cmd = [
                                     'openssl', 's_client', '-quiet', '-cipher', 'PSK-AES128-GCM-SHA256', '-dtls',
                                     '-psk', hue_key, '-psk_identity', hue_user,
                                     '-connect', f'{hue_ip}:2100'
                                 ]
                                 hue_tunnel_process = Popen(hue_tunnel_cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
-                                sleep(0.5)
+                                sleep(1.0)  # Give more time for DTLS handshake
                                 
                                 # Test the tunnel by checking if process is still alive
                                 if hue_tunnel_process.poll() is None:
-                                    # Send test data to verify connection
-                                    test_stream = b"HueStream" + bytes([1, 0, 0, 0, 0, 0, 0])
-                                    try:
-                                        hue_tunnel_process.stdin.write(test_stream)
-                                        hue_tunnel_process.stdin.flush()
-                                        logging.info(f"✓ DTLS tunnel verified to Hue bridge at {hue_ip}")
-                                    except Exception as e:
-                                        logging.warning(f"DTLS tunnel test failed: {e}")
-                                        hue_tunnel_process.kill()
-                                        hue_tunnel_process = None
-                                        has_hue_lights = False
+                                    logging.info(f"✓ DTLS tunnel process running for Hue bridge at {hue_ip}")
+                                    # Don't send test data yet - wait for actual frames
                                 else:
-                                    stderr = hue_tunnel_process.stderr.read()
-                                    logging.warning(f"DTLS tunnel failed to start: {stderr}")
+                                    stderr_output = hue_tunnel_process.stderr.read().decode('utf-8')
+                                    logging.warning(f"DTLS tunnel failed to start: {stderr_output}")
                                     hue_tunnel_process = None
                                     has_hue_lights = False
                         except Exception as e:
@@ -333,12 +327,23 @@ def entertainmentService(group, user):
                 # DTLS SPLITTING: Forward raw data to Hue bridge if we have Hue lights
                 if has_hue_lights and hue_tunnel_process:
                     try:
-                        # Forward the raw DTLS frame to real Hue bridge
-                        hue_tunnel_process.stdin.write(data)
-                        hue_tunnel_process.stdin.flush()
+                        # Check if process is still alive
+                        if hue_tunnel_process.poll() is None:
+                            # Forward the raw DTLS frame to real Hue bridge
+                            hue_tunnel_process.stdin.write(data)
+                            hue_tunnel_process.stdin.flush()
+                        else:
+                            if frame_count % 100 == 0:  # Log only once per 100 frames
+                                logging.warning("DTLS tunnel process died, Hue lights not updating")
                     except Exception as e:
-                        logging.warning(f"Failed to forward to Hue bridge: {e}")
-                        # Don't disable tunnel, might be temporary issue
+                        if frame_count % 100 == 0:  # Don't spam logs
+                            logging.warning(f"Failed to forward to Hue bridge: {e}")
+                        # Try to diagnose broken pipe
+                        if "Broken pipe" in str(e):
+                            # The tunnel is dead, disable forwarding
+                            has_hue_lights = False
+                            hue_tunnel_process = None
+                            logging.error("DTLS tunnel broken - Hue lights will not update")
                 
                 nativeLights = {}
                 esphomeLights = {}
