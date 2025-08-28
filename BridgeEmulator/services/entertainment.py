@@ -219,8 +219,9 @@ def entertainmentService(group, user):
     # Add frame counter for debugging
     frame_count = 0
     
-    # Initialize hue_tunnel_process properly
+    # Initialize hue_tunnel_process and flag properly at function scope
     hue_tunnel_process = None
+    hue_tunnel_active = False
     
     # Check if stream is still active before entering loop
     if not bridgeConfig["groups"][group.id_v1].stream["active"]:
@@ -239,7 +240,7 @@ def entertainmentService(group, user):
     else:
         logging.warning("No data received from DTLS within 5 seconds")
     
-    logging.info(f"Entering main entertainment loop (hue_tunnel={has_hue_lights and hue_tunnel_process is not None})")
+    logging.info(f"Entering main entertainment loop (hue_tunnel={hue_tunnel_active})")
     try:
         while bridgeConfig["groups"][group.id_v1].stream["active"]:
             if not init:
@@ -321,6 +322,9 @@ def entertainmentService(group, user):
                                 if hue_tunnel_process.poll() is None:
                                     logging.info(f"✓ DTLS tunnel process started for Hue bridge at {hue_ip}")
                                     
+                                    # Mark tunnel as active for main loop
+                                    hue_tunnel_active = True
+                                    
                                     # The tunnel is established, frames will be forwarded in main loop
                                     logging.info("DTLS tunnel ready for frame forwarding")
                                 else:
@@ -353,23 +357,28 @@ def entertainmentService(group, user):
                 data = p.stdout.read(frameBites)
                 
                 # DTLS SPLITTING: Forward raw data to Hue bridge if we have Hue lights
-                if has_hue_lights and hue_tunnel_process:
+                if hue_tunnel_active and hue_tunnel_process:
                     try:
                         # Check if process is still alive
                         if hue_tunnel_process.poll() is None:
                             # Forward the raw DTLS frame to real Hue bridge
                             hue_tunnel_process.stdin.write(data)
                             hue_tunnel_process.stdin.flush()
+                            
+                            # Log successful forwarding periodically
+                            if frame_count % 500 == 0:
+                                logging.debug(f"Forwarded {frame_count} frames to Hue bridge")
                         else:
                             if frame_count % 100 == 0:  # Log only once per 100 frames
                                 logging.warning("DTLS tunnel process died, Hue lights not updating")
+                            hue_tunnel_active = False
                     except Exception as e:
                         if frame_count % 100 == 0:  # Don't spam logs
                             logging.warning(f"Failed to forward to Hue bridge: {e}")
                         # Try to diagnose broken pipe
                         if "Broken pipe" in str(e):
                             # The tunnel is dead, disable forwarding
-                            has_hue_lights = False
+                            hue_tunnel_active = False
                             hue_tunnel_process = None
                             logging.error("DTLS tunnel broken - Hue lights will not update")
                 
@@ -888,7 +897,7 @@ def entertainmentService(group, user):
                                 avg_fps = sum(fps_tracker) / len(fps_tracker)
                                 min_fps = min(fps_tracker) if fps_tracker else 0
                                 max_fps = max(fps_tracker) if fps_tracker else 0
-                                mode_str = " (DTLS tunnel to Hue bridge)" if has_hue_lights and hue_tunnel_process else ""
+                                mode_str = " (DTLS tunnel ACTIVE)" if hue_tunnel_active else ""
                                 logging.info("Entertainment FPS - Avg: %.1f, Min: %.1f, Max: %.1f, Lights: %d%s",
                                            avg_fps, min_fps, max_fps, len(lights_v1), mode_str)
                             last_fps_log = now
@@ -899,10 +908,8 @@ def entertainmentService(group, user):
                 else:
                     logging.info("HueStream was missing in the frame")
                     p.kill()
-                    try:
-                        h.disconnect()
-                    except UnboundLocalError:
-                        pass
+                    # No need to disconnect h in tunnel mode
+                    break
     except Exception as e:
         logging.error(f"Entertainment service error: {e}")
         import traceback
