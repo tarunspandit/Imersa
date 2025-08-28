@@ -326,39 +326,51 @@ def entertainmentService(group, user):
                                 logging.info(f"Creating DTLS tunnel to Hue bridge at {hue_ip}:2100")
                                 logging.debug(f"Using PSK identity: {hue_user}, PSK key: {hue_key[:16]}...")
                                 
-                                # Use EXACTLY the same options as HueConnection class (which works!)
+                                # Use EXACT command from working HueConnection class
                                 hue_tunnel_cmd = [
-                                    'openssl', 's_client',
-                                    '-quiet',
-                                    '-cipher', 'PSK-AES128-GCM-SHA256',
-                                    '-dtls', 
+                                    'openssl', 's_client', 
+                                    '-quiet', 
+                                    '-cipher', 'PSK-AES128-GCM-SHA256', 
+                                    '-dtls',
                                     '-psk', hue_key,
                                     '-psk_identity', hue_user,
-                                    '-connect', f'{hue_ip}:2100'
+                                    '-connect', hue_ip + ':2100'  # Use string concat like HueConnection
                                 ]
                                 
                                 logging.debug(f"DTLS command: {' '.join(hue_tunnel_cmd[:6])}...")
-                                hue_tunnel_process = Popen(hue_tunnel_cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
+                                # Start tunnel process with proper error handling
+                                hue_tunnel_process = Popen(
+                                    hue_tunnel_cmd, 
+                                    stdin=PIPE, 
+                                    stdout=PIPE, 
+                                    stderr=PIPE,
+                                    bufsize=0  # Unbuffered for real-time forwarding
+                                )
                                 
-                                # Wait for DTLS handshake to complete
-                                sleep(1.5)
+                                # Wait longer for DTLS handshake to complete
+                                sleep(2.5)
                                 
                                 # Test the tunnel
                                 if hue_tunnel_process.poll() is None:
                                     logging.info(f"✓ DTLS tunnel process started for Hue bridge at {hue_ip}")
                                     
-                                    # Send the first frame we captured during init
+                                    # Mark tunnel as active
+                                    hue_tunnel_active = True
+                                    
+                                    # Send the first frame after a small delay
+                                    sleep(0.5)  # Give DTLS time to stabilize
                                     try:
                                         if 'first_frame' in locals():
                                             hue_tunnel_process.stdin.write(first_frame)
                                             hue_tunnel_process.stdin.flush()
-                                            logging.info(f"✓ Sent initial frame to Hue bridge ({len(first_frame)} bytes)")
+                                            logging.info(f"✓ Sent initial HueStream frame to bridge ({len(first_frame)} bytes)")
+                                        else:
+                                            logging.warning("No first_frame captured during init")
                                     except Exception as e:
-                                        logging.warning(f"Failed to send initial frame: {e}")
+                                        logging.error(f"Failed to send initial frame: {e}")
+                                        # Continue anyway, maybe it will work
                                     
-                                    # Mark tunnel as active for main loop
-                                    hue_tunnel_active = True
-                                    logging.info("✓ DTLS tunnel ready for frame forwarding")
+                                    logging.info("✓ DTLS tunnel ready for streaming")
                                 else:
                                     # Process died, get error details
                                     stderr_output = hue_tunnel_process.stderr.read().decode('utf-8') if hue_tunnel_process.stderr else "No error output"
@@ -400,6 +412,17 @@ def entertainmentService(group, user):
                             hue_tunnel_process.stdin.write(data)
                             hue_tunnel_process.stdin.flush()
                             
+                            # Drain any response data from tunnel to prevent blocking
+                            import select
+                            ready, _, _ = select.select([hue_tunnel_process.stdout], [], [], 0)
+                            if ready:
+                                try:
+                                    response = hue_tunnel_process.stdout.read(1024)  # Read up to 1KB
+                                    if response and frame_count % 100 == 0:
+                                        logging.debug(f"Tunnel response: {len(response)} bytes")
+                                except:
+                                    pass  # Ignore read errors
+                            
                             # Log successful forwarding periodically
                             if frame_count == 1:
                                 # Debug: Check if we're forwarding correct data
@@ -412,11 +435,19 @@ def entertainmentService(group, user):
                             exit_code = hue_tunnel_process.returncode
                             logging.error(f"DTLS tunnel process died with exit code {exit_code}")
                             
-                            # Try to get error output
+                            # Try to get error output (non-blocking)
                             try:
-                                stderr = hue_tunnel_process.stderr.read().decode('utf-8') if hue_tunnel_process.stderr else ""
-                                if stderr:
-                                    logging.error(f"Tunnel error: {stderr}")
+                                import select
+                                # Check if there's stderr data available (non-blocking)
+                                if hue_tunnel_process.stderr:
+                                    ready, _, _ = select.select([hue_tunnel_process.stderr], [], [], 0)
+                                    if ready:
+                                        stderr = hue_tunnel_process.stderr.read().decode('utf-8', errors='ignore')
+                                        # Only log if it's not the known SNI warning
+                                        if stderr and "SSL_get_servername" not in stderr:
+                                            logging.error(f"Tunnel error: {stderr}")
+                                        elif "SSL_get_servername" in stderr:
+                                            logging.debug(f"Ignoring known OpenSSL warning: {stderr[:100]}")
                             except:
                                 pass
                             
