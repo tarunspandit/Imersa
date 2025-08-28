@@ -99,6 +99,7 @@ class DTLSBridge:
             client_cmd = [
                 'openssl', 's_client',
                 '-dtls',
+                '-noservername',
                 '-psk', self.bridge_key,
                 '-psk_identity', self.bridge_user,
                 '-connect', f'{self.bridge_ip}:{self.bridge_port}',
