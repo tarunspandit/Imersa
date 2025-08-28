@@ -107,7 +107,7 @@ class DTLSBridge:
             ]
             
             logging.info(f"Connecting DTLS client to real bridge at {self.bridge_ip}:{self.bridge_port}...")
-            self.client_process = subprocess.run(client_cmd, input=b'', capture_output=True, text=True, timeout=5)
+            self.client_process = subprocess.run(client_cmd, capture_output=True, timeout=5)
             
             time.sleep(0.5)  # Give client time to connect
             
@@ -204,7 +204,6 @@ class DTLSBridge:
                                 
                                 # Forward to bridge
                                 if self.client_process.stdin:
-                                    logging.info(f"Forwarding {len(data)} bytes to bridge")
                                     self.client_process.stdin.write(data)
                                     self.client_process.stdin.flush()
                         
