@@ -889,6 +889,14 @@ class ClipV2ResourceId(Resource):
                 object.name = putDict["metadata"]["name"]
         elif resource == "grouped_light":
             object.setV2Action(putDict)
+        elif resource == "entertainment_configuration":
+            # Apply update to entertainment config and sync Hue companion
+            try:
+                object.update_attr(putDict)
+                from services.entertainment_hue_sync import sync_entertainment_group
+                sync_entertainment_group(object)
+            except Exception as e:
+                logging.debug(f"Entertainment v2 update/sync failed: {e}")
         elif resource == "geolocation":
             bridgeConfig["sensors"]["1"].protocol_cfg = {
                 "lat": putDict["latitude"], "long": putDict["longitude"]}
