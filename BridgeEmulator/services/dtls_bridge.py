@@ -51,6 +51,16 @@ class DTLSBridge:
         
         # Target Hue entertainment UUID (for HueStream v2 packet rewrite)
         self.target_uuid = target_uuid  # string like 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
+
+        # Local mirror (decrypted HueStream) to feed DIYHue processing for non-Hue lights
+        try:
+            streaming_cfg = bridgeConfig["config"].get("streaming", {})
+            self.mirror_host = streaming_cfg.get("mirror_host", "127.0.0.1")
+            self.mirror_port = int(streaming_cfg.get("mirror_port", 2101))
+        except Exception:
+            self.mirror_host = "127.0.0.1"
+            self.mirror_port = 2101
+        self._mirror_sock = None
         
         logging.info(f"DTLS Bridge initialized for user {diyhue_user[:8]}...")
     
@@ -132,7 +142,7 @@ class DTLSBridge:
                 return False
             
             self.running = True
-            
+
             # Start bridge thread
             self.bridge_thread = threading.Thread(target=self._bridge_loop, daemon=True)
             self.bridge_thread.start()
@@ -209,6 +219,16 @@ class DTLSBridge:
                                         preview = data[:32].hex()
                                         logging.debug(f"  Packet preview: {preview}")
                                 
+                                # Mirror decrypted packet to local processor (non-Hue lights)
+                                try:
+                                    if self._mirror_sock is None:
+                                        self._mirror_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                                        self._mirror_sock.setblocking(False)
+                                    # Best-effort send; ignore EWOULDBLOCK
+                                    self._mirror_sock.sendto(data, (self.mirror_host, self.mirror_port))
+                                except Exception:
+                                    pass
+
                                 # Rewrite HueStream v2 UUID to match real bridge if needed
                                 try:
                                     if self.target_uuid and len(data) >= 52 and data.startswith(b'HueStream') and data[9] == 2:

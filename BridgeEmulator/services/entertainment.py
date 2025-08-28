@@ -111,7 +111,7 @@ def get_hue_entertainment_group(light, groupname):
     return int(out)
 
 
-def entertainmentService(group, user):
+def entertainmentService(group, user, mirror_port=None):
     """
     Entertainment service with DTLS splitting for mixed light setups.
     
@@ -130,6 +130,8 @@ def entertainmentService(group, user):
     logging.info(f"Starting entertainment service for group {group.id_v1}")
     logging.debug("User: " + user.username)
     logging.debug(f"Key: {user.client_key[:16]}...")  # Only log part of key for security
+    
+    use_mirror = mirror_port is not None
     
     # Import sync module
     from services.entertainment_hue_sync import sync_entertainment_group
@@ -199,28 +201,43 @@ def entertainmentService(group, user):
     except Exception:
         openssl_bin = "openssl"
 
-    opensslCmd = [
-        openssl_bin, 's_server', '-dtls1_2', '-cipher', 'PSK-AES128-GCM-SHA256',
-        '-psk', user.client_key,
-        '-psk_identity', user.username, '-nocert', '-accept', '2100', '-quiet'
-    ]
-    
-    logging.info(f"Starting DTLS server on port 2100...")
-    try:
-        p = Popen(opensslCmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
-        sleep(0.5)
-        if p.poll() is not None:
-            stderr = p.stderr.read().decode('utf-8') if p.stderr else "No error output"
-            logging.error(f"OpenSSL process died immediately: {stderr}")
+    p = None
+    mirror_sock = None
+    if not use_mirror:
+        opensslCmd = [
+            openssl_bin, 's_server', '-dtls1_2', '-cipher', 'PSK-AES128-GCM-SHA256',
+            '-psk', user.client_key,
+            '-psk_identity', user.username, '-nocert', '-accept', '2100', '-quiet'
+        ]
+        logging.info(f"Starting DTLS server on port 2100...")
+        try:
+            p = Popen(opensslCmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
+            sleep(0.5)
+            if p.poll() is not None:
+                stderr = p.stderr.read().decode('utf-8') if p.stderr else "No error output"
+                logging.error(f"OpenSSL process died immediately: {stderr}")
+                bridgeConfig["groups"][group.id_v1].stream["active"] = False
+                bridgeConfig["groups"][group.id_v1].stream["owner"] = None
+                return
+            logging.info("DTLS server started successfully, waiting for client connection...")
+        except Exception as e:
+            logging.error(f"Failed to start DTLS server: {e}")
             bridgeConfig["groups"][group.id_v1].stream["active"] = False
             bridgeConfig["groups"][group.id_v1].stream["owner"] = None
             return
-        logging.info("DTLS server started successfully, waiting for client connection...")
-    except Exception as e:
-        logging.error(f"Failed to start DTLS server: {e}")
-        bridgeConfig["groups"][group.id_v1].stream["active"] = False
-        bridgeConfig["groups"][group.id_v1].stream["owner"] = None
-        return
+    else:
+        # Mirror mode: listen for decrypted HueStream frames on local UDP
+        try:
+            mirror_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            mirror_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            mirror_sock.bind(("127.0.0.1", int(mirror_port)))
+            mirror_sock.setblocking(False)
+            logging.info(f"Mirror mode active: listening on 127.0.0.1:{mirror_port} for HueStream frames")
+        except Exception as e:
+            logging.error(f"Failed to start mirror UDP listener on {mirror_port}: {e}")
+            bridgeConfig["groups"][group.id_v1].stream["active"] = False
+            bridgeConfig["groups"][group.id_v1].stream["owner"] = None
+            return
 
     # Setup DTLS tunnel to real Hue bridge if we have Hue lights
     # NOTE: We start the tunnel AFTER we receive the first data from client
@@ -251,24 +268,29 @@ def entertainmentService(group, user):
     # Check if stream is still active before entering loop
     if not bridgeConfig["groups"][group.id_v1].stream["active"]:
         logging.warning("Stream was deactivated before entering main loop")
-        p.kill()
+        if p:
+            p.kill()
         return
     
-    logging.info("Waiting for initial data from DTLS connection...")
+    if not use_mirror:
+        logging.info("Waiting for initial data from DTLS connection...")
     
     # Wait for initial byte with timeout
     import select
-    ready, _, _ = select.select([p.stdout], [], [], 5.0)  # 5 second timeout
-    if ready:
-        p.stdout.read(1)  # read one byte so the init function will correctly detect the frameBites
-        logging.info("Initial byte received, entering main loop")
+    if not use_mirror:
+        ready, _, _ = select.select([p.stdout], [], [], 5.0)  # 5 second timeout
+        if ready:
+            p.stdout.read(1)  # read one byte so the init function will correctly detect the frameBites
+            logging.info("Initial byte received, entering main loop")
+        else:
+            logging.warning("No data received from DTLS within 5 seconds")
     else:
-        logging.warning("No data received from DTLS within 5 seconds")
+        logging.info("Entering main loop in mirror mode")
     
-    logging.info(f"Entering main entertainment loop (hue_tunnel={hue_tunnel_active})")
+    logging.info(f"Entering main entertainment loop (hue_tunnel={hue_tunnel_active}, mirror={use_mirror})")
     try:
         while bridgeConfig["groups"][group.id_v1].stream["active"]:
-            if not init:
+            if not use_mirror and not init:
                 # Check if we should still be running
                 if not bridgeConfig["groups"][group.id_v1].stream["active"]:
                     logging.info("Stream deactivated during initialization")
@@ -402,7 +424,18 @@ def entertainmentService(group, user):
                     
                 frameID += 1
             else:
-                data = p.stdout.read(frameBites)
+                if use_mirror:
+                    # Read datagram from local mirror
+                    import select as _select
+                    r, _, _ = _select.select([mirror_sock], [], [], 0.5)
+                    if not r:
+                        continue
+                    try:
+                        data, _addr = mirror_sock.recvfrom(65536)
+                    except Exception:
+                        continue
+                else:
+                    data = p.stdout.read(frameBites)
                 
                 # DTLS SPLITTING: Forward COMPLETE packet to Hue bridge (header + data)
                 if hue_tunnel_active and hue_tunnel_process:

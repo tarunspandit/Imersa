@@ -719,17 +719,14 @@ class ClipV2ResourceId(Resource):
                                 sel_user = select_entertainment_user(authorisation["user"])
                                 diyhue_user = sel_user.username
                                 diyhue_key = sel_user.client_key
-                                if use_hybrid:
-                                    logging.info(f"Hybrid mode: will start local entertainment using PSK for '{sel_user.name}' ({diyhue_user[:8]}...)")
+                                from services.dtls_bridge import start_dtls_bridge
+                                logging.info(f"DTLS server using PSK for user '{sel_user.name}' ({diyhue_user[:8]}...) ")
+                                if start_dtls_bridge(diyhue_user, diyhue_key, hue_ip, entertainment_uuid):
+                                    logging.info(f"✓ DTLS bridge started - bridging to {hue_ip}:2100")
+                                    object.dtls_proxy_active = True
+                                    hue_proxy_mode = True
                                 else:
-                                    from services.dtls_bridge import start_dtls_bridge
-                                    logging.info(f"DTLS server using PSK for user '{sel_user.name}' ({diyhue_user[:8]}...) ")
-                                    if start_dtls_bridge(diyhue_user, diyhue_key, hue_ip, entertainment_uuid):
-                                        logging.info(f"✓ DTLS bridge started - bridging to {hue_ip}:2100")
-                                        object.dtls_proxy_active = True
-                                        hue_proxy_mode = True
-                                    else:
-                                        logging.warning("Failed to start DTLS bridge - falling back to direct mode")
+                                    logging.warning("Failed to start DTLS bridge - falling back to direct mode")
 
                                 # Start streaming on real bridge (both modes)
                                 try:
@@ -761,14 +758,26 @@ class ClipV2ResourceId(Resource):
                     for light in object.lights:
                         light().update_attr({"state": {"mode": "streaming"}})
                     
-                    # Start local entertainment if hybrid (mixed) or no Hue; otherwise proxy-only
-                    if ("use_hybrid" in locals() and use_hybrid) or ("has_hue" in locals() and not has_hue) or not hue_proxy_mode:
-                        # Choose Hue Sync user when available (for DTLS PSK on server side)
+                    # Start local entertainment for non-Hue lights
+                    # - Mixed group: run in mirror mode to avoid port 2100 conflict (reads frames from DTLS bridge mirror)
+                    # - No-Hue group: run normal DTLS server mode
+                    if ("use_hybrid" in locals() and use_hybrid):
                         try:
                             start_user = sel_user
                         except NameError:
                             start_user = authorisation["user"]
-                        entertainment_thread = Thread(target=entertainmentService, args=[object, start_user])
+                        # Determine mirror port (default 2101)
+                        try:
+                            mirror_port = int(bridgeConfig["config"].get("streaming", {}).get("mirror_port", 2101))
+                        except Exception:
+                            mirror_port = 2101
+                        entertainment_thread = Thread(target=entertainmentService, args=[object, start_user, mirror_port])
+                        entertainment_thread.daemon = True
+                        entertainment_thread.start()
+                        sleep(0.1)
+                    elif ("has_hue" in locals() and not has_hue) or not hue_proxy_mode:
+                        # No Hue or no proxy: normal local DTLS server mode
+                        entertainment_thread = Thread(target=entertainmentService, args=[object, authorisation["user"]])
                         entertainment_thread.daemon = True
                         entertainment_thread.start()
                         sleep(0.1)
