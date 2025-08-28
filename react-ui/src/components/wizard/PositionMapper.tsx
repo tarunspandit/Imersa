@@ -257,7 +257,7 @@ export const PositionMapper: React.FC<PositionMapperProps> = ({
                 />
 
                 {/* 3D Z-axis indicator */}
-                {viewSettings.show3D && position.z !== 0 && (
+                {configurationType === '3dspace' && position.z !== 0 && (
                   <line
                     x1={canvasPos.x}
                     y1={canvasPos.y}
@@ -286,7 +286,7 @@ export const PositionMapper: React.FC<PositionMapperProps> = ({
           })}
 
           {/* Arrow marker for Z-axis */}
-          {viewSettings.show3D && (
+          {configurationType === '3dspace' && (
             <defs>
               <marker
                 id="arrowhead"
@@ -313,7 +313,7 @@ export const PositionMapper: React.FC<PositionMapperProps> = ({
             <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
             <span>Selected</span>
           </div>
-          {viewSettings.show3D && (
+          {configurationType === '3dspace' && (
             <div className="flex items-center space-x-2">
               <div className="w-4 h-0.5 bg-gray-600"></div>
               <span>Depth (Z)</span>
@@ -358,7 +358,7 @@ export const PositionMapper: React.FC<PositionMapperProps> = ({
             )}
           >
             <Layers className="w-4 h-4" />
-            {viewSettings.view3DMode ? '3D View' : '2D View'}
+            {viewSettings.view3DMode ? '2D View' : '3D View'}
           </button>
         </div>
       </div>

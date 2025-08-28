@@ -50,6 +50,8 @@ const EntertainmentWizard: React.FC = () => {
     testStreaming,
     resetWizard,
     clearError,
+    initialize,
+    refreshLights,
   } = useWizard({
     onComplete: (areaId) => {
       console.log('Entertainment area created:', areaId);
@@ -191,6 +193,7 @@ const EntertainmentWizard: React.FC = () => {
             onToggleLight={toggleLight}
             onSelectAll={selectAllLights}
             onClearSelection={clearLightSelection}
+            onRefreshLights={refreshLights}
             isLoading={isLoading}
           />
         );

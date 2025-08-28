@@ -1,5 +1,5 @@
 // Entertainment Wizard State Management Hook
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { entertainmentApi } from '@/services/entertainmentApi';
 import { lightsApiService, type HueLight } from '@/services/lightsApi';
 import { LightPosition, Light, ApiResponse } from '@/types';
@@ -76,6 +76,11 @@ interface UseWizardOptions {
 
 export function useWizard(options: UseWizardOptions = {}) {
   const { onComplete, onError } = options;
+  // Keep latest callbacks in refs to avoid recreating dependent fns
+  const onErrorRef = useRef(onError);
+  const onCompleteRef = useRef(onComplete);
+  useEffect(() => { onErrorRef.current = onError; }, [onError]);
+  useEffect(() => { onCompleteRef.current = onComplete; }, [onComplete]);
 
   // Core wizard state
   const [currentStep, setCurrentStep] = useState(1);
@@ -150,16 +155,36 @@ export function useWizard(options: UseWizardOptions = {}) {
         availableLights: allLights,
       }));
 
-      // Validate initial step
-      validateCurrentStep();
     } catch (err) {
       const errorMsg = `Failed to initialize wizard: ${err}`;
       setError(errorMsg);
-      onError?.(errorMsg);
+      onErrorRef.current?.(errorMsg);
     } finally {
       setIsLoading(false);
     }
-  }, [onError]);
+  }, []);
+
+  // Refresh only the lights list without reinitializing APIs
+  const refreshLights = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const lightsData = await lightsApiService.fetchLights();
+      const allLights: Light[] = Object.entries(lightsData).map(([id, hueLight]) =>
+        lightsApiService.convertHueLightToLight(id, hueLight as HueLight)
+      );
+      setFormData(prev => ({
+        ...prev,
+        availableLights: allLights,
+      }));
+    } catch (err) {
+      const errorMsg = `Failed to refresh lights: ${err}`;
+      setError(errorMsg);
+      onErrorRef.current?.(errorMsg);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
 
   // Validate current step
   const validateCurrentStep = useCallback(() => {
@@ -446,18 +471,18 @@ export function useWizard(options: UseWizardOptions = {}) {
         )
       );
       
-      onComplete?.(areaId);
+      onCompleteRef.current?.(areaId);
       return true;
       
     } catch (err) {
       const errorMsg = `Failed to create entertainment area: ${err}`;
       setError(errorMsg);
-      onError?.(errorMsg);
+      onErrorRef.current?.(errorMsg);
       return false;
     } finally {
       setIsLoading(false);
     }
-  }, [formData, onComplete, onError]);
+  }, [formData]);
 
   // Test streaming
   const testStreaming = useCallback(async (): Promise<boolean> => {
@@ -565,6 +590,7 @@ export function useWizard(options: UseWizardOptions = {}) {
     resetWizard,
     clearError,
     initialize,
+    refreshLights,
   };
 }
 
