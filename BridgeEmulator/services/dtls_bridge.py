@@ -26,7 +26,7 @@ class DTLSBridge:
     3. Re-encrypts and sends to real bridge using bridge PSK
     """
     
-    def __init__(self, diyhue_user, diyhue_key, listen_port=2100):
+    def __init__(self, diyhue_user, diyhue_key, listen_port=2100, target_uuid=None):
         self.listen_port = listen_port
         self.diyhue_user = diyhue_user
         self.diyhue_key = diyhue_key
@@ -44,10 +44,13 @@ class DTLSBridge:
         # Threading
         self.running = False
         self.bridge_thread = None
-        
+
         # Stats
         self.packets_processed = 0
         self.last_packet_time = 0
+        
+        # Target Hue entertainment UUID (for HueStream v2 packet rewrite)
+        self.target_uuid = target_uuid  # string like 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
         
         logging.info(f"DTLS Bridge initialized for user {diyhue_user[:8]}...")
     
@@ -206,6 +209,20 @@ class DTLSBridge:
                                         preview = data[:32].hex()
                                         logging.debug(f"  Packet preview: {preview}")
                                 
+                                # Rewrite HueStream v2 UUID to match real bridge if needed
+                                try:
+                                    if self.target_uuid and len(data) >= 52 and data.startswith(b'HueStream') and data[9] == 2:
+                                        # HueStream v2 UUID at bytes 16..52 (36 ASCII chars)
+                                        pkt_uuid = data[16:52].decode('ascii', errors='ignore')
+                                        if pkt_uuid != self.target_uuid and len(self.target_uuid) == 36:
+                                            new_data = data[:16] + self.target_uuid.encode('ascii') + data[52:]
+                                            data = new_data
+                                            if self.packets_processed <= 5:
+                                                logging.info("Rewrote HueStream UUID %s -> %s", pkt_uuid, self.target_uuid)
+                                except Exception as e:
+                                    # Non-fatal
+                                    logging.debug(f"UUID rewrite skipped: {e}")
+
                                 # Forward to bridge
                                 if self.client_process.stdin:
                                     self.client_process.stdin.write(data)
@@ -292,7 +309,7 @@ def get_dtls_bridge():
         pass
     return _dtls_bridge
 
-def start_dtls_bridge(diyhue_user, diyhue_key, bridge_ip):
+def start_dtls_bridge(diyhue_user, diyhue_key, bridge_ip, entertainment_uuid=None):
     """Start the DTLS bridge with proper credentials"""
     global _dtls_bridge
     
@@ -318,7 +335,7 @@ def start_dtls_bridge(diyhue_user, diyhue_key, bridge_ip):
     logging.info(f"  Bridge: user={bridge_user[:8]}... key={bridge_key[:16]}...")
     
     # Create and start bridge
-    _dtls_bridge = DTLSBridge(diyhue_user, diyhue_key)
+    _dtls_bridge = DTLSBridge(diyhue_user, diyhue_key, target_uuid=entertainment_uuid)
     _dtls_bridge.configure_bridge(bridge_ip, bridge_user, bridge_key)
     
     return _dtls_bridge.start()

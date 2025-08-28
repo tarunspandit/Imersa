@@ -709,7 +709,7 @@ class ClipV2ResourceId(Resource):
                                 diyhue_key = sel_user.client_key
                                 logging.info(f"DTLS server using PSK for user '{sel_user.name}' ({diyhue_user[:8]}...) ")
                                 
-                                if start_dtls_bridge(diyhue_user, diyhue_key, hue_ip):
+                                if start_dtls_bridge(diyhue_user, diyhue_key, hue_ip, entertainment_uuid):
                                     logging.info(f"✓ DTLS bridge started - bridging to {hue_ip}:2100")
                                     object.dtls_proxy_active = True
                                     hue_proxy_mode = True
