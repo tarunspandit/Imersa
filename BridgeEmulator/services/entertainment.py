@@ -332,39 +332,22 @@ def entertainmentService(group, user):
                                 hue_bridge_group_id = None
                             
                             if hue_bridge_group_id and hue_stream_active:
-                                # Now create DTLS tunnel
+                                # Now create DTLS tunnel using Python client
                                 logging.info(f"Creating DTLS tunnel to Hue bridge at {hue_ip}:2100")
                                 logging.debug(f"Using PSK identity: {hue_user}, PSK key: {hue_key[:16]}...")
                                 
-                                # Use EXACT command from working HueConnection class
-                                hue_tunnel_cmd = [
-                                    'openssl', 's_client', 
-                                    '-quiet', 
-                                    '-cipher', 'PSK-AES128-GCM-SHA256', 
-                                    '-dtls',
-                                    '-psk', hue_key,
-                                    '-psk_identity', hue_user,
-                                    '-connect', hue_ip + ':2100'  # Use string concat like HueConnection
-                                ]
+                                # Use Python DTLS client for better stability
+                                from services.dtls_client import create_hue_tunnel
                                 
-                                logging.debug(f"DTLS command: {' '.join(hue_tunnel_cmd[:6])}...")
-                                # Start tunnel process with proper error handling
-                                hue_tunnel_process = Popen(
-                                    hue_tunnel_cmd, 
-                                    stdin=PIPE, 
-                                    stdout=PIPE, 
-                                    stderr=PIPE,
-                                    bufsize=0  # Unbuffered for real-time forwarding
+                                hue_tunnel_process = create_hue_tunnel(
+                                    host=hue_ip,
+                                    port=2100,
+                                    psk_identity=hue_user,
+                                    psk_key=hue_key
                                 )
                                 
-                                # Wait longer for DTLS handshake to complete
-                                sleep(2.5)
-                                
-                                # Test the tunnel
-                                if hue_tunnel_process.poll() is None:
-                                    logging.info(f"✓ DTLS tunnel process started for Hue bridge at {hue_ip}")
-                                    
-                                    # Mark tunnel as active
+                                if hue_tunnel_process and hue_tunnel_process.connected:
+                                    logging.info(f"✓ DTLS tunnel established to Hue bridge at {hue_ip}")
                                     hue_tunnel_active = True
                                     
                                     # Send the first frame after a small delay
@@ -389,14 +372,15 @@ def entertainmentService(group, user):
                                                 modified_first += uuid_bytes
                                                 modified_first += first_frame[52:]  # Add channel data
                                                 
-                                                hue_tunnel_process.stdin.write(modified_first)
+                                                if not hue_tunnel_process.send_packet(modified_first):
+                                                    logging.warning("Failed to send first frame")
                                                 logging.info(f"✓ Sent modified initial frame with UUID: {uuid_bytes[:36].decode('ascii', errors='ignore')}")
                                             else:
                                                 # API v1 or other - send as-is
                                                 hue_tunnel_process.stdin.write(first_frame)
                                                 logging.info(f"✓ Sent initial frame as-is ({len(first_frame)} bytes)")
                                             
-                                            hue_tunnel_process.stdin.flush()
+                                            pass  # Python client handles flushing internally
                                         else:
                                             logging.warning("No first_frame captured during init")
                                     except Exception as e:
@@ -407,12 +391,12 @@ def entertainmentService(group, user):
                                 else:
                                     # Process died, get error details
                                     stderr_output = hue_tunnel_process.stderr.read().decode('utf-8') if hue_tunnel_process.stderr else "No error output"
-                                    stdout_output = hue_tunnel_process.stdout.read().decode('utf-8') if hue_tunnel_process.stdout else "No output"
+                                    stdout_output = "Python DTLS client active"
                                     
                                     logging.error(f"DTLS tunnel failed immediately")
                                     logging.error(f"STDERR: {stderr_output}")
                                     logging.error(f"STDOUT: {stdout_output}")
-                                    logging.error(f"Exit code: {hue_tunnel_process.returncode}")
+                                    logging.error("DTLS tunnel connection failed")
                                     
                                     # Check common issues
                                     if "wrong version number" in stderr_output.lower():
@@ -439,39 +423,65 @@ def entertainmentService(group, user):
                 if hue_tunnel_active and hue_tunnel_process:
                     try:
                         # Check if process is still alive
-                        if hue_tunnel_process.poll() is None:
+                        if hue_tunnel_process.connected:
                             # CRITICAL: For Hue bridge, we need to modify the packet!
                             # The packet from Hue Sync contains the DIYHue entertainment area ID
                             # We need to replace it with the real Hue bridge entertainment area ID
                             
                             # Check if this is API v2 with Entertainment Area UUID
                             if len(data) >= 52 and data[9] == 2:  # API v2
-                                # Extract the entertainment area UUID (bytes 16-52)
-                                diyhue_uuid = data[16:52]
-                                
-                                # Create modified packet with Hue bridge's entertainment group UUID
-                                # The Hue bridge uses the group's UUID (not numeric ID)
-                                # We need to get this from the Hue bridge
-                                
-                                # For now, construct the packet with proper structure
-                                modified_packet = data[:16]  # Keep header
-                                
-                                # Add the Hue bridge entertainment area UUID (36 bytes)
-                                # Use the UUID we got from the bridge or construct one
-                                if hue_bridge_group_uuid:
-                                    hue_group_uuid = hue_bridge_group_uuid.encode('ascii')
+                                # Validate packet structure
+                                if data[:9] != b'HueStream':
+                                    logging.warning(f"Invalid HueStream header: {data[:9].hex()}")
+                                    # Forward as-is and hope for the best
+                                    if not hue_tunnel_process.send_packet(data):
+                                        logging.warning("Failed to send packet")
+                                        hue_tunnel_active = False
                                 else:
-                                    # Fallback: construct from group ID
-                                    hue_group_uuid = f"{hue_bridge_group_id:08x}-0000-0000-0000-000000000000".encode('ascii')
-                                
-                                # Ensure exactly 36 bytes
-                                if len(hue_group_uuid) < 36:
-                                    hue_group_uuid = hue_group_uuid.ljust(36, b'0')
-                                elif len(hue_group_uuid) > 36:
-                                    hue_group_uuid = hue_group_uuid[:36]
-                                
-                                modified_packet += hue_group_uuid
-                                modified_packet += data[52:]  # Add channel data
+                                    # Extract the entertainment area UUID (bytes 16-52)
+                                    diyhue_uuid = data[16:52]
+                                    
+                                    # Create modified packet with Hue bridge's entertainment group UUID
+                                    modified_packet = data[:16]  # Keep header exactly as-is
+                                    
+                                    # Add the Hue bridge entertainment area UUID (36 bytes)
+                                    if hue_bridge_group_uuid:
+                                        # Ensure UUID is in correct format: lowercase, with dashes, 36 chars
+                                        uuid_str = hue_bridge_group_uuid.lower()
+                                        if len(uuid_str) == 32:  # Missing dashes
+                                            # Add dashes: 8-4-4-4-12
+                                            uuid_str = f"{uuid_str[:8]}-{uuid_str[8:12]}-{uuid_str[12:16]}-{uuid_str[16:20]}-{uuid_str[20:32]}"
+                                        
+                                        # Validate UUID format
+                                        if len(uuid_str) == 36 and uuid_str[8] == '-' and uuid_str[13] == '-':
+                                            hue_group_uuid = uuid_str.encode('ascii')
+                                        else:
+                                            logging.warning(f"Invalid UUID format: {uuid_str}")
+                                            # Use as-is and pad/truncate
+                                            hue_group_uuid = uuid_str.encode('ascii')[:36].ljust(36, b'0')
+                                    else:
+                                        # No UUID available, forward packet as-is
+                                        logging.warning("No Hue bridge UUID available, forwarding as-is")
+                                        if not hue_tunnel_process.send_packet(data):
+                                            logging.warning("Failed to send packet")
+                                            hue_tunnel_active = False
+                                        pass  # Python client handles flushing
+                                        continue  # Skip to next iteration
+                                    
+                                    # Ensure exactly 36 bytes
+                                    if len(hue_group_uuid) != 36:
+                                        logging.warning(f"UUID length {len(hue_group_uuid)}, padding/truncating to 36")
+                                        hue_group_uuid = hue_group_uuid[:36].ljust(36, b'0')
+                                    
+                                    modified_packet += hue_group_uuid
+                                    modified_packet += data[52:]  # Add channel data
+                                    
+                                    # Validate packet length
+                                    if len(modified_packet) != len(data):
+                                        logging.error(f"Packet length mismatch: original={len(data)}, modified={len(modified_packet)}")
+                                    
+                                    # Send modified packet
+                                    hue_tunnel_process.stdin.write(modified_packet)
                                 
                                 # Debug first few packets
                                 if frame_count <= 3:
@@ -489,25 +499,16 @@ def entertainmentService(group, user):
                                 hue_tunnel_process.stdin.write(modified_packet)
                             else:
                                 # API v1 or other - forward as-is
-                                hue_tunnel_process.stdin.write(data)
+                                if not hue_tunnel_process.send_packet(data):
+                                    logging.warning("Failed to send packet")
+                                    hue_tunnel_active = False
                                 if frame_count <= 3:
                                     version = data[9] if len(data) > 9 else 0
                                     logging.info(f"Forwarding API v{version} packet as-is ({len(data)} bytes)")
                                     if version == 1 and len(data) >= 16:
                                         logging.debug(f"API v1 header: {data[:16].hex()}")
                             
-                            hue_tunnel_process.stdin.flush()
-                            
-                            # Drain any response data from tunnel to prevent blocking
-                            import select
-                            ready, _, _ = select.select([hue_tunnel_process.stdout], [], [], 0)
-                            if ready:
-                                try:
-                                    response = hue_tunnel_process.stdout.read(1024)  # Read up to 1KB
-                                    if response and frame_count % 100 == 0:
-                                        logging.debug(f"Tunnel response: {len(response)} bytes")
-                                except:
-                                    pass  # Ignore read errors
+                            # Python client handles all I/O internally
                             
                             # Log successful forwarding periodically
                             if frame_count == 1:
@@ -518,7 +519,7 @@ def entertainmentService(group, user):
                                 logging.debug(f"Forwarded {frame_count} frames to Hue bridge")
                         else:
                             # Tunnel process died
-                            exit_code = hue_tunnel_process.returncode
+                            exit_code = -1
                             logging.error(f"DTLS tunnel process died with exit code {exit_code}")
                             
                             # Try to get error output (non-blocking)
@@ -1097,12 +1098,11 @@ def entertainmentService(group, user):
     if hue_tunnel_process:
         try:
             # Try graceful shutdown first
-            hue_tunnel_process.terminate()
-            hue_tunnel_process.wait(timeout=1)
+            hue_tunnel_process.disconnect()
         except:
             # Force kill if graceful shutdown fails
             try:
-                hue_tunnel_process.kill()
+                pass  # Already disconnected
             except:
                 pass
         
