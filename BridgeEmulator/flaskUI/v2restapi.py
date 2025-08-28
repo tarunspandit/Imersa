@@ -9,6 +9,7 @@ from subprocess import Popen
 from flask_restful import Resource
 from flask import request
 from services.entertainment import entertainmentService
+from services.entertainment import getObject as ent_get_light_by_rid
 from threading import Thread
 from time import sleep
 from functions.core import nextFreeId
@@ -726,7 +727,7 @@ class ClipV2ResourceId(Resource):
                                     hue_idx = 0
                                     for idx, ch in enumerate(chs):
                                         rid = ch.get("members", [{}])[0].get("service", {}).get("rid")
-                                        lig = getObject("light", rid)
+                                        lig = ent_get_light_by_rid(rid)
                                         if lig and getattr(lig, 'protocol', None) == 'hue':
                                             channel_map[idx] = hue_idx
                                             hue_idx += 1
