@@ -275,7 +275,10 @@ def entertainmentService(group, user):
                 if initMatchBytes == 9:
                     frameBites = frameID - 8
                     logging.info(f"✓ HueStream header detected! Frame size: {frameBites} bytes - Connection established")
-                    p.stdout.read(frameBites - 9)  # sync streaming bytes
+                    # Read the rest of the first frame
+                    first_frame_remainder = p.stdout.read(frameBites - 9)
+                    # Reconstruct the complete first frame for later forwarding
+                    first_frame = b'HueStream' + first_frame_remainder
                     init = True
                     # Ensure stream is still marked as active
                     bridgeConfig["groups"][group.id_v1].stream["active"] = True
@@ -290,12 +293,13 @@ def entertainmentService(group, user):
                             logging.info(f"Activating entertainment on Hue bridge group {hue_bridge_group_id}")
                             
                             # Enable streaming on real Hue bridge
-                            # Note: Hue bridge only accepts "active" parameter for stream
+                            # CRITICAL: Must activate stream BEFORE opening DTLS connection!
                             url = f"http://{hue_ip}/api/{hue_user}/groups/{hue_bridge_group_id}"
                             stream_data = {"stream": {"active": True}}
                             try:
-                                r = requests.put(url, json=stream_data, timeout=2)
+                                r = requests.put(url, json=stream_data, timeout=3)
                                 result = r.json()
+                                logging.debug(f"Stream activation response: {result}")
                             except requests.exceptions.RequestException as e:
                                 logging.error(f"Failed to activate Hue bridge stream: {e}")
                                 result = []
@@ -322,15 +326,15 @@ def entertainmentService(group, user):
                                 logging.info(f"Creating DTLS tunnel to Hue bridge at {hue_ip}:2100")
                                 logging.debug(f"Using PSK identity: {hue_user}, PSK key: {hue_key[:16]}...")
                                 
-                                # Use the exact same cipher and options that work with Hue bridge
+                                # Use EXACTLY the same options as HueConnection class (which works!)
                                 hue_tunnel_cmd = [
-                                    'openssl', 's_client', 
-                                    '-dtls',
+                                    'openssl', 's_client',
+                                    '-quiet',
+                                    '-cipher', 'PSK-AES128-GCM-SHA256',
+                                    '-dtls', 
                                     '-psk', hue_key,
                                     '-psk_identity', hue_user,
-                                    '-cipher', 'PSK-AES128-GCM-SHA256',
-                                    '-connect', f'{hue_ip}:2100',
-                                    '-quiet'
+                                    '-connect', f'{hue_ip}:2100'
                                 ]
                                 
                                 logging.debug(f"DTLS command: {' '.join(hue_tunnel_cmd[:6])}...")
@@ -343,15 +347,18 @@ def entertainmentService(group, user):
                                 if hue_tunnel_process.poll() is None:
                                     logging.info(f"✓ DTLS tunnel process started for Hue bridge at {hue_ip}")
                                     
-                                    # Verify tunnel is responsive
+                                    # Send the first frame we captured during init
                                     try:
-                                        # Send a test byte to ensure pipe is working
-                                        hue_tunnel_process.stdin.write(b'\x00')
-                                        hue_tunnel_process.stdin.flush()
-                                        
-                                        # Mark tunnel as active for main loop
-                                        hue_tunnel_active = True
-                                        logging.info("✓ DTLS tunnel verified and ready for frame forwarding")
+                                        if 'first_frame' in locals():
+                                            hue_tunnel_process.stdin.write(first_frame)
+                                            hue_tunnel_process.stdin.flush()
+                                            logging.info(f"✓ Sent initial frame to Hue bridge ({len(first_frame)} bytes)")
+                                    except Exception as e:
+                                        logging.warning(f"Failed to send initial frame: {e}")
+                                    
+                                    # Mark tunnel as active for main loop
+                                    hue_tunnel_active = True
+                                    logging.info("✓ DTLS tunnel ready for frame forwarding")
                                     except Exception as e:
                                         logging.error(f"DTLS tunnel not responsive: {e}")
                                         hue_tunnel_process.kill()
@@ -388,18 +395,21 @@ def entertainmentService(group, user):
             else:
                 data = p.stdout.read(frameBites)
                 
-                # DTLS SPLITTING: Forward raw data to Hue bridge if we have Hue lights
+                # DTLS SPLITTING: Forward COMPLETE packet to Hue bridge (header + data)
                 if hue_tunnel_active and hue_tunnel_process:
                     try:
                         # Check if process is still alive
                         if hue_tunnel_process.poll() is None:
                             # Forward the raw DTLS frame to real Hue bridge
+                            # The data already includes the complete HueStream packet
                             hue_tunnel_process.stdin.write(data)
                             hue_tunnel_process.stdin.flush()
                             
                             # Log successful forwarding periodically
                             if frame_count == 1:
-                                logging.info("✓ First frame forwarded to Hue bridge successfully")
+                                # Debug: Check if we're forwarding correct data
+                                header = data[:9].decode('utf-8', errors='ignore') if len(data) >= 9 else "short"
+                                logging.info(f"✓ First frame forwarded to Hue bridge (header: {header}, size: {len(data)} bytes)")
                             elif frame_count % 500 == 0:
                                 logging.debug(f"Forwarded {frame_count} frames to Hue bridge")
                         else:
