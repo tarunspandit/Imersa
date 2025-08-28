@@ -102,6 +102,67 @@ const Entertainment: React.FC = () => {
     await updatePositions(areaId, positions);
   };
 
+  // Arrange missing lights based on existing layout (prefer rectangle edges)
+  const arrangeMissing = useCallback((existing: LightPosition[], missingIds: string[]): LightPosition[] => {
+    if (missingIds.length === 0) return [];
+    const eps = 0.15;
+    const counts = { top: 0, bottom: 0, left: 0, right: 0 };
+    existing.forEach(p => {
+      if (p.y >= 0.8 - eps) counts.top++;
+      else if (p.y <= -0.8 + eps) counts.bottom++;
+      else if (p.x >= 0.8 - eps) counts.right++;
+      else if (p.x <= -0.8 + eps) counts.left++;
+    });
+    const sides = ['top','right','bottom','left'] as const;
+    const sideHas = sides.filter(s => counts[s] > 0);
+    if (sideHas.length >= 2) {
+      // Rectangle: distribute to least populated sides
+      const placements: LightPosition[] = [];
+      const totalAfter = existing.length + missingIds.length;
+      const perSideIdeal = Math.ceil(totalAfter / 4);
+      const assignSide = () => {
+        // pick side with smallest count
+        let minSide = 'top' as typeof sides[number];
+        let minCount = Number.MAX_SAFE_INTEGER;
+        for (const s of sides) {
+          const c = counts[s];
+          if (c < minCount) { minCount = c; minSide = s; }
+        }
+        counts[minSide]++;
+        return minSide;
+      };
+      missingIds.forEach((lightId) => {
+        const light = lightMap[lightId];
+        const side = assignSide();
+        // Position along side evenly based on new counts
+        const cSide = counts[side];
+        const idx = cSide - 1;
+        const n = Math.max(1, perSideIdeal);
+        let x = 0, y = 0, z = 0;
+        const t = n === 1 ? 0.5 : idx / (n - 1); // 0..1
+        if (side === 'top') { x = -0.8 + t * 1.6; y = 0.8; }
+        if (side === 'bottom') { x = -0.8 + t * 1.6; y = -0.8; }
+        if (side === 'right') { x = 0.8; y = 0.8 - t * 1.6; }
+        if (side === 'left') { x = -0.8; y = -0.8 + t * 1.6; }
+        placements.push({ lightId, lightName: light?.name || `Light ${lightId}`, x: Number(x.toFixed(3)), y: Number(y.toFixed(3)), z });
+      });
+      return placements;
+    }
+    // Fallback circle
+    const radius = 0.7;
+    return missingIds.map((lightId, index) => {
+      const angle = (index / missingIds.length) * 2 * Math.PI;
+      const light = lightMap[lightId];
+      return {
+        lightId,
+        lightName: light?.name || `Light ${lightId}`,
+        x: Number((Math.cos(angle) * radius).toFixed(3)),
+        y: Number((Math.sin(angle) * radius).toFixed(3)),
+        z: 0,
+      };
+    });
+  }, [lightMap]);
+
   // Stats
   const stats = [
     {
@@ -278,9 +339,6 @@ const Entertainment: React.FC = () => {
       {/* Removed redundant create modal - using wizard instead */}
     </PageWrapper>
   );
-};
-
-export default Entertainment;
   // Arrange missing lights based on existing layout (prefer rectangle edges)
   const arrangeMissing = useCallback((existing: LightPosition[], missingIds: string[]): LightPosition[] => {
     if (missingIds.length === 0) return [];
@@ -341,3 +399,7 @@ export default Entertainment;
       };
     });
   }, [lightMap]);
+
+}
+
+export default Entertainment;
