@@ -719,9 +719,23 @@ class ClipV2ResourceId(Resource):
                                 sel_user = select_entertainment_user(authorisation["user"])
                                 diyhue_user = sel_user.username
                                 diyhue_key = sel_user.client_key
+                                # Build channel remap: DIY (all channels) -> Hue-only compacted index
+                                channel_map = {}
+                                try:
+                                    chs = object.getV2Api()["channels"]
+                                    hue_idx = 0
+                                    for idx, ch in enumerate(chs):
+                                        rid = ch.get("members", [{}])[0].get("service", {}).get("rid")
+                                        lig = getObject("light", rid)
+                                        if lig and getattr(lig, 'protocol', None) == 'hue':
+                                            channel_map[idx] = hue_idx
+                                            hue_idx += 1
+                                except Exception as e:
+                                    logging.debug(f"Channel map build failed: {e}")
+
                                 from services.dtls_bridge import start_dtls_bridge
                                 logging.info(f"DTLS server using PSK for user '{sel_user.name}' ({diyhue_user[:8]}...) ")
-                                if start_dtls_bridge(diyhue_user, diyhue_key, hue_ip, entertainment_uuid):
+                                if start_dtls_bridge(diyhue_user, diyhue_key, hue_ip, entertainment_uuid, channel_map):
                                     logging.info(f"✓ DTLS bridge started - bridging to {hue_ip}:2100")
                                     object.dtls_proxy_active = True
                                     hue_proxy_mode = True

@@ -26,7 +26,7 @@ class DTLSBridge:
     3. Re-encrypts and sends to real bridge using bridge PSK
     """
     
-    def __init__(self, diyhue_user, diyhue_key, listen_port=2100, target_uuid=None):
+    def __init__(self, diyhue_user, diyhue_key, listen_port=2100, target_uuid=None, channel_map=None):
         self.listen_port = listen_port
         self.diyhue_user = diyhue_user
         self.diyhue_key = diyhue_key
@@ -51,6 +51,9 @@ class DTLSBridge:
         
         # Target Hue entertainment UUID (for HueStream v2 packet rewrite)
         self.target_uuid = target_uuid  # string like 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
+        # Mapping from DIY channel index -> Hue-only compacted index
+        # Example: {3:0, 5:1, 7:2}
+        self.channel_map = channel_map or {}
 
         # Local mirror (decrypted HueStream) to feed DIYHue processing for non-Hue lights
         try:
@@ -243,6 +246,31 @@ class DTLSBridge:
                                     # Non-fatal
                                     logging.debug(f"UUID rewrite skipped: {e}")
 
+                                # Remap channel indices for HueStream v2 to match Hue-only group
+                                try:
+                                    if self.channel_map and data.startswith(b'HueStream') and len(data) > 60 and data[9] == 2:
+                                        # Build new frame: header + only Hue channel blocks with remapped indices
+                                        header = data[:52]
+                                        i = 52
+                                        end = len(data)
+                                        out = bytearray(header)
+                                        kept = 0
+                                        while i + 6 < end:
+                                            ch_idx = data[i]
+                                            if ch_idx in self.channel_map:
+                                                new_idx = self.channel_map[ch_idx]
+                                                # Append 7-byte block with new index
+                                                out.append(new_idx)
+                                                out.extend(data[i+1:i+7])
+                                                kept += 1
+                                            # else: drop non-Hue channel
+                                            i += 7
+                                        data = bytes(out)
+                                        if self.packets_processed <= 5:
+                                            logging.info(f"Remapped channels: kept {kept} for Hue bridge")
+                                except Exception as e:
+                                    logging.debug(f"Channel remap skipped: {e}")
+
                                 # Forward to bridge
                                 if self.client_process.stdin:
                                     self.client_process.stdin.write(data)
@@ -329,7 +357,7 @@ def get_dtls_bridge():
         pass
     return _dtls_bridge
 
-def start_dtls_bridge(diyhue_user, diyhue_key, bridge_ip, entertainment_uuid=None):
+def start_dtls_bridge(diyhue_user, diyhue_key, bridge_ip, entertainment_uuid=None, channel_map=None):
     """Start the DTLS bridge with proper credentials"""
     global _dtls_bridge
     
@@ -355,7 +383,7 @@ def start_dtls_bridge(diyhue_user, diyhue_key, bridge_ip, entertainment_uuid=Non
     logging.info(f"  Bridge: user={bridge_user[:8]}... key={bridge_key[:16]}...")
     
     # Create and start bridge
-    _dtls_bridge = DTLSBridge(diyhue_user, diyhue_key, target_uuid=entertainment_uuid)
+    _dtls_bridge = DTLSBridge(diyhue_user, diyhue_key, target_uuid=entertainment_uuid, channel_map=channel_map)
     _dtls_bridge.configure_bridge(bridge_ip, bridge_user, bridge_key)
     
     return _dtls_bridge.start()
