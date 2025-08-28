@@ -193,8 +193,15 @@ def entertainmentService(group, user):
     logging.debug(lights_v1)
     logging.debug(lights_v2)
 
+    # Allow OpenSSL binary override (e.g., Homebrew OpenSSL 3 on macOS)
+    try:
+        openssl_bin = bridgeConfig["config"].get("openssl", {}).get("bin", "openssl")
+    except Exception:
+        openssl_bin = "openssl"
+
     opensslCmd = [
-        'openssl', 's_server', '-dtls', '-psk', user.client_key,
+        openssl_bin, 's_server', '-dtls1_2', '-cipher', 'PSK-AES128-GCM-SHA256',
+        '-psk', user.client_key,
         '-psk_identity', user.username, '-nocert', '-accept', '2100', '-quiet'
     ]
     

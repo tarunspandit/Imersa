@@ -163,7 +163,7 @@ class OpenSSLClientTunnel:
         try:
             openssl_bin = configManager.bridgeConfig.yaml_config["config"].get("openssl", {}).get("bin", "openssl")
             cmd = [
-                openssl_bin, 's_client', '-quiet', '-cipher', 'PSK-AES128-GCM-SHA256', '-dtls',
+                openssl_bin, 's_client', '-quiet', '-cipher', 'PSK-AES128-GCM-SHA256', '-dtls1_2',
                 '-psk', self.psk_key,
                 '-psk_identity', self.psk_identity,
                 '-mtu', '1200',
