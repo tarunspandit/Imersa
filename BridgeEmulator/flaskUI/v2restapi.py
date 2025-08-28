@@ -678,9 +678,9 @@ class ClipV2ResourceId(Resource):
                                     try:
                                         hue_user = bridgeConfig["config"]["hue"]["hueUser"]
                                         # Start streaming on real bridge - V1 API
-                                        stream_data = {"active": True}
+                                        stream_data = {"stream": {"active": True}}
                                         r = requests.put(
-                                            f"http://{hue_ip}/api/{hue_user}/groups/{hue_group_id}/stream",
+                                            f"http://{hue_ip}/api/{hue_user}/groups/{hue_group_id}",
                                             json=stream_data,
                                             timeout=3
                                         )
