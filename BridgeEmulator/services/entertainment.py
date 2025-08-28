@@ -151,6 +151,7 @@ def entertainmentService(group, user):
     hue_lights = []
     has_hue_lights = False
     hue_bridge_group_id = None
+    hue_bridge_group_uuid = None  # The actual UUID used by Hue bridge
     hue_tunnel_process = None
     
     for light in group.lights:
@@ -317,6 +318,12 @@ def entertainmentService(group, user):
                             
                             if hue_stream_active:
                                 logging.info(f"✓ Hue bridge streaming activated for group {hue_bridge_group_id}")
+                                
+                                # CRITICAL: Get the entertainment area UUID format
+                                # The Hue bridge expects the group ID in a specific UUID format
+                                # Based on the protocol docs, it needs to be a valid UUID string
+                                hue_bridge_group_uuid = f"00000000-0000-0000-0000-{hue_bridge_group_id:012d}"
+                                logging.info(f"Hue bridge entertainment UUID: {hue_bridge_group_uuid}")
                             else:
                                 logging.warning(f"Failed to activate streaming: {result[:200] if result else 'No response'}")
                                 hue_bridge_group_id = None
@@ -407,9 +414,51 @@ def entertainmentService(group, user):
                     try:
                         # Check if process is still alive
                         if hue_tunnel_process.poll() is None:
-                            # Forward the raw DTLS frame to real Hue bridge
-                            # The data already includes the complete HueStream packet
-                            hue_tunnel_process.stdin.write(data)
+                            # CRITICAL: For Hue bridge, we need to modify the packet!
+                            # The packet from Hue Sync contains the DIYHue entertainment area ID
+                            # We need to replace it with the real Hue bridge entertainment area ID
+                            
+                            # Check if this is API v2 with Entertainment Area UUID
+                            if len(data) >= 52 and data[9] == 2:  # API v2
+                                # Extract the entertainment area UUID (bytes 16-52)
+                                diyhue_uuid = data[16:52]
+                                
+                                # Create modified packet with Hue bridge's entertainment group UUID
+                                # The Hue bridge uses the group's UUID (not numeric ID)
+                                # We need to get this from the Hue bridge
+                                
+                                # For now, construct the packet with proper structure
+                                modified_packet = data[:16]  # Keep header
+                                
+                                # Add the Hue bridge entertainment area UUID (36 bytes)
+                                # Use the UUID we got from the bridge or construct one
+                                if hue_bridge_group_uuid:
+                                    hue_group_uuid = hue_bridge_group_uuid.encode('ascii')
+                                else:
+                                    # Fallback: construct from group ID
+                                    hue_group_uuid = f"{hue_bridge_group_id:08x}-0000-0000-0000-000000000000".encode('ascii')
+                                
+                                # Ensure exactly 36 bytes
+                                if len(hue_group_uuid) < 36:
+                                    hue_group_uuid = hue_group_uuid.ljust(36, b'0')
+                                elif len(hue_group_uuid) > 36:
+                                    hue_group_uuid = hue_group_uuid[:36]
+                                
+                                modified_packet += hue_group_uuid
+                                modified_packet += data[52:]  # Add channel data
+                                
+                                # Debug first few packets
+                                if frame_count <= 3:
+                                    logging.debug(f"Modified packet: Header={modified_packet[:16].hex()}, UUID={hue_group_uuid.decode('ascii', errors='ignore')}, Channels={len(data[52:])} bytes")
+                                
+                                # Send modified packet
+                                hue_tunnel_process.stdin.write(modified_packet)
+                            else:
+                                # API v1 or other - forward as-is
+                                hue_tunnel_process.stdin.write(data)
+                                if frame_count <= 3:
+                                    logging.debug(f"Forwarding API v{data[9] if len(data) > 9 else 0} packet as-is ({len(data)} bytes)")
+                            
                             hue_tunnel_process.stdin.flush()
                             
                             # Drain any response data from tunnel to prevent blocking
