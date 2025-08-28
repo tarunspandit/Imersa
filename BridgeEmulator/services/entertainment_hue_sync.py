@@ -86,45 +86,60 @@ def create_hue_entertainment_group(group_name, hue_lights, locations):
                 return None
         
         # Set locations for entertainment groups
-        # Hue bridge expects format: {"locations": {"light_id": [x, y, z], ...}}
-        # where x, y, z are floats between -1 and 1
+        # DIYHue stores positions as an array of position dicts: [{"x": ..., "y": ..., "z": ...}, ...]
+        # Hue bridge expects: {"locations": {"light_id": [x, y, z], ...}}
         if group_id and locations:
             try:
                 location_dict = {}
                 for light in hue_lights:
                     light_id = str(light.protocol_cfg["id"])  # Must be string for JSON key
                     
-                    # Get location for this light, or use default
-                    loc = None
+                    # Get location for this light
                     if light in locations:
                         loc = locations[light]
-                    
-                    # Parse location data
-                    x, y, z = 0.0, 0.0, 0.0  # Default center position
-                    
-                    if loc:
-                        if isinstance(loc, (list, tuple)):
-                            # Array format [x, y] or [x, y, z]
-                            if len(loc) >= 2:
-                                # Round to 2 decimal places to reduce data size
-                                x = round(float(loc[0]) if loc[0] is not None else 0.0, 2)
-                                y = round(float(loc[1]) if loc[1] is not None else 0.0, 2)
-                                z = round(float(loc[2]) if len(loc) > 2 and loc[2] is not None else 0.0, 2)
+                        logging.debug(f"Light {light.name} (ID {light_id}) location data: {loc}")
+                        
+                        # DIYHue stores positions as array of dicts
+                        x, y, z = 0.0, 0.0, 0.0  # Default center position
+                        
+                        if isinstance(loc, list) and len(loc) > 0:
+                            # Get the first position entry
+                            pos = loc[0]
+                            if isinstance(pos, dict):
+                                # Extract x, y, z from the position dict
+                                x = float(pos.get("x", 0))
+                                y = float(pos.get("y", 0))
+                                z = float(pos.get("z", 0))
+                                logging.debug(f"Extracted position: x={x}, y={y}, z={z}")
+                            elif isinstance(pos, (list, tuple)):
+                                # Sometimes it might be stored as [x, y, z]
+                                x = float(pos[0]) if len(pos) > 0 else 0.0
+                                y = float(pos[1]) if len(pos) > 1 else 0.0
+                                z = float(pos[2]) if len(pos) > 2 else 0.0
                         elif isinstance(loc, dict):
-                            # Dict format {"x": ..., "y": ..., "z": ...}
-                            x = round(float(loc.get("x", 0)), 2)
-                            y = round(float(loc.get("y", 0)), 2) 
-                            z = round(float(loc.get("z", 0)), 2)
-                    
-                    # Clamp to valid range (-1 to 1)
-                    x = max(-1.0, min(1.0, x))
-                    y = max(-1.0, min(1.0, y))
-                    z = max(-1.0, min(1.0, z))
-                    
-                    # Add to dictionary - Hue expects [x, y, z] array per light
-                    location_dict[light_id] = [x, y, z]
+                            # Direct dict format
+                            x = float(loc.get("x", 0))
+                            y = float(loc.get("y", 0))
+                            z = float(loc.get("z", 0))
+                        
+                        # Round to 4 decimal places for precision
+                        x = round(max(-1.0, min(1.0, x)), 4)
+                        y = round(max(-1.0, min(1.0, y)), 4)
+                        z = round(max(-1.0, min(1.0, z)), 4)
+                        
+                        # Add to dictionary - Hue expects [x, y, z] array per light
+                        location_dict[light_id] = [x, y, z]
+                        logging.debug(f"Mapped light {light_id} to position: [{x}, {y}, {z}]")
+                    else:
+                        # No location data for this light, use center
+                        location_dict[light_id] = [0.0, 0.0, 0.0]
+                        logging.debug(f"No location for light {light_id}, using center position")
                 
                 if location_dict:
+                    # Log the complete location mapping
+                    logging.info(f"Setting locations for {len(location_dict)} lights in group {group_id}")
+                    logging.debug(f"Location mapping: {location_dict}")
+                    
                     # Update group with locations
                     r = requests.put(
                         f"http://{hue_ip}/api/{hue_user}/groups/{group_id}",
@@ -146,8 +161,11 @@ def create_hue_entertainment_group(group_name, hue_lights, locations):
                                 if "error" in item:
                                     err = item["error"]
                                     logging.warning(f"Location error: {err.get('description', 'Unknown')}")
+                                    logging.warning(f"Full error: {item}")
             except Exception as e:
                 logging.warning(f"Failed to set locations: {e}")
+                import traceback
+                logging.debug(traceback.format_exc())
                 # Don't fail the whole operation if locations can't be set
         
         return int(group_id) if group_id else None
