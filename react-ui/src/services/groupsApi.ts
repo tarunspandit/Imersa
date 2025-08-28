@@ -94,6 +94,20 @@ class GroupsApiService {
    */
   async createGroup(request: GroupCreationRequest): Promise<ApiResponse<string>> {
     try {
+      // Normalize group type to the server's expected values (capitalized)
+      const normalizeGroupType = (t: string) => {
+        const v = (t || '').toLowerCase();
+        switch (v) {
+          case 'room': return 'Room';
+          case 'zone': return 'Zone';
+          case 'entertainment': return 'Entertainment';
+          case 'lightgroup': return 'LightGroup';
+          case 'luminaire': return 'Luminaire';
+          case 'lightsource': return 'Lightsource';
+          default: return t; // pass-through for already-correct values
+        }
+      };
+
       const response = await fetch(`${this.baseUrl}/groups`, {
         method: 'POST',
         headers: {
@@ -102,7 +116,7 @@ class GroupsApiService {
         body: JSON.stringify({
           name: request.name,
           lights: request.lights,
-          type: request.type === 'room' ? 'Room' : request.type,
+          type: normalizeGroupType(request.type as any),
           class: request.class || 'Other',
         }),
       });
@@ -132,6 +146,8 @@ class GroupsApiService {
       };
     }
   }
+
+  // (Removed) ensureHueOnlyGroup — companion group management now handled server-side during create/edit
 
   /**
    * Update group properties

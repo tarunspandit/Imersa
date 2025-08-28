@@ -196,6 +196,17 @@ class ResourceElements(Resource):
                                                                     [light]] = [{"x": location[0], "y": location[1], "z": location[2]}]
             # trigger stream messages
             GroupZeroMessage()
+
+            # When creating an Entertainment group, immediately sync/update the corresponding
+            # Hue bridge entertainment group to avoid stale UUID mappings later during start.
+            if v2Resource == "entertainment_configuration":
+                try:
+                    from services.entertainment_hue_sync import sync_entertainment_group
+                    obj = bridgeConfig[resource][new_object_id]
+                    # Run sync (create/update Hue-only companion with positions)
+                    sync_entertainment_group(obj)
+                except Exception as e:
+                    logging.debug(f"Deferred Hue entertainment sync on create failed: {e}")
         elif resource == "scenes":
             v2Resource = "scene"
             if "group" in postDict:
@@ -293,6 +304,22 @@ class ResourceElements(Resource):
                 bridgeConfig[resource][key].update(value)
             else:
                 bridgeConfig[resource][key] = value
+
+        # If updating Entertainment group membership/locations, sync Hue bridge now
+        if resource == "groups":
+            try:
+                from services.entertainment_hue_sync import sync_entertainment_group
+                for key, value in putDict.items():
+                    try:
+                        obj = bridgeConfig[resource][key]
+                        # EntertainmentConfiguration has attribute 'type' set to 'Entertainment'
+                        if getattr(obj, 'type', None) == 'Entertainment':
+                            if isinstance(value, dict) and ("lights" in value or "locations" in value or "class" in value or "name" in value):
+                                sync_entertainment_group(obj)
+                    except Exception as e:
+                        logging.debug(f"Skipped sync for group {key}: {e}")
+            except Exception as e:
+                logging.debug(f"Deferred Hue entertainment sync on update failed: {e}")
 
         if resource == "config":
             if "swupdate2" in putDict:
@@ -474,6 +501,16 @@ class ElementParam(Resource):
             bridgeConfig["sensors"][resourceid].dxState["lastupdated"] = currentTime
             rulesProcessor(bridgeConfig[resource][resourceid], currentTime)
         bridgeConfig[resource][resourceid].update_attr({param: putDict})
+
+        # If updating Entertainment group's lights via /groups/<id>/lights, sync Hue bridge now
+        try:
+            if resource == "groups" and param == "lights":
+                obj = bridgeConfig[resource][resourceid]
+                if getattr(obj, 'type', None) == 'Entertainment':
+                    from services.entertainment_hue_sync import sync_entertainment_group
+                    sync_entertainment_group(obj)
+        except Exception as e:
+            logging.debug(f"Deferred Hue entertainment sync on lights change failed: {e}")
         responseList = []
         responseLocation = "/" + resource + "/" + resourceid + "/" + param + "/"
         for key, value in putDict.items():

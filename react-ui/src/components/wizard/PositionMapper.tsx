@@ -65,6 +65,7 @@ export const PositionMapper: React.FC<PositionMapperProps> = ({
     view3DMode: false,
   });
   const [showTemplates, setShowTemplates] = useState(false);
+  const [rotations, setRotations] = useState<Record<string, number>>({});
   const [dragState, setDragState] = useState<DragState>({
     isDragging: false,
     lightId: null,
@@ -252,6 +253,7 @@ export const PositionMapper: React.FC<PositionMapperProps> = ({
             const isSelected = selectedLightId === lightId;
             const isDragging = dragState.lightId === lightId;
             const kind = getLightKind(lightId);
+            const angle = rotations[lightId] ?? (Math.abs(position.x) > Math.abs(position.y) ? 0 : 90);
 
             return (
               <g key={lightId}>
@@ -280,6 +282,7 @@ export const PositionMapper: React.FC<PositionMapperProps> = ({
                     className={cn('cursor-move transition-all', isDragging && 'drop-shadow-lg')}
                     onMouseDown={(e) => handleMouseDown(lightId, e)}
                     onClick={() => setSelectedLightId(lightId)}
+                    transform={`rotate(${angle} ${canvasPos.x} ${canvasPos.y})`}
                   />
                 )}
 
@@ -553,8 +556,8 @@ export const PositionMapper: React.FC<PositionMapperProps> = ({
                             )}
                           </div>
                           
-                          <div className="space-y-2">
-                            {['x', 'y', 'z'].map((axis) => (
+                <div className="space-y-2">
+                  {['x', 'y', 'z'].map((axis) => (
                               <div key={axis} className="flex items-center gap-2">
                                 <span className="text-xs font-medium text-gray-600 w-4">
                                   {axis.toUpperCase()}
@@ -582,8 +585,33 @@ export const PositionMapper: React.FC<PositionMapperProps> = ({
                                   className="flex-1 h-8 text-xs"
                                 />
                               </div>
-                            ))}
-                          </div>
+                  ))}
+                  {/* Rotation control for non-bulb */}
+                  {(() => {
+                    const kind = getLightKind(lightId);
+                    if (kind === 'bulb') return null;
+                    const angle = rotations[lightId] ?? (Math.abs(position.x) > Math.abs(position.y) ? 0 : 90);
+                    return (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-medium text-gray-600 w-4">Rot</span>
+                        <Slider
+                          value={[angle]}
+                          onValueChange={([value]) => setRotations(prev => ({ ...prev, [lightId]: value }))}
+                          min={0}
+                          max={360}
+                          step={5}
+                          className="flex-1"
+                        />
+                        <input
+                          type="number"
+                          value={angle}
+                          onChange={(e) => setRotations(prev => ({ ...prev, [lightId]: parseInt(e.target.value, 10) || 0 }))}
+                          className="flex-1 h-8 text-xs"
+                        />
+                      </div>
+                    );
+                  })()}
+                </div>
                         </div>
                       );
                     })}

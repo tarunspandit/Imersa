@@ -8,6 +8,7 @@ import { PositionEditor } from '@/components/entertainment/PositionEditor';
 import { LightMembershipEditor } from '@/components/entertainment/LightMembershipEditor';
 import { useEntertainment } from '@/hooks/useEntertainment';
 import { useGroups } from '@/hooks/useGroups';
+import { groupsApi } from '@/services/groupsApi';
 import { EntertainmentArea, CreateAreaRequest, Light, LightPosition } from '@/types';
 import { cn } from '@/utils';
 import '@/styles/design-system.css';
@@ -47,6 +48,7 @@ const Entertainment: React.FC = () => {
     (availableLights as Light[]).forEach(l => { map[l.id] = l; });
     return map;
   }, [availableLights]);
+
   // Removed create form state - using wizard instead
 
   // Removed handleCreateArea - using wizard instead
@@ -91,6 +93,8 @@ const Entertainment: React.FC = () => {
     // 3) Save updated positions in bridge
     await updatePositions(areaForLightEdit.id, merged);
     await refreshAreas();
+
+    // 4) Real Hue sync is handled on the backend whenever Entertainment groups are created/edited.
   }, [areaForLightEdit, positions, updateGroup, updatePositions, refreshAreas, lightMap]);
 
   // Handle update positions
