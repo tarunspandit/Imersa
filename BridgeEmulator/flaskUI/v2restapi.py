@@ -636,6 +636,9 @@ class ClipV2ResourceId(Resource):
                     except:
                         pass
                     
+                    # Set stream active
+                    object.update_attr({"stream": {"active": True, "owner": authorisation["user"].username, "proxymode": "auto", "proxynode": "/bridge"}})
+
                     # Sync with real Hue bridge FIRST to get matching UUID
                     hue_proxy_mode = False
                     try:
@@ -687,9 +690,6 @@ class ClipV2ResourceId(Resource):
                                     logging.warning("Failed to start DTLS bridge - falling back to direct mode")
                     except Exception as e:
                         logging.warning(f"Could not sync with Hue bridge: {e}")
-                    
-                    # Set stream active
-                    object.update_attr({"stream": {"active": True, "owner": authorisation["user"].username, "proxymode": "auto", "proxynode": "/bridge"}})
                     
                     # Update light modes
                     for light in object.lights:
