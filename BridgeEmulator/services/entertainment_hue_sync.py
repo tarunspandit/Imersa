@@ -55,7 +55,13 @@ def create_hue_entertainment_group(group_name, hue_lights, locations):
             "name": diyhue_group_name,
             "type": "Entertainment",
             "lights": light_ids,
-            "class": "TV"
+            "class": "TV",
+            "stream": {
+                "active": False,
+                "owner": None,
+                "proxymode": "auto",
+                "proxynode": "/bridge"
+            }
         }
         
         # Note: Don't add locations in group creation - Hue bridge doesn't support it
