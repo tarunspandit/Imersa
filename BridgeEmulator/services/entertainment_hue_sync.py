@@ -246,14 +246,14 @@ def sync_entertainment_group(diyhue_group):
                                 logging.info(f"✓ Found V2 entertainment config UUID from real bridge: {entertainment_uuid}")
                                 
                                 # IMPORTANT: Update DIYHue group UUID to match the real bridge
-                                if hasattr(diyhue_group, 'id_v2') and diyhue_group.id_v2 != entertainment_uuid:
-                                    old_uuid = diyhue_group.id_v2
+                                old_uuid = diyhue_group.id_v2 if hasattr(diyhue_group, 'id_v2') else None
+                                if old_uuid and old_uuid != entertainment_uuid:
                                     diyhue_group.id_v2 = entertainment_uuid
                                     logging.info(f"✓ Updated DIYHue entertainment UUID: {old_uuid} -> {entertainment_uuid}")
                                 
                                 # Save mapping
                                 mapper = get_uuid_mapper()
-                                mapper.add_mapping(diyhue_group.name, old_uuid, entertainment_uuid, hue_group_id)
+                                mapper.add_mapping(diyhue_group.name, old_uuid or entertainment_uuid, entertainment_uuid, hue_group_id)
                                 
                                 break
             
@@ -281,8 +281,9 @@ def sync_entertainment_group(diyhue_group):
                 # Update DIYHue group UUID to match
                 if entertainment_uuid and hasattr(diyhue_group, 'id_v2'):
                     old_uuid = diyhue_group.id_v2
-                    diyhue_group.id_v2 = entertainment_uuid
-                    logging.info(f"✓ Synchronized DIYHue UUID: {old_uuid} -> {entertainment_uuid}")
+                    if old_uuid != entertainment_uuid:
+                        diyhue_group.id_v2 = entertainment_uuid
+                        logging.info(f"✓ Synchronized DIYHue UUID: {old_uuid} -> {entertainment_uuid}")
                     
                     # Save mapping
                     mapper = get_uuid_mapper()

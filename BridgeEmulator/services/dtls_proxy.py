@@ -85,10 +85,17 @@ class DTLSProxy:
     
     def _proxy_loop(self):
         """Main proxy loop - forwards packets bidirectionally"""
-        logging.info("DTLS Proxy loop started")
+        logging.info(f"DTLS Proxy loop started - forwarding between 0.0.0.0:{self.listen_port} and {self.hue_bridge_ip}:{self.hue_bridge_port}")
+        
+        last_status_log = time.time()
         
         while self.running:
             try:
+                # Log status every 10 seconds
+                if time.time() - last_status_log > 10:
+                    logging.info(f"DTLS Proxy status - Packets: client→bridge={self.packets_to_bridge}, bridge→client={self.packets_to_client}")
+                    last_status_log = time.time()
+                
                 # Use select to monitor both sockets
                 readable, _, _ = select.select(
                     [self.listen_socket, self.bridge_socket], 
@@ -126,26 +133,36 @@ class DTLSProxy:
             
             # Update client tracking
             if self.client_address != addr:
-                logging.info(f"New client connected from {addr}")
+                logging.info(f"✓ New client connected from {addr}")
                 self.client_address = addr
             
             self.last_client_packet = time.time()
             self.packets_from_client += 1
             
-            # Log first few packets for debugging
-            if self.packets_from_client <= 5:
-                packet_preview = data[:50].hex() if len(data) > 50 else data.hex()
-                logging.debug(f"Client->Bridge packet #{self.packets_from_client} ({len(data)} bytes): {packet_preview}...")
+            # Log ALL packets initially for debugging
+            packet_preview = data[:100].hex() if len(data) > 100 else data.hex()
+            logging.info(f"Client→Bridge packet #{self.packets_from_client} from {addr} ({len(data)} bytes)")
+            
+            # Check if it's a HueStream packet
+            if data.startswith(b'HueStream'):
+                logging.info(f"  ✓ HueStream packet detected")
+            
+            # Log first 20 packets in detail
+            if self.packets_from_client <= 20:
+                logging.debug(f"  Packet data: {packet_preview}...")
             
             # Forward UNTOUCHED to bridge
-            self.bridge_socket.sendto(data, (self.hue_bridge_ip, self.hue_bridge_port))
+            sent = self.bridge_socket.sendto(data, (self.hue_bridge_ip, self.hue_bridge_port))
             self.packets_to_bridge += 1
+            logging.debug(f"  → Forwarded {sent} bytes to {self.hue_bridge_ip}:{self.hue_bridge_port}")
             
         except socket.error as e:
             if e.errno != 11:  # Ignore EAGAIN/EWOULDBLOCK
-                logging.error(f"Error handling client packet: {e}")
+                logging.error(f"Socket error handling client packet: {e}")
         except Exception as e:
             logging.error(f"Unexpected error handling client packet: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
     
     def _handle_bridge_packet(self):
         """Handle packet from bridge and forward to client"""

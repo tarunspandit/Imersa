@@ -620,6 +620,21 @@ class ClipV2ResourceId(Resource):
                 if putDict["action"] == "start":
                     logging.info("start hue entertainment")
                     
+                    # Kill any existing openssl DTLS server first
+                    try:
+                        import subprocess
+                        # Kill any process on port 2100
+                        result = subprocess.run(["lsof", "-ti", ":2100"], capture_output=True, text=True)
+                        if result.stdout:
+                            for pid in result.stdout.strip().split('\n'):
+                                subprocess.run(["kill", "-9", pid])
+                                logging.info(f"Killed existing process {pid} on port 2100")
+                        # Also kill any openssl processes
+                        subprocess.run(["killall", "openssl"], capture_output=True)
+                        sleep(0.2)  # Give time for port to be released
+                    except:
+                        pass
+                    
                     # Sync with real Hue bridge FIRST to get matching UUID
                     hue_proxy_mode = False
                     try:
@@ -640,6 +655,19 @@ class ClipV2ResourceId(Resource):
                                     logging.info(f"✓ DTLS proxy started - forwarding to {hue_ip}:2100")
                                     object.dtls_proxy_active = True
                                     hue_proxy_mode = True
+                                    
+                                    # Also need to start the real bridge's entertainment mode
+                                    try:
+                                        hue_user = bridgeConfig["config"]["hue"]["hueUser"]
+                                        # Start streaming on real bridge
+                                        r = requests.put(
+                                            f"http://{hue_ip}/api/{hue_user}/groups/{hue_group_id}/stream",
+                                            json={"active": True},
+                                            timeout=3
+                                        )
+                                        logging.info(f"Started streaming on real bridge: {r.text[:100]}")
+                                    except Exception as e:
+                                        logging.warning(f"Failed to start streaming on real bridge: {e}")
                                 else:
                                     logging.warning("Failed to start DTLS proxy - falling back to direct mode")
                     except Exception as e:
@@ -666,15 +694,33 @@ class ClipV2ResourceId(Resource):
                 elif putDict["action"] == "stop":
                     logging.info("stop entertainment")
                     
+                    # Check if using DTLS proxy mode
+                    proxy_mode = hasattr(object, 'dtls_proxy_active') and object.dtls_proxy_active
+                    
+                    # Stop streaming on real bridge if in proxy mode
+                    if proxy_mode and hasattr(object, 'hue_bridge_group_id'):
+                        try:
+                            hue_ip = bridgeConfig["config"]["hue"]["ip"]
+                            hue_user = bridgeConfig["config"]["hue"]["hueUser"]
+                            # Stop streaming on real bridge
+                            r = requests.put(
+                                f"http://{hue_ip}/api/{hue_user}/groups/{object.hue_bridge_group_id}/stream",
+                                json={"active": False},
+                                timeout=3
+                            )
+                            logging.info(f"Stopped streaming on real bridge: {r.text[:100]}")
+                        except Exception as e:
+                            logging.warning(f"Failed to stop streaming on real bridge: {e}")
+                    
                     # Stop DTLS proxy if running
-                    if hasattr(object, 'dtls_proxy_active') and object.dtls_proxy_active:
+                    if proxy_mode:
                         try:
                             from services.dtls_proxy import stop_dtls_proxy
                             stop_dtls_proxy()
                             object.dtls_proxy_active = False
                             logging.info("✓ DTLS proxy stopped")
-                        except:
-                            pass
+                        except Exception as e:
+                            logging.error(f"Error stopping DTLS proxy: {e}")
                     
                     # First set stream to inactive to signal the service to stop gracefully
                     object.update_attr({"stream": {"active": False}})
@@ -683,24 +729,26 @@ class ClipV2ResourceId(Resource):
                     for light in object.lights:
                         light().update_attr({"state": {"mode": "homeautomation"}})
                     
-                    # Give the service a moment to stop gracefully before killing OpenSSL
-                    sleep(0.5)
-                    
-                    # Only kill OpenSSL if absolutely necessary (use more targeted approach)
-                    try:
-                        # Try to kill only the DTLS server on port 2100
-                        import subprocess
-                        result = subprocess.run(["lsof", "-ti", ":2100"], capture_output=True, text=True)
-                        if result.stdout:
-                            pid = result.stdout.strip()
-                            subprocess.run(["kill", pid])
-                            logging.debug(f"Killed OpenSSL process {pid} on port 2100")
-                    except:
-                        # Fallback to killall if lsof doesn't work
+                    # Only kill OpenSSL if NOT in proxy mode (local entertainment)
+                    if not proxy_mode:
+                        # Give the service a moment to stop gracefully before killing OpenSSL
+                        sleep(0.5)
+                        
+                        # Only kill OpenSSL if absolutely necessary (use more targeted approach)
                         try:
-                            Popen(["killall", "openssl"])
+                            # Try to kill only the DTLS server on port 2100
+                            import subprocess
+                            result = subprocess.run(["lsof", "-ti", ":2100"], capture_output=True, text=True)
+                            if result.stdout:
+                                pid = result.stdout.strip()
+                                subprocess.run(["kill", pid])
+                                logging.debug(f"Killed OpenSSL process {pid} on port 2100")
                         except:
-                            pass
+                            # Fallback to killall if lsof doesn't work
+                            try:
+                                Popen(["killall", "openssl"])
+                            except:
+                                pass
         elif resource == "scene":
             if "recall" in putDict:
                 object.activate(putDict)
