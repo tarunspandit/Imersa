@@ -359,11 +359,6 @@ def entertainmentService(group, user):
                                     # Mark tunnel as active for main loop
                                     hue_tunnel_active = True
                                     logging.info("✓ DTLS tunnel ready for frame forwarding")
-                                    except Exception as e:
-                                        logging.error(f"DTLS tunnel not responsive: {e}")
-                                        hue_tunnel_process.kill()
-                                        hue_tunnel_process = None
-                                        hue_tunnel_active = False
                                 else:
                                     # Process died, get error details
                                     stderr_output = hue_tunnel_process.stderr.read().decode('utf-8') if hue_tunnel_process.stderr else "No error output"
