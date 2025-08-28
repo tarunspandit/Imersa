@@ -686,6 +686,20 @@ class ClipV2ResourceId(Resource):
                     except:
                         pass
                     
+                    # Decide operation mode
+                    has_hue = False
+                    has_non_hue = False
+                    try:
+                        for lref in object.lights:
+                            p = lref().protocol
+                            if p == 'hue':
+                                has_hue = True
+                            else:
+                                has_non_hue = True
+                    except Exception:
+                        pass
+                    use_hybrid = has_hue and has_non_hue
+
                     # Sync with real Hue bridge FIRST to get matching UUID
                     hue_proxy_mode = False
                     try:
@@ -698,46 +712,45 @@ class ClipV2ResourceId(Resource):
                             object.hue_bridge_group_id = hue_group_id
                             object.hue_bridge_uuid = entertainment_uuid
                             
-                            # Start DTLS bridge for proper PSK handling
+                            # Prepare Hue bridge connectivity
                             if bridgeConfig["config"].get("hue", {}).get("ip"):
-                                from services.dtls_bridge import start_dtls_bridge
                                 hue_ip = bridgeConfig["config"]["hue"]["ip"]
-                                
                                 # Choose the best API user for DTLS PSK (prefer Hue Sync app user)
                                 sel_user = select_entertainment_user(authorisation["user"])
                                 diyhue_user = sel_user.username
                                 diyhue_key = sel_user.client_key
-                                logging.info(f"DTLS server using PSK for user '{sel_user.name}' ({diyhue_user[:8]}...) ")
-                                
-                                if start_dtls_bridge(diyhue_user, diyhue_key, hue_ip, entertainment_uuid):
-                                    logging.info(f"✓ DTLS bridge started - bridging to {hue_ip}:2100")
-                                    object.dtls_proxy_active = True
-                                    hue_proxy_mode = True
-                                    
-                                    # Also need to start the real bridge's entertainment mode
-                                    try:
-                                        hue_user = bridgeConfig["config"]["hue"]["hueUser"]
-                                        # Start streaming on real bridge - V1 API requires PUT to /groups/{id} with stream payload
-                                        stream_payload = {"stream": {"active": True}}
-                                        r = requests.put(
-                                            f"http://{hue_ip}/api/{hue_user}/groups/{hue_group_id}",
-                                            json=stream_payload,
-                                            timeout=3
-                                        )
-                                        result = r.json() if r.text else {}
-                                        if isinstance(result, list):
-                                            # Success returns a list of success objects
-                                            ok = any("success" in item for item in result)
-                                            if ok:
-                                                logging.info(f"✓ Started streaming on real bridge group {hue_group_id}")
-                                            else:
-                                                logging.warning(f"Start streaming response: {result}")
-                                        else:
-                                            logging.info(f"Bridge stream response: {r.text[:200]}")
-                                    except Exception as e:
-                                        logging.warning(f"Failed to start streaming on real bridge: {e}")
+                                if use_hybrid:
+                                    logging.info(f"Hybrid mode: will start local entertainment using PSK for '{sel_user.name}' ({diyhue_user[:8]}...)")
                                 else:
-                                    logging.warning("Failed to start DTLS bridge - falling back to direct mode")
+                                    from services.dtls_bridge import start_dtls_bridge
+                                    logging.info(f"DTLS server using PSK for user '{sel_user.name}' ({diyhue_user[:8]}...) ")
+                                    if start_dtls_bridge(diyhue_user, diyhue_key, hue_ip, entertainment_uuid):
+                                        logging.info(f"✓ DTLS bridge started - bridging to {hue_ip}:2100")
+                                        object.dtls_proxy_active = True
+                                        hue_proxy_mode = True
+                                    else:
+                                        logging.warning("Failed to start DTLS bridge - falling back to direct mode")
+
+                                # Start streaming on real bridge (both modes)
+                                try:
+                                    hue_user = bridgeConfig["config"]["hue"]["hueUser"]
+                                    stream_payload = {"stream": {"active": True}}
+                                    r = requests.put(
+                                        f"http://{hue_ip}/api/{hue_user}/groups/{hue_group_id}",
+                                        json=stream_payload,
+                                        timeout=3
+                                    )
+                                    result = r.json() if r.text else {}
+                                    if isinstance(result, list):
+                                        ok = any("success" in item for item in result)
+                                        if ok:
+                                            logging.info(f"✓ Started streaming on real bridge group {hue_group_id}")
+                                        else:
+                                            logging.warning(f"Start streaming response: {result}")
+                                    else:
+                                        logging.info(f"Bridge stream response: {r.text[:200]}")
+                                except Exception as e:
+                                    logging.warning(f"Failed to start streaming on real bridge: {e}")
                     except Exception as e:
                         logging.warning(f"Could not sync with Hue bridge: {e}")
                     
@@ -748,13 +761,16 @@ class ClipV2ResourceId(Resource):
                     for light in object.lights:
                         light().update_attr({"state": {"mode": "streaming"}})
                     
-                    # Only start local entertainment if not in proxy mode
-                    if not hue_proxy_mode:
-                        # Start the entertainment service in a daemon thread
-                        entertainment_thread = Thread(target=entertainmentService, args=[object, authorisation["user"]])
+                    # Start local entertainment if hybrid (mixed) or no Hue; otherwise proxy-only
+                    if ("use_hybrid" in locals() and use_hybrid) or ("has_hue" in locals() and not has_hue) or not hue_proxy_mode:
+                        # Choose Hue Sync user when available (for DTLS PSK on server side)
+                        try:
+                            start_user = sel_user
+                        except NameError:
+                            start_user = authorisation["user"]
+                        entertainment_thread = Thread(target=entertainmentService, args=[object, start_user])
                         entertainment_thread.daemon = True
                         entertainment_thread.start()
-                        # Small delay to ensure thread starts
                         sleep(0.1)
                     else:
                         logging.info("DTLS proxy active - not starting local entertainment service")
