@@ -620,22 +620,62 @@ class ClipV2ResourceId(Resource):
                 if putDict["action"] == "start":
                     logging.info("start hue entertainment")
                     
-                    # Set stream active FIRST, before starting thread
+                    # Sync with real Hue bridge FIRST to get matching UUID
+                    hue_proxy_mode = False
+                    try:
+                        from services.entertainment_hue_sync import sync_entertainment_group
+                        hue_group_id, entertainment_uuid = sync_entertainment_group(object)
+                        
+                        if hue_group_id and entertainment_uuid:
+                            logging.info(f"✓ Entertainment synced - Group ID: {hue_group_id}, UUID: {entertainment_uuid}")
+                            # Store Hue bridge info
+                            object.hue_bridge_group_id = hue_group_id
+                            object.hue_bridge_uuid = entertainment_uuid
+                            
+                            # Start DTLS proxy for transparent forwarding
+                            if bridgeConfig["config"].get("hue", {}).get("ip"):
+                                from services.dtls_proxy import start_dtls_proxy
+                                hue_ip = bridgeConfig["config"]["hue"]["ip"]
+                                if start_dtls_proxy(hue_ip):
+                                    logging.info(f"✓ DTLS proxy started - forwarding to {hue_ip}:2100")
+                                    object.dtls_proxy_active = True
+                                    hue_proxy_mode = True
+                                else:
+                                    logging.warning("Failed to start DTLS proxy - falling back to direct mode")
+                    except Exception as e:
+                        logging.warning(f"Could not sync with Hue bridge: {e}")
+                    
+                    # Set stream active
                     object.update_attr({"stream": {"active": True, "owner": authorisation["user"].username, "proxymode": "auto", "proxynode": "/bridge"}})
                     
                     # Update light modes
                     for light in object.lights:
                         light().update_attr({"state": {"mode": "streaming"}})
                     
-                    # Start the entertainment service in a daemon thread
-                    entertainment_thread = Thread(target=entertainmentService, args=[object, authorisation["user"]])
-                    entertainment_thread.daemon = True  # Thread will die with main process
-                    entertainment_thread.start()
+                    # Only start local entertainment if not in proxy mode
+                    if not hue_proxy_mode:
+                        # Start the entertainment service in a daemon thread
+                        entertainment_thread = Thread(target=entertainmentService, args=[object, authorisation["user"]])
+                        entertainment_thread.daemon = True
+                        entertainment_thread.start()
+                        # Small delay to ensure thread starts
+                        sleep(0.1)
+                    else:
+                        logging.info("DTLS proxy active - not starting local entertainment service")
                     
-                    # Small delay to ensure thread starts
-                    sleep(0.1)
                 elif putDict["action"] == "stop":
                     logging.info("stop entertainment")
+                    
+                    # Stop DTLS proxy if running
+                    if hasattr(object, 'dtls_proxy_active') and object.dtls_proxy_active:
+                        try:
+                            from services.dtls_proxy import stop_dtls_proxy
+                            stop_dtls_proxy()
+                            object.dtls_proxy_active = False
+                            logging.info("✓ DTLS proxy stopped")
+                        except:
+                            pass
+                    
                     # First set stream to inactive to signal the service to stop gracefully
                     object.update_attr({"stream": {"active": False}})
                     

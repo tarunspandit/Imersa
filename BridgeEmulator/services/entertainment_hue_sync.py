@@ -8,6 +8,7 @@ import configManager
 import requests
 import json
 import uuid
+from services.uuid_mapper import get_uuid_mapper
 
 logging = logManager.logger.get_logger(__name__)
 bridgeConfig = configManager.bridgeConfig.yaml_config
@@ -180,6 +181,18 @@ def sync_entertainment_group(diyhue_group):
     Ensure real Hue bridge has matching entertainment group
     Returns tuple: (group_id, entertainment_config_uuid) or (None, None)
     """
+    # Check for existing UUID mapping first
+    mapper = get_uuid_mapper()
+    existing_uuid = mapper.get_bridge_uuid(diyhue_group.name)
+    existing_group_id = mapper.get_bridge_group_id(diyhue_group.name)
+    
+    if existing_uuid and existing_group_id:
+        logging.info(f"Using cached UUID mapping for '{diyhue_group.name}': {existing_uuid}")
+        # Update DIYHue UUID to match cached
+        if hasattr(diyhue_group, 'id_v2') and diyhue_group.id_v2 != existing_uuid:
+            diyhue_group.id_v2 = existing_uuid
+        return existing_group_id, existing_uuid
+    
     # Find all Hue protocol lights in this group
     hue_lights = []
     hue_locations = {}
@@ -230,7 +243,18 @@ def sync_entertainment_group(diyhue_group):
                         if "metadata" in config and "name" in config["metadata"]:
                             if f"DIYHue_{diyhue_group.name}" in config["metadata"]["name"]:
                                 entertainment_uuid = config["id"]
-                                logging.info(f"Found V2 entertainment config UUID: {entertainment_uuid}")
+                                logging.info(f"✓ Found V2 entertainment config UUID from real bridge: {entertainment_uuid}")
+                                
+                                # IMPORTANT: Update DIYHue group UUID to match the real bridge
+                                if hasattr(diyhue_group, 'id_v2') and diyhue_group.id_v2 != entertainment_uuid:
+                                    old_uuid = diyhue_group.id_v2
+                                    diyhue_group.id_v2 = entertainment_uuid
+                                    logging.info(f"✓ Updated DIYHue entertainment UUID: {old_uuid} -> {entertainment_uuid}")
+                                
+                                # Save mapping
+                                mapper = get_uuid_mapper()
+                                mapper.add_mapping(diyhue_group.name, old_uuid, entertainment_uuid, hue_group_id)
+                                
                                 break
             
             # If no V2 UUID found, try to construct one from V1 data
@@ -253,6 +277,16 @@ def sync_entertainment_group(diyhue_group):
                     name = f"hue://{hue_ip}/groups/{hue_group_id}"
                     entertainment_uuid = str(uuid.uuid5(namespace, name))
                     logging.info(f"Generated UUID v5 for entertainment: {entertainment_uuid}")
+                
+                # Update DIYHue group UUID to match
+                if entertainment_uuid and hasattr(diyhue_group, 'id_v2'):
+                    old_uuid = diyhue_group.id_v2
+                    diyhue_group.id_v2 = entertainment_uuid
+                    logging.info(f"✓ Synchronized DIYHue UUID: {old_uuid} -> {entertainment_uuid}")
+                    
+                    # Save mapping
+                    mapper = get_uuid_mapper()
+                    mapper.add_mapping(diyhue_group.name, old_uuid, entertainment_uuid, hue_group_id)
                     
         except Exception as e:
             logging.warning(f"Failed to get entertainment UUID from Hue bridge: {e}")
