@@ -647,12 +647,17 @@ class ClipV2ResourceId(Resource):
                             object.hue_bridge_group_id = hue_group_id
                             object.hue_bridge_uuid = entertainment_uuid
                             
-                            # Start DTLS proxy for transparent forwarding
+                            # Start DTLS bridge for proper PSK handling
                             if bridgeConfig["config"].get("hue", {}).get("ip"):
-                                from services.dtls_proxy import start_dtls_proxy
+                                from services.dtls_bridge import start_dtls_bridge
                                 hue_ip = bridgeConfig["config"]["hue"]["ip"]
-                                if start_dtls_proxy(hue_ip):
-                                    logging.info(f"✓ DTLS proxy started - forwarding to {hue_ip}:2100")
+                                
+                                # Get the DIYHue user credentials for this session
+                                diyhue_user = authorisation["user"].username
+                                diyhue_key = authorisation["user"].client_key
+                                
+                                if start_dtls_bridge(diyhue_user, diyhue_key, hue_ip):
+                                    logging.info(f"✓ DTLS bridge started - bridging to {hue_ip}:2100")
                                     object.dtls_proxy_active = True
                                     hue_proxy_mode = True
                                     
@@ -669,7 +674,7 @@ class ClipV2ResourceId(Resource):
                                     except Exception as e:
                                         logging.warning(f"Failed to start streaming on real bridge: {e}")
                                 else:
-                                    logging.warning("Failed to start DTLS proxy - falling back to direct mode")
+                                    logging.warning("Failed to start DTLS bridge - falling back to direct mode")
                     except Exception as e:
                         logging.warning(f"Could not sync with Hue bridge: {e}")
                     
@@ -712,15 +717,15 @@ class ClipV2ResourceId(Resource):
                         except Exception as e:
                             logging.warning(f"Failed to stop streaming on real bridge: {e}")
                     
-                    # Stop DTLS proxy if running
+                    # Stop DTLS bridge if running
                     if proxy_mode:
                         try:
-                            from services.dtls_proxy import stop_dtls_proxy
-                            stop_dtls_proxy()
+                            from services.dtls_bridge import stop_dtls_bridge
+                            stop_dtls_bridge()
                             object.dtls_proxy_active = False
-                            logging.info("✓ DTLS proxy stopped")
+                            logging.info("✓ DTLS bridge stopped")
                         except Exception as e:
-                            logging.error(f"Error stopping DTLS proxy: {e}")
+                            logging.error(f"Error stopping DTLS bridge: {e}")
                     
                     # First set stream to inactive to signal the service to stop gracefully
                     object.update_attr({"stream": {"active": False}})

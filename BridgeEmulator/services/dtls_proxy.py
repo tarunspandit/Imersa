@@ -1,6 +1,6 @@
 """
-DTLS Proxy for Transparent Entertainment Stream Forwarding
-Forwards DTLS traffic untouched between clients and real Hue bridge
+DTLS Bridge for Entertainment Stream
+Terminates DTLS from client and re-establishes to real Hue bridge
 """
 
 import socket
@@ -10,8 +10,13 @@ import logging
 import struct
 from queue import Queue, Empty
 import select
+import subprocess
+from subprocess import Popen, PIPE
+import os
+import configManager
 
 logging = logging.getLogger(__name__)
+bridgeConfig = configManager.bridgeConfig.yaml_config
 
 class DTLSProxy:
     """
