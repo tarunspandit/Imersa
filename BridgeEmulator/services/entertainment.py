@@ -358,14 +358,20 @@ def entertainmentService(group, user):
                                     sleep(0.5)  # Give DTLS time to stabilize
                                     try:
                                         if 'first_frame' in locals() and first_frame:
-                                            # Send first frame as-is - no modification needed!
+                                            # Replace UUID in first frame if needed
+                                            if len(first_frame) >= 52 and first_frame[9] == 2:
+                                                packet_uuid = first_frame[16:52].decode('ascii', errors='ignore')
+                                                logging.info(f"First frame UUID: {packet_uuid}")
+                                                logging.info(f"Real bridge UUID: {group.id_v2}")
+                                                if packet_uuid != group.id_v2:
+                                                    # Replace UUID with real bridge's UUID
+                                                    first_frame = first_frame[:16] + group.id_v2.encode('ascii') + first_frame[52:]
+                                                    logging.info(f"✓ Replaced UUID in first frame")
+                                            
                                             if not hue_tunnel_process.send_packet(first_frame):
                                                 logging.warning("Failed to send first frame")
                                             else:
                                                 logging.info(f"✓ Sent initial frame ({len(first_frame)} bytes)")
-                                                if len(first_frame) >= 52 and first_frame[9] == 2:
-                                                    uuid_in_frame = first_frame[16:52].decode('ascii', errors='ignore')
-                                                    logging.info(f"Initial frame UUID: {uuid_in_frame}")
                                         else:
                                             logging.warning("No first_frame captured during init")
                                     except Exception as e:
@@ -398,9 +404,23 @@ def entertainmentService(group, user):
                             # Debug logging for first frames
                             if frame_count <= 10:
                                 logging.debug(f"Frame {frame_count + 1}: Tunnel active, forwarding {len(data)} bytes")
-                            # PURE PROXY: Forward packet untouched to Hue bridge
-                            # DIYHue's UUID now matches the real bridge's UUID,
-                            # so packets already have the correct UUID!
+                            # Replace UUID in packet if needed before forwarding
+                            if len(data) >= 52 and data[9] == 2:  # V2 protocol with UUID
+                                # Extract UUID from packet (bytes 16-52)
+                                packet_uuid = data[16:52].decode('ascii', errors='ignore')
+                                
+                                # Only log first few packets
+                                if frame_count <= 5:
+                                    logging.debug(f"Packet UUID: {packet_uuid}")
+                                    logging.debug(f"Bridge UUID: {group.id_v2}")
+                                
+                                # If UUIDs don't match, replace it
+                                if packet_uuid != group.id_v2:
+                                    # Replace the UUID in the packet with the real bridge's UUID
+                                    modified_data = data[:16] + group.id_v2.encode('ascii') + data[52:]
+                                    data = modified_data
+                                    if frame_count <= 5:
+                                        logging.info(f"Replaced UUID in packet for Hue bridge")
                             
                             # Debug logging for first few frames
                             if frame_count <= 5:
@@ -413,7 +433,7 @@ def entertainmentService(group, user):
                                     if uuid_in_packet == group.id_v2:
                                         logging.info("✓ UUID matches - packets will work with real bridge!")
                             
-                            # Send raw packet - no modification needed!
+                            # Send the packet (with replaced UUID if it was modified)
                             if not hue_tunnel_process.send_packet(data):
                                 logging.warning("Failed to send packet to Hue bridge")
                                 hue_tunnel_active = False
