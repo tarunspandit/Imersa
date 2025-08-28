@@ -65,18 +65,21 @@ class DTLSBridge:
             return False
         
         try:
+            # Allow overriding openssl binary via config: config.openssl.bin
+            openssl_bin = bridgeConfig["config"].get("openssl", {}).get("bin", "openssl")
             # Kill any existing OpenSSL processes first
             subprocess.run(["killall", "openssl"], capture_output=True)
             time.sleep(0.2)
             
             # Start OpenSSL server to accept client connections
             server_cmd = [
-                'openssl', 's_server', 
-                '-dtls', 
+                openssl_bin, 's_server',
+                '-dtls1_2',                        # enforce DTLS 1.2
+                '-cipher', 'PSK-AES128-GCM-SHA256', # Hue uses PSK GCM
                 '-psk', self.diyhue_key,
-                '-psk_identity', self.diyhue_user, 
-                '-nocert', 
-                '-accept', str(self.listen_port), 
+                '-psk_identity', self.diyhue_user,
+                '-nocert',
+                '-accept', str(self.listen_port),
                 '-quiet'
             ]
             
@@ -97,10 +100,12 @@ class DTLSBridge:
             
             # Start OpenSSL client to connect to real bridge
             client_cmd = [
-                'openssl', 's_client',
-                '-dtls',
+                openssl_bin, 's_client',
+                '-dtls1_2',
+                '-cipher', 'PSK-AES128-GCM-SHA256',
                 '-psk', self.bridge_key,
                 '-psk_identity', self.bridge_user,
+                '-mtu', '1200',                    # avoid EMSGSIZE on some stacks
                 '-connect', f'{self.bridge_ip}:{self.bridge_port}',
                 '-quiet'
             ]

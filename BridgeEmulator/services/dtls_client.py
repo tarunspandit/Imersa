@@ -14,6 +14,7 @@ import time
 import logging
 import struct
 from subprocess import Popen, PIPE
+import configManager
 from queue import Queue, Empty
 
 logging = logging.getLogger(__name__)
@@ -160,10 +161,12 @@ class OpenSSLClientTunnel:
 
     def connect(self):
         try:
+            openssl_bin = configManager.bridgeConfig.yaml_config["config"].get("openssl", {}).get("bin", "openssl")
             cmd = [
-                'openssl', 's_client', '-quiet', '-cipher', 'PSK-AES128-GCM-SHA256', '-dtls',
+                openssl_bin, 's_client', '-quiet', '-cipher', 'PSK-AES128-GCM-SHA256', '-dtls',
                 '-psk', self.psk_key,
                 '-psk_identity', self.psk_identity,
+                '-mtu', '1200',
                 '-connect', f'{self.host}:{self.port}'
             ]
             self.process = Popen(cmd, stdin=PIPE, stdout=None, stderr=None)
