@@ -300,7 +300,15 @@ def entertainmentService(group, user):
                             # Enable streaming on real Hue bridge
                             # CRITICAL: Must activate stream BEFORE opening DTLS connection!
                             url = f"http://{hue_ip}/api/{hue_user}/groups/{hue_bridge_group_id}"
-                            stream_data = {"stream": {"active": True}}
+                            # Forward complete stream configuration from DIYHue group
+                            stream_data = {
+                                "stream": {
+                                    "active": True,
+                                    "owner": hue_user,  # Must use the Hue bridge user
+                                    "proxymode": "auto",
+                                    "proxynode": "/bridge"
+                                }
+                            }
                             try:
                                 r = requests.put(url, json=stream_data, timeout=3)
                                 result = r.json()
