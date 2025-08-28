@@ -205,15 +205,23 @@ class SimplePSKTunnel:
             return False
         
         try:
-            # Add sequence number for ordering (optional)
-            self.sequence = (self.sequence + 1) % 256
+            # For HueStream packets, send directly without modification
+            # The Hue bridge expects the raw HueStream data
+            if data.startswith(b'HueStream'):
+                # Send raw packet without sequence number
+                self.socket.send(data)
+                
+                # Debug first few packets
+                if self.sequence < 5:
+                    self.sequence += 1
+                    version = data[9] if len(data) > 9 else 0
+                    logging.debug(f"Sent HueStream v{version} packet ({len(data)} bytes) to {self.host}")
+            else:
+                # Add sequence number for other packet types
+                self.sequence = (self.sequence + 1) % 256
+                packet = struct.pack('B', self.sequence) + data
+                self.socket.send(packet)
             
-            # Some bridges expect a simple header
-            # Format: [seq][data]
-            packet = struct.pack('B', self.sequence) + data
-            
-            # Send packet
-            self.socket.send(packet)
             return True
             
         except socket.error as e:

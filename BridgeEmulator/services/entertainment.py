@@ -377,7 +377,8 @@ def entertainmentService(group, user):
                                                 logging.info(f"✓ Sent modified initial frame with UUID: {uuid_bytes[:36].decode('ascii', errors='ignore')}")
                                             else:
                                                 # API v1 or other - send as-is
-                                                hue_tunnel_process.stdin.write(first_frame)
+                                                if not hue_tunnel_process.send_packet(first_frame):
+                                                    logging.warning("Failed to send first frame")
                                                 logging.info(f"✓ Sent initial frame as-is ({len(first_frame)} bytes)")
                                             
                                             pass  # Python client handles flushing internally
@@ -389,22 +390,9 @@ def entertainmentService(group, user):
                                     
                                     logging.info("✓ DTLS tunnel ready for streaming")
                                 else:
-                                    # Process died, get error details
-                                    stderr_output = hue_tunnel_process.stderr.read().decode('utf-8') if hue_tunnel_process.stderr else "No error output"
-                                    stdout_output = "Python DTLS client active"
-                                    
-                                    logging.error(f"DTLS tunnel failed immediately")
-                                    logging.error(f"STDERR: {stderr_output}")
-                                    logging.error(f"STDOUT: {stdout_output}")
+                                    # Connection failed
                                     logging.error("DTLS tunnel connection failed")
-                                    
-                                    # Check common issues
-                                    if "wrong version number" in stderr_output.lower():
-                                        logging.error("→ Hue bridge may not be accepting DTLS connections")
-                                    elif "connect:errno" in stderr_output.lower():
-                                        logging.error("→ Cannot reach Hue bridge at {hue_ip}:2100")
-                                    elif "psk" in stderr_output.lower():
-                                        logging.error("→ PSK authentication failed - check credentials")
+                                    logging.error("Check that entertainment is not already active on Hue bridge")
                                     
                                     hue_tunnel_process = None
                                     hue_tunnel_active = False
@@ -424,6 +412,9 @@ def entertainmentService(group, user):
                     try:
                         # Check if process is still alive
                         if hue_tunnel_process.connected:
+                            # Debug logging for first frames
+                            if frame_count <= 10:
+                                logging.debug(f"Frame {frame_count + 1}: Tunnel active, forwarding {len(data)} bytes")
                             # CRITICAL: For Hue bridge, we need to modify the packet!
                             # The packet from Hue Sync contains the DIYHue entertainment area ID
                             # We need to replace it with the real Hue bridge entertainment area ID
@@ -481,7 +472,9 @@ def entertainmentService(group, user):
                                         logging.error(f"Packet length mismatch: original={len(data)}, modified={len(modified_packet)}")
                                     
                                     # Send modified packet
-                                    hue_tunnel_process.stdin.write(modified_packet)
+                                    if not hue_tunnel_process.send_packet(modified_packet):
+                                        logging.warning("Failed to send modified packet")
+                                        hue_tunnel_active = False
                                 
                                 # Debug first few packets
                                 if frame_count <= 3:
@@ -496,7 +489,13 @@ def entertainmentService(group, user):
                                     logging.debug(f"Original DIYHue UUID: '{orig_uuid}'")
                                 
                                 # Send modified packet
-                                hue_tunnel_process.stdin.write(modified_packet)
+                                if hue_tunnel_process.send_packet(modified_packet):
+                                    # Success - log first few frames
+                                    if frame_count <= 5:
+                                        logging.info(f"✓ Frame {frame_count}: Forwarded modified packet ({len(modified_packet)} bytes) to Hue bridge")
+                                else:
+                                    logging.warning("Failed to send modified packet")
+                                    hue_tunnel_active = False
                             else:
                                 # API v1 or other - forward as-is
                                 if not hue_tunnel_process.send_packet(data):
@@ -525,16 +524,8 @@ def entertainmentService(group, user):
                             # Try to get error output (non-blocking)
                             try:
                                 import select
-                                # Check if there's stderr data available (non-blocking)
-                                if hue_tunnel_process.stderr:
-                                    ready, _, _ = select.select([hue_tunnel_process.stderr], [], [], 0)
-                                    if ready:
-                                        stderr = hue_tunnel_process.stderr.read().decode('utf-8', errors='ignore')
-                                        # Only log if it's not the known SNI warning
-                                        if stderr and "SSL_get_servername" not in stderr:
-                                            logging.error(f"Tunnel error: {stderr}")
-                                        elif "SSL_get_servername" in stderr:
-                                            logging.debug(f"Ignoring known OpenSSL warning: {stderr[:100]}")
+                                # Python client doesn't have stderr
+                                pass
                             except:
                                 pass
                             
