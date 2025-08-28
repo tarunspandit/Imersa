@@ -66,6 +66,56 @@ def authorizeV2(headers):
         return {"user": bridgeConfig["apiUsers"][headers["hue-application-key"]]}
     return []
 
+
+def _parse_dt_safe(s: str):
+    try:
+        # Stored as "%Y-%m-%dT%H:%M:%S"
+        from datetime import datetime
+        return datetime.strptime(s, "%Y-%m-%dT%H:%M:%S")
+    except Exception:
+        return None
+
+
+def select_entertainment_user(default_user):
+    """Select the best API user to accept Hue Sync DTLS connections.
+
+    Preference order:
+    1) Names containing 'sync', 'tv', 'box', or 'entertain' with a client_key
+    2) Otherwise, the most recently used user with a client_key
+    3) Fallback: the provided default_user
+    """
+    try:
+        users = bridgeConfig.get("apiUsers", {})
+        if not users:
+            return default_user
+
+        preferred_keywords = ("sync", "tv", "box", "entertain")
+        scored = []
+
+        for uname, u in users.items():
+            key = getattr(u, 'client_key', None)
+            name = (getattr(u, 'name', '') or '').lower()
+            if not key:
+                continue
+            score = 0
+            if any(k in name for k in preferred_keywords):
+                score += 100
+            # Recency by last_use_date
+            dt = _parse_dt_safe(getattr(u, 'last_use_date', '') or '')
+            ts = dt.timestamp() if dt else 0
+            score += int(ts % 1_000_000)  # keep ordering stable
+            scored.append((score, u))
+
+        if scored:
+            scored.sort(key=lambda x: x[0], reverse=True)
+            chosen = scored[0][1]
+            if chosen.username != default_user.username:
+                logging.info(f"Using entertainment PSK from user '{chosen.name}' ({chosen.username[:8]}...) instead of default")
+            return chosen
+    except Exception as e:
+        logging.debug(f"select_entertainment_user fallback: {e}")
+    return default_user
+
 def v2BridgeEntertainment():
     return {"id": "57a9ebc9-406d-4a29-a4ff-42acee9e9be7",
             "owner": {
@@ -653,9 +703,11 @@ class ClipV2ResourceId(Resource):
                                 from services.dtls_bridge import start_dtls_bridge
                                 hue_ip = bridgeConfig["config"]["hue"]["ip"]
                                 
-                                # Get the DIYHue user credentials for this session
-                                diyhue_user = authorisation["user"].username
-                                diyhue_key = authorisation["user"].client_key
+                                # Choose the best API user for DTLS PSK (prefer Hue Sync app user)
+                                sel_user = select_entertainment_user(authorisation["user"])
+                                diyhue_user = sel_user.username
+                                diyhue_key = sel_user.client_key
+                                logging.info(f"DTLS server using PSK for user '{sel_user.name}' ({diyhue_user[:8]}...) ")
                                 
                                 if start_dtls_bridge(diyhue_user, diyhue_key, hue_ip):
                                     logging.info(f"✓ DTLS bridge started - bridging to {hue_ip}:2100")
