@@ -340,10 +340,10 @@ def entertainmentService(group, user):
                                 logging.info(f"✓ Hue bridge streaming activated for group {hue_bridge_group_id}")
                                 # The group UUID was already updated during sync
                             else:
-                                logging.warning(f"Failed to activate streaming: {result[:200] if result else 'No response'}")
-                                hue_bridge_group_id = None
+                                # Streaming might already be active (started by API layer); continue anyway
+                                logging.warning(f"Hue bridge stream activation uncertain: {result[:200] if result else 'No response'} - proceeding to tunnel")
                             
-                            if hue_bridge_group_id and hue_stream_active:
+                            if hue_bridge_group_id:
                                 # Now create DTLS tunnel using Python client
                                 logging.info(f"Creating DTLS tunnel to Hue bridge at {hue_ip}:2100")
                                 logging.debug(f"Using PSK identity: {hue_user}, PSK key: {hue_key[:16]}...")
