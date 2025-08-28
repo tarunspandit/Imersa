@@ -682,6 +682,7 @@ class ClipV2ResourceId(Resource):
                                             elif "error" in result[0]:
                                                 err = result[0]["error"]
                                                 logging.error(f"Failed to start streaming: {err.get('description', err)}")
+                                                logging.error(f"Full error: {result}")
                                         else:
                                             logging.info(f"Bridge stream response: {r.text[:200]}")
                                     except Exception as e:
