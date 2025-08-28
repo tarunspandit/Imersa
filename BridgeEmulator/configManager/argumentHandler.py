@@ -126,9 +126,30 @@ def parse_arguments():
         dockerMAC = get_environment_variable('MAC').strip('\u200e')
         mac = str(dockerMAC).replace(":", "")
     else:
-        dockerMAC = check_output("cat /sys/class/net/$(ip -o addr | grep %s | awk '{print $2}')/address" % host_ip,
-                                 shell=True).decode('utf-8')[:-1]
-        mac = str(dockerMAC).replace(":", "")
+        # Try to get MAC from network interface (Linux/Docker)
+        try:
+            dockerMAC = check_output("cat /sys/class/net/$(ip -o addr | grep %s | awk '{print $2}')/address" % host_ip,
+                                     shell=True).decode('utf-8')[:-1]
+            mac = str(dockerMAC).replace(":", "")
+        except:
+            # Fallback for macOS or when network detection fails
+            # Check if we're on macOS
+            import platform
+            if platform.system() == "Darwin":
+                try:
+                    # Try to get MAC on macOS
+                    dockerMAC = check_output("ifconfig | grep ether | head -1 | awk '{print $2}'", shell=True).decode('utf-8').strip()
+                    mac = str(dockerMAC).replace(":", "")
+                except:
+                    # Last resort - use a default MAC
+                    logging.warning("Could not detect MAC address, using default")
+                    dockerMAC = "00:17:88:10:00:01"
+                    mac = "001788100001"
+            else:
+                # Use a default MAC if all else fails
+                logging.warning("Could not detect MAC address, using default")
+                dockerMAC = "00:17:88:10:00:01"
+                mac = "001788100001"
 
     if args.docker or get_environment_variable('DOCKER', True):
         docker = True
