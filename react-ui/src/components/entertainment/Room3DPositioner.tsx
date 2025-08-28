@@ -37,7 +37,8 @@ const Light3D: React.FC<{
   isSelected: boolean;
   onSelect: (lightId: string) => void;
   onDrag: (position: THREE.Vector3) => void;
-}> = ({ light, isSelected, onSelect, onDrag }) => {
+  roomDimensions: { width: number; height: number; depth: number };
+}> = ({ light, isSelected, onSelect, onDrag, roomDimensions }) => {
   const meshRef = useRef<THREE.Mesh>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [hover, setHover] = useState(false);
@@ -62,21 +63,31 @@ const Light3D: React.FC<{
     e.stopPropagation();
     onSelect(light.lightId);
     setIsDragging(true);
+    try { e.target.setPointerCapture && e.target.setPointerCapture(e.pointerId); } catch {}
   };
 
   const handlePointerUp = () => {
     setIsDragging(false);
+    // release capture if supported
+    try { (meshRef.current as any)?.releasePointerCapture && (meshRef.current as any).releasePointerCapture(); } catch {}
   };
 
   const handlePointerMove = (e: any) => {
     if (isDragging) {
       e.stopPropagation();
-      const newPosition = e.point;
-      // Clamp position within room bounds
-      newPosition.x = Math.max(-5, Math.min(5, newPosition.x));
-      newPosition.y = Math.max(0, Math.min(3, newPosition.y));
-      newPosition.z = Math.max(-5, Math.min(5, newPosition.z));
-      onDrag(newPosition);
+      // Project pointer ray onto a horizontal plane at current Y
+      const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -light.y);
+      const intersection = new THREE.Vector3();
+      if (e.ray && e.ray.intersectPlane(plane, intersection)) {
+        // Clamp within room bounds
+        const halfW = roomDimensions.width / 2;
+        const halfD = roomDimensions.depth / 2;
+        const height = roomDimensions.height;
+        intersection.x = Math.max(-halfW, Math.min(halfW, intersection.x));
+        intersection.y = Math.max(0, Math.min(height, intersection.y));
+        intersection.z = Math.max(-halfD, Math.min(halfD, intersection.z));
+        onDrag(intersection);
+      }
     }
   };
 
@@ -308,6 +319,7 @@ export const Room3DPositioner: React.FC<Room3DPositionerProps> = ({
                 isSelected={selectedLight === light.lightId}
                 onSelect={setSelectedLight}
                 onDrag={(position) => handleLightDrag(light.lightId, position)}
+                roomDimensions={roomDimensions}
               />
             ))}
             

@@ -97,7 +97,8 @@ export const PositionMapper: React.FC<PositionMapperProps> = ({
   // Handle mouse down on light
   const handleMouseDown = useCallback((lightId: string, event: React.MouseEvent) => {
     event.preventDefault();
-    const rect = event.currentTarget.parentElement?.getBoundingClientRect();
+    const svg = (event.currentTarget as Element & { ownerSVGElement?: SVGSVGElement }).ownerSVGElement;
+    const rect = svg?.getBoundingClientRect();
     if (!rect) return;
 
     const mouseX = event.clientX - rect.left;
@@ -325,15 +326,26 @@ export const PositionMapper: React.FC<PositionMapperProps> = ({
   };
 
   // Convert positions to format expected by 3D positioner
+  // 3D world-room dimensions
+  const roomDimensions = { width: 10, height: 3, depth: 10 } as const;
   const lights3D = useMemo(() => {
-    return selectedLights.map(lightId => ({
-      lightId,
-      lightName: positions[lightId]?.lightName || `Light ${lightId}`,
-      x: positions[lightId]?.x || 0,
-      y: positions[lightId]?.y || 1,
-      z: positions[lightId]?.z || 0,
-    }));
+    const halfW = roomDimensions.width / 2;
+    const halfH = roomDimensions.height / 2;
+    const halfD = roomDimensions.depth / 2;
+    return selectedLights.map(lightId => {
+      const p = positions[lightId] || { x: 0, y: 1, z: 0, lightId, lightName: `Light ${lightId}` };
+      return {
+        lightId,
+        lightName: p.lightName || `Light ${lightId}`,
+        // Map normalized [-1,1] to world coordinates
+        x: (p.x || 0) * halfW,
+        y: ((p.y ?? 1) + 1) * halfH, // normalized -1..1 => 0..height
+        z: (p.z || 0) * halfD,
+      };
+    });
   }, [selectedLights, positions]);
+
+  const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 
   return (
     <div className={cn('glass-card p-6', className)}>
@@ -421,8 +433,16 @@ export const PositionMapper: React.FC<PositionMapperProps> = ({
               <Room3DPositioner
                 lights={lights3D}
                 configurationType={configurationType}
+                roomDimensions={roomDimensions}
                 onUpdatePosition={(lightId, position) => {
-                  onUpdatePosition(lightId, position);
+                  // Map world coords back to normalized [-1,1]
+                  const halfW = roomDimensions.width / 2;
+                  const halfH = roomDimensions.height / 2;
+                  const halfD = roomDimensions.depth / 2;
+                  const nx = clamp(position.x / halfW, -1, 1);
+                  const ny = clamp(position.y / halfH - 1, -1, 1);
+                  const nz = clamp(position.z / halfD, -1, 1);
+                  onUpdatePosition(lightId, { x: nx, y: ny, z: nz });
                 }}
                 onAutoArrange={onAutoArrange}
               />
