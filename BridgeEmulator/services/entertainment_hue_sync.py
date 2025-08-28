@@ -178,7 +178,7 @@ def create_hue_entertainment_group(group_name, hue_lights, locations):
 def sync_entertainment_group(diyhue_group):
     """
     Ensure real Hue bridge has matching entertainment group
-    Returns the Hue bridge group ID or None
+    Returns tuple: (group_id, entertainment_config_uuid) or (None, None)
     """
     # Find all Hue protocol lights in this group
     hue_lights = []
@@ -194,7 +194,7 @@ def sync_entertainment_group(diyhue_group):
     
     if not hue_lights:
         logging.debug("No Hue lights in entertainment group")
-        return None
+        return None, None
     
     logging.info(f"Found {len(hue_lights)} Hue lights to sync")
     
@@ -205,7 +205,58 @@ def sync_entertainment_group(diyhue_group):
         hue_locations
     )
     
-    return hue_group_id
+    # Get the entertainment configuration UUID from V2 API if available
+    entertainment_uuid = None
+    if hue_group_id and bridgeConfig["config"].get("hue", {}).get("ip"):
+        try:
+            hue_ip = bridgeConfig["config"]["hue"]["ip"]
+            hue_user = bridgeConfig["config"]["hue"]["hueUser"]
+            
+            # Try V2 API first to get entertainment configuration
+            headers = {"hue-application-key": hue_user}
+            r = requests.get(f"https://{hue_ip}/clip/v2/resource/entertainment_configuration", 
+                           headers=headers, verify=False, timeout=3)
+            
+            if r.status_code == 200:
+                v2_data = r.json()
+                if "data" in v2_data:
+                    # Find the entertainment config that matches our group
+                    for config in v2_data["data"]:
+                        # Check if this config is for our group (might need to match by name or lights)
+                        if "metadata" in config and "name" in config["metadata"]:
+                            if f"DIYHue_{diyhue_group.name}" in config["metadata"]["name"]:
+                                entertainment_uuid = config["id"]
+                                logging.info(f"Found V2 entertainment config UUID: {entertainment_uuid}")
+                                break
+            
+            # If no V2 UUID found, try to construct one from V1 data
+            if not entertainment_uuid:
+                # Check V1 API for any special UUID field
+                r = requests.get(f"http://{hue_ip}/api/{hue_user}/groups/{hue_group_id}", timeout=3)
+                group_data = r.json()
+                
+                # Some Hue bridges store entertainment UUID in group data
+                if "stream" in group_data and "id" in group_data["stream"]:
+                    entertainment_uuid = group_data["stream"]["id"]
+                    logging.info(f"Found entertainment UUID in stream data: {entertainment_uuid}")
+                elif "uuid" in group_data:
+                    entertainment_uuid = group_data["uuid"]
+                    logging.info(f"Found UUID in group data: {entertainment_uuid}")
+                else:
+                    # Generate a proper UUID v5 based on bridge and group
+                    import uuid
+                    namespace = uuid.NAMESPACE_URL
+                    name = f"hue://{hue_ip}/groups/{hue_group_id}"
+                    entertainment_uuid = str(uuid.uuid5(namespace, name))
+                    logging.info(f"Generated UUID v5 for entertainment: {entertainment_uuid}")
+                    
+        except Exception as e:
+            logging.warning(f"Failed to get entertainment UUID from Hue bridge: {e}")
+            # Generate fallback UUID
+            import uuid
+            entertainment_uuid = str(uuid.uuid4())
+    
+    return hue_group_id, entertainment_uuid
 
 
 def delete_hue_entertainment_group(group_name):

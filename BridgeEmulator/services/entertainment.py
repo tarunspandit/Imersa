@@ -167,9 +167,11 @@ def entertainmentService(group, user):
     if has_hue_lights:
         logging.info(f"Entertainment group has {len(hue_lights)} Hue lights - syncing with real bridge")
         try:
-            hue_bridge_group_id = sync_entertainment_group(group)
+            hue_bridge_group_id, hue_bridge_group_uuid = sync_entertainment_group(group)
             if hue_bridge_group_id:
                 logging.info(f"✓ Synced with Hue bridge group ID: {hue_bridge_group_id}")
+                if hue_bridge_group_uuid:
+                    logging.info(f"✓ Entertainment UUID: {hue_bridge_group_uuid}")
             else:
                 logging.warning("Failed to sync with Hue bridge, Hue lights may be laggy")
                 has_hue_lights = False  # Disable tunnel mode if sync failed
@@ -319,11 +321,12 @@ def entertainmentService(group, user):
                             if hue_stream_active:
                                 logging.info(f"✓ Hue bridge streaming activated for group {hue_bridge_group_id}")
                                 
-                                # CRITICAL: Get the entertainment area UUID format
-                                # The Hue bridge expects the group ID in a specific UUID format
-                                # Based on the protocol docs, it needs to be a valid UUID string
-                                hue_bridge_group_uuid = f"00000000-0000-0000-0000-{hue_bridge_group_id:012d}"
-                                logging.info(f"Hue bridge entertainment UUID: {hue_bridge_group_uuid}")
+                                # Use the UUID we got during sync, or generate fallback
+                                if not hue_bridge_group_uuid:
+                                    # Fallback: Generate a proper UUID if we didn't get one
+                                    import uuid
+                                    hue_bridge_group_uuid = str(uuid.uuid4())
+                                    logging.warning(f"Using fallback UUID: {hue_bridge_group_uuid}")
                             else:
                                 logging.warning(f"Failed to activate streaming: {result[:200] if result else 'No response'}")
                                 hue_bridge_group_id = None
@@ -367,10 +370,33 @@ def entertainmentService(group, user):
                                     # Send the first frame after a small delay
                                     sleep(0.5)  # Give DTLS time to stabilize
                                     try:
-                                        if 'first_frame' in locals():
-                                            hue_tunnel_process.stdin.write(first_frame)
+                                        if 'first_frame' in locals() and first_frame:
+                                            # CRITICAL: Replace UUID in first frame too!
+                                            if len(first_frame) >= 52 and first_frame[9] == 2:  # API v2
+                                                # Modify the first frame with correct UUID
+                                                modified_first = first_frame[:16]  # Keep header
+                                                
+                                                # Add Hue bridge UUID
+                                                if hue_bridge_group_uuid:
+                                                    uuid_bytes = hue_bridge_group_uuid.encode('ascii')
+                                                    if len(uuid_bytes) < 36:
+                                                        uuid_bytes = uuid_bytes.ljust(36, b'0')
+                                                    elif len(uuid_bytes) > 36:
+                                                        uuid_bytes = uuid_bytes[:36]
+                                                else:
+                                                    uuid_bytes = b'0' * 36
+                                                
+                                                modified_first += uuid_bytes
+                                                modified_first += first_frame[52:]  # Add channel data
+                                                
+                                                hue_tunnel_process.stdin.write(modified_first)
+                                                logging.info(f"✓ Sent modified initial frame with UUID: {uuid_bytes[:36].decode('ascii', errors='ignore')}")
+                                            else:
+                                                # API v1 or other - send as-is
+                                                hue_tunnel_process.stdin.write(first_frame)
+                                                logging.info(f"✓ Sent initial frame as-is ({len(first_frame)} bytes)")
+                                            
                                             hue_tunnel_process.stdin.flush()
-                                            logging.info(f"✓ Sent initial HueStream frame to bridge ({len(first_frame)} bytes)")
                                         else:
                                             logging.warning("No first_frame captured during init")
                                     except Exception as e:
@@ -449,7 +475,15 @@ def entertainmentService(group, user):
                                 
                                 # Debug first few packets
                                 if frame_count <= 3:
-                                    logging.debug(f"Modified packet: Header={modified_packet[:16].hex()}, UUID={hue_group_uuid.decode('ascii', errors='ignore')}, Channels={len(data[52:])} bytes")
+                                    # Log the complete packet structure
+                                    header_str = modified_packet[:9].decode('ascii', errors='ignore')
+                                    version = modified_packet[9] if len(modified_packet) > 9 else 0
+                                    logging.info(f"Packet {frame_count}: Header='{header_str}' v{version}, UUID='{hue_group_uuid.decode('ascii', errors='ignore')}', Channel data={len(data[52:])} bytes")
+                                    logging.debug(f"First 16 header bytes: {modified_packet[:16].hex()}")
+                                    
+                                    # Log what DIYHue originally sent
+                                    orig_uuid = data[16:52].decode('ascii', errors='ignore')
+                                    logging.debug(f"Original DIYHue UUID: '{orig_uuid}'")
                                 
                                 # Send modified packet
                                 hue_tunnel_process.stdin.write(modified_packet)
@@ -457,7 +491,10 @@ def entertainmentService(group, user):
                                 # API v1 or other - forward as-is
                                 hue_tunnel_process.stdin.write(data)
                                 if frame_count <= 3:
-                                    logging.debug(f"Forwarding API v{data[9] if len(data) > 9 else 0} packet as-is ({len(data)} bytes)")
+                                    version = data[9] if len(data) > 9 else 0
+                                    logging.info(f"Forwarding API v{version} packet as-is ({len(data)} bytes)")
+                                    if version == 1 and len(data) >= 16:
+                                        logging.debug(f"API v1 header: {data[:16].hex()}")
                             
                             hue_tunnel_process.stdin.flush()
                             
