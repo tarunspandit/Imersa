@@ -36,10 +36,17 @@ def create_hue_entertainment_group(group_name, hue_lights, locations):
         diyhue_group_name = f"DIYHue_{group_name}"
         
         for gid, gdata in existing_groups.items():
-            if gdata.get("name") == diyhue_group_name and gdata.get("type") == "Entertainment":
-                group_id = gid
-                logging.info(f"Found existing Hue entertainment group: {group_id}")
-                break
+            if gdata.get("name") == diyhue_group_name:
+                if gdata.get("type") == "Entertainment":
+                    group_id = gid
+                    logging.info(f"Found existing Hue entertainment group: {group_id}")
+                    break
+                else:
+                    # Found group but wrong type - need to delete and recreate
+                    logging.warning(f"Found group {gid} with name '{diyhue_group_name}' but type is '{gdata.get('type')}', not 'Entertainment'")
+                    logging.info(f"Deleting non-entertainment group {gid} to recreate as Entertainment...")
+                    del_r = requests.delete(f"http://{hue_ip}/api/{hue_user}/groups/{gid}", timeout=3)
+                    logging.info(f"Deleted group {gid}: {del_r.text[:100]}")
         
         # Prepare group data
         light_ids = [str(light.protocol_cfg["id"]) for light in hue_lights]
@@ -55,15 +62,38 @@ def create_hue_entertainment_group(group_name, hue_lights, locations):
         # Locations must be set after group creation using a separate API call
         
         if group_id:
-            # Update existing group (only update lights, not recreate)
-            update_data = {"lights": light_ids}
-            r = requests.put(
-                f"http://{hue_ip}/api/{hue_user}/groups/{group_id}",
-                json=update_data,
-                timeout=3
-            )
-            logging.info(f"Updated Hue entertainment group {group_id}: {r.text[:100]}")
-        else:
+            # Update existing entertainment group's lights
+            # First verify it's still an Entertainment group
+            check_r = requests.get(f"http://{hue_ip}/api/{hue_user}/groups/{group_id}", timeout=3)
+            group_info = check_r.json()
+            
+            if group_info.get("type") != "Entertainment" or "stream" not in group_info:
+                if group_info.get("type") != "Entertainment":
+                    logging.error(f"Group {group_id} is not Entertainment type: {group_info.get('type')}")
+                else:
+                    logging.warning(f"Group {group_id} is Entertainment but lacks 'stream' config - recreating")
+                
+                # Delete and recreate
+                del_r = requests.delete(f"http://{hue_ip}/api/{hue_user}/groups/{group_id}", timeout=3)
+                logging.info(f"Deleted group {group_id} for recreation: {del_r.text}")
+                
+                # Clear cached UUID mapping since we're recreating
+                mapper = get_uuid_mapper()
+                mapper.remove_mapping(group_name)
+                
+                group_id = None  # Force recreation
+            else:
+                # Update lights in entertainment group
+                update_data = {"lights": light_ids}
+                r = requests.put(
+                    f"http://{hue_ip}/api/{hue_user}/groups/{group_id}",
+                    json=update_data,
+                    timeout=3
+                )
+                logging.info(f"Updated Hue entertainment group {group_id}: {r.text[:100]}")
+        
+        
+        if not group_id:
             # Create new group
             r = requests.post(
                 f"http://{hue_ip}/api/{hue_user}/groups",
