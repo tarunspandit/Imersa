@@ -9,6 +9,7 @@ interface AreaRowProps {
   area: EntertainmentArea;
   onToggleStreaming: (areaId: string) => Promise<void>;
   onEditPositions: (area: EntertainmentArea) => void;
+  onEditLights?: (area: EntertainmentArea) => void;
   onDelete: (areaId: string) => Promise<void>;
   isProcessing?: boolean;
 }
@@ -17,6 +18,7 @@ export const AreaRow: React.FC<AreaRowProps> = ({
   area,
   onToggleStreaming,
   onEditPositions,
+  onEditLights,
   onDelete,
   isProcessing = false,
 }) => {
@@ -159,6 +161,18 @@ export const AreaRow: React.FC<AreaRowProps> = ({
           >
             <Edit3 className="h-3 w-3" />
           </button>
+
+          {/* Edit Lights */}
+          {onEditLights && (
+            <button
+              onClick={() => onEditLights(area)}
+              disabled={isLoading || isProcessing}
+              title="Edit Lights"
+              className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white transition-all disabled:opacity-50"
+            >
+              <Users className="h-3 w-3" />
+            </button>
+          )}
 
           {/* Delete */}
           <div className="flex items-center space-x-1">

@@ -1,9 +1,10 @@
 // 3D Position Editor for Entertainment Lights
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Save, RotateCcw, Move, Grid, Eye, EyeOff } from 'lucide-react';
 import { LightPosition, EntertainmentArea } from '@/types';
 import { cn } from '@/utils';
 import '@/styles/design-system.css';
+import { Room3DPositioner } from '@/components/entertainment/Room3DPositioner';
 
 interface PositionEditorProps {
   area: EntertainmentArea | null;
@@ -38,6 +39,23 @@ export const PositionEditor: React.FC<PositionEditorProps> = ({
   });
   const [selectedLightId, setSelectedLightId] = useState<string | null>(null);
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
+
+  // 2D drag state
+  const [dragState, setDragState] = useState<{ isDragging: boolean; lightId: string | null; offset: { x: number; y: number } }>({
+    isDragging: false,
+    lightId: null,
+    offset: { x: 0, y: 0 },
+  });
+
+  // 3D mapping helpers
+  const roomDimensions = { width: 10, height: 3, depth: 10 } as const;
+  const lights3D = useMemo(() => localPositions.map(p => ({
+    lightId: p.lightId,
+    lightName: p.lightName,
+    x: p.x * (roomDimensions.width / 2),
+    y: (p.y + 1) * (roomDimensions.height / 2),
+    z: p.z * (roomDimensions.depth / 2),
+  })), [localPositions]);
 
   // Update local positions when props change
   useEffect(() => {
@@ -93,6 +111,51 @@ export const PositionEditor: React.FC<PositionEditorProps> = ({
       return updated;
     });
   }, [validatePosition]);
+
+  // Helpers for 2D mapping
+  const CANVAS_SIZE = 320;
+  const canvasCenter = CANVAS_SIZE / 2;
+  const canvasScale = (CANVAS_SIZE / 2) * 0.9; // leave margins
+
+  const worldToCanvas = useCallback((x: number, y: number) => ({
+    x: canvasCenter + x * canvasScale,
+    y: canvasCenter - y * canvasScale,
+  }), [canvasCenter, canvasScale]);
+
+  const canvasToWorld = useCallback((cx: number, cy: number) => ({
+    x: Math.max(-1, Math.min(1, (cx - canvasCenter) / canvasScale)),
+    y: Math.max(-1, Math.min(1, -(cy - canvasCenter) / canvasScale)),
+  }), [canvasCenter, canvasScale]);
+
+  const handleMouseDown = useCallback((lightId: string, event: React.MouseEvent<SVGCircleElement>) => {
+    event.preventDefault();
+    const svg = (event.currentTarget as Element & { ownerSVGElement?: SVGSVGElement }).ownerSVGElement;
+    const rect = svg?.getBoundingClientRect();
+    if (!rect) return;
+    const mouseX = event.clientX - rect.left;
+    const mouseY = event.clientY - rect.top;
+    const pos = localPositions.find(p => p.lightId === lightId);
+    if (!pos) return;
+    const cpos = worldToCanvas(pos.x, pos.y);
+    setDragState({ isDragging: true, lightId, offset: { x: cpos.x - mouseX, y: cpos.y - mouseY } });
+    setSelectedLightId(lightId);
+  }, [localPositions, worldToCanvas]);
+
+  const handleMouseMove = useCallback((event: React.MouseEvent<SVGSVGElement>) => {
+    if (!dragState.isDragging || !dragState.lightId) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const mouseX = event.clientX - rect.left;
+    const mouseY = event.clientY - rect.top;
+    const newCanvasX = mouseX + dragState.offset.x;
+    const newCanvasY = mouseY + dragState.offset.y;
+    const wp = canvasToWorld(newCanvasX, newCanvasY);
+    updatePosition(dragState.lightId, 'x', wp.x);
+    updatePosition(dragState.lightId, 'y', wp.y);
+  }, [dragState, canvasToWorld, updatePosition]);
+
+  const handleMouseUp = useCallback(() => {
+    setDragState({ isDragging: false, lightId: null, offset: { x: 0, y: 0 } });
+  }, []);
 
   // Reset positions
   const resetPositions = useCallback(() => {
@@ -162,9 +225,9 @@ export const PositionEditor: React.FC<PositionEditorProps> = ({
   const renderPositionVisualization = () => {
     if (localPositions.length === 0) return null;
 
-    const size = 300;
-    const center = size / 2;
-    const scale = (size / 2) * 0.9; // 90% of radius
+    const size = CANVAS_SIZE;
+    const center = canvasCenter;
+    const scale = canvasScale; // 90% of radius
 
     return (
       <div className="relative">
@@ -174,6 +237,9 @@ export const PositionEditor: React.FC<PositionEditorProps> = ({
           className="border border-white/10 rounded-xl"
           viewBox={`0 0 ${size} ${size}`}
           style={{ background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.03), rgba(236, 72, 153, 0.03))' }}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
         >
           {/* Grid */}
           {viewSettings.showGrid && (
@@ -206,8 +272,7 @@ export const PositionEditor: React.FC<PositionEditorProps> = ({
 
           {/* Lights */}
           {localPositions.map((pos) => {
-            const x = center + pos.x * scale;
-            const y = center - pos.y * scale; // Flip Y axis for display
+            const { x, y } = worldToCanvas(pos.x, pos.y);
             const isSelected = selectedLightId === pos.lightId;
             const hasError = validationErrors[pos.lightId];
 
@@ -220,7 +285,8 @@ export const PositionEditor: React.FC<PositionEditorProps> = ({
                   fill={hasError ? '#ef4444' : isSelected ? '#8b5cf6' : '#10b981'}
                   stroke={isSelected ? '#c084fc' : '#ffffff'}
                   strokeWidth={2}
-                  className="cursor-pointer transition-all"
+                  className="cursor-move transition-all"
+                  onMouseDown={(e) => handleMouseDown(pos.lightId, e)}
                   onClick={() => setSelectedLightId(pos.lightId)}
                   filter={isSelected ? 'url(#glow)' : ''}
                 />
@@ -403,13 +469,31 @@ export const PositionEditor: React.FC<PositionEditorProps> = ({
               <h3 className="text-sm font-medium text-white mb-3">
                 Visual Position Editor
               </h3>
-              {renderPositionVisualization()}
-              
-              <div className="text-xs text-gray-400 mt-2">
-                <p>• Click lights to select and edit</p>
-                <p>• Coordinates range from -1 to 1</p>
-                <p>• Z-axis represents depth (forward/backward)</p>
-              </div>
+              {viewSettings.show3D ? (
+                <Room3DPositioner
+                  lights={lights3D}
+                  configurationType={'3dspace'}
+                  roomDimensions={roomDimensions}
+                  onUpdatePosition={(lightId, position) => {
+                    const nx = Math.max(-1, Math.min(1, position.x / (roomDimensions.width / 2)));
+                    const ny = Math.max(-1, Math.min(1, position.y / (roomDimensions.height / 2) - 1));
+                    const nz = Math.max(-1, Math.min(1, position.z / (roomDimensions.depth / 2)));
+                    updatePosition(lightId, 'x', nx);
+                    updatePosition(lightId, 'y', ny);
+                    updatePosition(lightId, 'z', nz);
+                  }}
+                  onAutoArrange={autoArrange}
+                />
+              ) : (
+                <>
+                  {renderPositionVisualization()}
+                  <div className="text-xs text-gray-400 mt-2">
+                    <p>• Drag lights to reposition</p>
+                    <p>• Coordinates range from -1 to 1</p>
+                    <p>• Z-axis represents depth (forward/backward)</p>
+                  </div>
+                </>
+              )}
             </div>
 
             {/* Position Table */}

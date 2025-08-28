@@ -1,13 +1,14 @@
 // Entertainment Areas Page - Complete streaming and position management
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Activity, AlertCircle, RefreshCw, Users, Monitor, Sparkles, Tv } from 'lucide-react';
 import { Modal } from '@/components/ui';
 import { PageWrapper } from '@/components/layout/PageWrapper';
 import { AreaRow } from '@/components/entertainment/AreaRow';
 import { PositionEditor } from '@/components/entertainment/PositionEditor';
+import { LightMembershipEditor } from '@/components/entertainment/LightMembershipEditor';
 import { useEntertainment } from '@/hooks/useEntertainment';
 import { useGroups } from '@/hooks/useGroups';
-import { EntertainmentArea, CreateAreaRequest } from '@/types';
+import { EntertainmentArea, CreateAreaRequest, Light } from '@/types';
 import { cn } from '@/utils';
 import '@/styles/design-system.css';
 
@@ -31,12 +32,15 @@ const Entertainment: React.FC = () => {
   } = useEntertainment();
 
   const {
-    ungroupedLights,
+    availableLights,
     refreshAvailableLights,
-  } = useGroups({ includeEntertainment: false });
+    updateGroup,
+  } = useGroups({ includeEntertainment: true });
 
   // Removed redundant create modal - using wizard instead
   const [showPositionEditor, setShowPositionEditor] = useState(false);
+  const [showLightEditor, setShowLightEditor] = useState(false);
+  const [areaForLightEdit, setAreaForLightEdit] = useState<EntertainmentArea | null>(null);
   // Removed create form state - using wizard instead
 
   // Removed handleCreateArea - using wizard instead
@@ -52,6 +56,19 @@ const Entertainment: React.FC = () => {
     setShowPositionEditor(false);
     selectArea(null);
   };
+
+  // Handle edit lights
+  const handleEditLights = (area: EntertainmentArea) => {
+    setAreaForLightEdit(area);
+    setShowLightEditor(true);
+  };
+
+  const handleLightSave = useCallback(async (lightIds: string[]) => {
+    if (!areaForLightEdit) return;
+    await updateGroup(areaForLightEdit.id, { lightIds });
+    await refreshAreas();
+    await loadPositions(areaForLightEdit.id);
+  }, [areaForLightEdit, updateGroup, refreshAreas, loadPositions]);
 
   // Handle update positions
   const handleUpdatePositions = async (areaId: string, positions: any[]) => {
@@ -190,14 +207,15 @@ const Entertainment: React.FC = () => {
                 </thead>
                 <tbody>
                   {areas.map((area) => (
-                    <AreaRow
-                      key={area.id}
-                      area={area}
-                      onToggleStreaming={toggleStreaming}
-                      onEditPositions={handleEditPositions}
-                      onDelete={deleteArea}
-                      isProcessing={isLoading}
-                    />
+                  <AreaRow
+                    key={area.id}
+                    area={area}
+                    onToggleStreaming={toggleStreaming}
+                    onEditPositions={handleEditPositions}
+                    onEditLights={handleEditLights}
+                    onDelete={deleteArea}
+                    isProcessing={isLoading}
+                  />
                   ))}
                 </tbody>
               </table>
@@ -213,6 +231,19 @@ const Entertainment: React.FC = () => {
           onUpdatePositions={handleUpdatePositions}
           onLoadPositions={loadPositions}
           isLoading={isLoading}
+        />
+      )}
+
+      {/* Edit Lights Modal */}
+      {showLightEditor && (
+        <LightMembershipEditor
+          isOpen={showLightEditor}
+          area={areaForLightEdit}
+          availableLights={availableLights as Light[]}
+          onRefreshLights={refreshAvailableLights}
+          onSave={handleLightSave}
+          onClose={() => { setShowLightEditor(false); setAreaForLightEdit(null); }}
+          isSaving={isLoading}
         />
       )}
 
