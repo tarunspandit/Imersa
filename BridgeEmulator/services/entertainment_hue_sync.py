@@ -9,6 +9,7 @@ import requests
 import json
 import uuid
 from services.uuid_mapper import get_uuid_mapper
+import math
 
 logging = logManager.logger.get_logger(__name__)
 bridgeConfig = configManager.bridgeConfig.yaml_config
@@ -206,6 +207,129 @@ def create_hue_entertainment_group(group_name, hue_lights, locations):
         return None
 
 
+def _round4(v: float) -> float:
+    try:
+        return round(float(v), 4)
+    except Exception:
+        return 0.0
+
+
+def _default_orientation():
+    # Defaults per guide: horizontal (parallel), flat, cable at left
+    return {
+        "pose": "flat",             # flat | standing
+        "axis": "horizontal",       # horizontal | vertical
+        "cable": "left"             # left | right
+    }
+
+
+def _calculate_gradient_positions(orientation: dict) -> list:
+    """Return 7 segment positions for gradient strip in normalized Hue coords.
+    Orientation keys: pose(flat|standing), axis(horizontal|vertical), cable(left|right)
+    """
+    # Base layout: 5 along top, then two side anchors
+    base = [
+        (-0.8, 0.5), (-0.4, 0.5), (0.0, 0.5), (0.4, 0.5), (0.8, 0.5),
+        (0.8, 0.0), (-0.8, 0.0)
+    ]
+    axis = (orientation.get("axis") or "horizontal").lower()
+    cable = (orientation.get("cable") or "left").lower()
+    pose = (orientation.get("pose") or "flat").lower()
+
+    out = []
+    for (x, y) in base:
+        # Cable direction swaps left/right
+        if cable == "right":
+            x = -x
+        # Axis vertical swaps axes
+        if axis == "vertical":
+            x, y = y, x
+        z = 0.3 if pose == "standing" else 0.0
+        out.append({"x": _round4(x), "y": _round4(y), "z": _round4(z)})
+    return out
+
+
+def _patch_v2_entertainment_positions(hue_ip: str, hue_user: str, ent_config_uuid: str, diyhue_group) -> bool:
+    """PATCH service_locations.positions to Hue v2 entertainment_configuration.
+    For gradient-capable models, send multiple positions per light service based on orientation.
+    """
+    if not hue_ip or not hue_user or not ent_config_uuid:
+        return False
+
+    # Build service_locations payload
+    service_locations = []
+
+    # Some gradient-capable models
+    GRADIENT_MODELS = {"LCX001", "LCX002", "LCX003", "915005987201", "LCX004", "LCX006"}
+
+    # Optional per-light orientation store on group: orientations[light_obj] or by id_v1
+    orientations = getattr(diyhue_group, 'orientations', {}) or {}
+
+    for light_ref in diyhue_group.lights:
+        light = light_ref()
+        if not light or getattr(light, 'protocol', None) != 'hue':
+            continue
+
+        # Locate primary position for this light
+        x, y, z = 0.0, 0.0, 0.0
+        if hasattr(diyhue_group, 'locations') and light in diyhue_group.locations:
+            loc = diyhue_group.locations[light]
+            try:
+                if isinstance(loc, list) and len(loc) > 0:
+                    pos = loc[0]
+                    if isinstance(pos, dict):
+                        x = float(pos.get('x', 0))
+                        y = float(pos.get('y', 0))
+                        z = float(pos.get('z', 0))
+                    elif isinstance(pos, (list, tuple)):
+                        x = float(pos[0]) if len(pos) > 0 else 0.0
+                        y = float(pos[1]) if len(pos) > 1 else 0.0
+                        z = float(pos[2]) if len(pos) > 2 else 0.0
+            except Exception:
+                pass
+
+        # Clip and round
+        x = _round4(max(-1.0, min(1.0, x)))
+        y = _round4(max(-1.0, min(1.0, y)))
+        z = _round4(max(-1.0, min(1.0, z)))
+
+        positions = [{"x": x, "y": y, "z": z}]
+
+        # If gradient model, compute 7 segment positions based on orientation
+        try:
+            if getattr(light, 'modelid', None) in GRADIENT_MODELS:
+                # Pull orientation if available
+                orient = orientations.get(light) or orientations.get(getattr(light, 'id_v1', ''), _default_orientation())
+                positions = _calculate_gradient_positions(orient)
+        except Exception:
+            pass
+
+        service_locations.append({
+            "service": {"rid": light.id_v2, "rtype": "light"},
+            "positions": positions
+        })
+
+    if not service_locations:
+        logging.debug("No service_locations to PATCH for v2 entertainment configuration")
+        return False
+
+    url = f"https://{hue_ip}/clip/v2/resource/entertainment_configuration/{ent_config_uuid}"
+    headers = {"hue-application-key": hue_user}
+    payload = {"service_locations": service_locations}
+
+    try:
+        r = requests.patch(url, headers=headers, json=payload, verify=False, timeout=4)
+        ok = 200 <= r.status_code < 300
+        if not ok:
+            logging.warning(f"Hue v2 positions PATCH failed {r.status_code}: {r.text[:200]}")
+        else:
+            logging.info(f"✓ Patched v2 entertainment positions for {len(service_locations)} lights")
+        return ok
+    except Exception as e:
+        logging.warning(f"Failed v2 positions PATCH: {e}")
+        return False
+
+
 def sync_entertainment_group(diyhue_group):
     """
     Ensure real Hue bridge has matching entertainment group
@@ -324,6 +448,10 @@ def sync_entertainment_group(diyhue_group):
             # Generate fallback UUID
             import uuid
             entertainment_uuid = str(uuid.uuid4())
+        
+        # After we have a config UUID, PATCH v2 positions (and gradient segment positions)
+        if entertainment_uuid:
+            _patch_v2_entertainment_positions(hue_ip, hue_user, entertainment_uuid, diyhue_group)
     
     return hue_group_id, entertainment_uuid
 
