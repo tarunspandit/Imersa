@@ -197,8 +197,32 @@ export function useWizard(options: UseWizardOptions = {}) {
         }
         
         if (step.id === 2) {
-          // Step 2: Light selection validation
-          const isValid = formData.selectedLights.length > 0;
+          // Step 2: Light selection validation + Hue per-bridge limit (10)
+          let isValid = formData.selectedLights.length > 0;
+          // Compute Hue selections per bridge IP
+          const ipCount: Record<string, number> = {};
+          formData.selectedLights.forEach((lid) => {
+            const light = formData.availableLights.find(l => l.id === lid);
+            if (light && (light as any).protocol === 'hue') {
+              const ip = (light as any).protocol_cfg?.ip || 'unknown';
+              ipCount[ip] = (ipCount[ip] || 0) + 1;
+            }
+          });
+          const overages = Object.values(ipCount).filter(c => c > 10);
+          if (overages.length > 0) {
+            isValid = false;
+            const overTotal = overages.reduce((a, b) => a + (b - 10), 0);
+            // Show a friendly error if user is currently on step 2
+            if (currentStep === 2) {
+              const msg = `Only 10 Hue lights can be in one entertainment group per real Hue bridge. Move ${overTotal} light(s) to another bridge to continue.`;
+              setError(msg);
+            }
+          } else {
+            // Clear message if previously set for this validation
+            if (currentStep === 2) {
+              setError(null);
+            }
+          }
           return { ...step, isValid, isCompleted: isValid };
         }
         

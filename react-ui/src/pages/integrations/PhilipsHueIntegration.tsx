@@ -1,19 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, Button, Input } from '@/components/ui';
 import { Wizard } from '@/components/ui/Wizard';
-import discoveryService from '@/services/discoveryApi';
+import hueBridgeApi from '@/services/hueBridgeApi';
 import { 
   Search, Globe, Link, Shield, CheckCircle, 
   AlertTriangle, Loader2, Info, WifiOff, RefreshCw
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 
-interface HueBridge {
-  id: string;
-  ip: string;
-  name: string;
-  connected: boolean;
-}
+interface HueBridge { id?: string; ip: string; name?: string; connected?: boolean; hueUser?: string; hueClientKey?: string }
 
 const PhilipsHueIntegration: React.FC = () => {
   const [bridges, setBridges] = useState<HueBridge[]>([]);
@@ -26,10 +21,10 @@ const PhilipsHueIntegration: React.FC = () => {
   const handleSearchBridges = async () => {
     setIsSearching(true);
     try {
-      const response = await discoveryService.discoverPhilipsHue();
-      if (response && response.length > 0) {
-        setBridges(response);
-        toast.success(`Found ${response.length} Hue bridge(s)`);
+      const found = await hueBridgeApi.scanHueBridges();
+      if (found.length > 0) {
+        setBridges(found.map(b => ({ id: b.id || b.ip, ip: b.ip, name: b.id || b.ip })));
+        toast.success(`Found ${found.length} Hue bridge(s)`);
       } else {
         toast('No Hue bridges found on your network');
         setShowManual(true);
@@ -53,10 +48,17 @@ const PhilipsHueIntegration: React.FC = () => {
       // Wait a moment for user to press button
       setTimeout(async () => {
         try {
-          await discoveryService.connectPhilipsHue(bridge.ip, username || 'diyhue-bridge');
-          toast.success('Successfully connected to Hue bridge!');
-          // Refresh bridge list
-          await handleSearchBridges();
+          const result = await hueBridgeApi.pairBridge(bridge.ip, bridge.name, username || 'Imersa#Web');
+          if (result.needsLinkButton) {
+            toast.error(result.message || 'Press the link button and try again');
+            return;
+          }
+          if (result.paired) {
+            toast.success('Successfully paired with Hue bridge!');
+            await refreshConfigured();
+          } else {
+            toast.error(result.message || 'Failed to pair');
+          }
         } catch (error) {
           toast.error('Failed to connect. Make sure you pressed the link button.');
         }
@@ -71,16 +73,25 @@ const PhilipsHueIntegration: React.FC = () => {
       toast.error('Please enter a bridge IP address');
       return;
     }
-
-    const manualBridge: HueBridge = {
-      id: 'manual',
-      ip: manualIp,
-      name: 'Manual Bridge',
-      connected: false
-    };
-
-    await handleConnectBridge(manualBridge);
+    await handleConnectBridge({ id: 'manual', ip: manualIp, name: 'Manual Bridge' });
   };
+
+  const refreshConfigured = async () => {
+    try {
+      const list = await hueBridgeApi.listBridges();
+      // Merge into current list flagging connected ones
+      setBridges(prev => {
+        const ips = new Set(list.map(b => b.ip));
+        const connected: HueBridge[] = list.map(b => ({ ip: b.ip, name: b.name || b.ip, connected: true, hueUser: b.hueUser, hueClientKey: b.hueClientKey }));
+        const others = prev.filter(b => !ips.has(b.ip));
+        return [...connected, ...others];
+      });
+    } catch (e) {
+      // ignore
+    }
+  };
+
+  useEffect(() => { refreshConfigured(); }, []);
 
   return (
     <div className="p-6 space-y-6 pb-20">
@@ -135,15 +146,22 @@ const PhilipsHueIntegration: React.FC = () => {
                           <span className="text-sm">Connected</span>
                         </div>
                       ) : (
-                        <Button
-                          size="sm"
-                          onClick={() => {
-                            setSelectedBridge(bridge);
-                            handleConnectBridge(bridge);
-                          }}
-                        >
-                          Connect
-                        </Button>
+                        <div className="flex gap-2">
+                          <Button size="sm" onClick={() => handleConnectBridge(bridge)}>Pair</Button>
+                          {bridge.connected && (
+                            <>
+                              <Button size="sm" variant="outline" onClick={async () => {
+                                const n = await hueBridgeApi.importLights(bridge.ip);
+                                toast.success(`Imported ${n} light(s) from ${bridge.ip}`);
+                              }}>Import Lights</Button>
+                              <Button size="sm" variant="destructive" onClick={async () => {
+                                await hueBridgeApi.removeBridge(bridge.ip, false);
+                                toast.success(`Removed bridge ${bridge.ip}`);
+                                await refreshConfigured();
+                              }}>Remove</Button>
+                            </>
+                          )}
+                        </div>
                       )}
                     </div>
                   </div>
