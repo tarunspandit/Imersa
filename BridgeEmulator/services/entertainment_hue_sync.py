@@ -456,6 +456,84 @@ def sync_entertainment_group(diyhue_group):
     return hue_group_id, entertainment_uuid
 
 
+def create_hue_entertainment_group_for(ip: str, user: str, group_name: str, hue_lights: list, locations: dict):
+    """Same as create_hue_entertainment_group but targeting a specific Hue bridge (ip,user)."""
+    if not ip or not user:
+        logging.warning("Missing Hue bridge ip/user for group creation")
+        return None
+    try:
+        # Existing groups
+        r = requests.get(f"http://{ip}/api/{user}/groups", timeout=3)
+        existing_groups = r.json()
+        group_id = None
+        diyhue_group_name = f"DIYHue_{group_name}"
+        for gid, gdata in existing_groups.items():
+            if gdata.get("name") == diyhue_group_name and gdata.get("type") == "Entertainment":
+                group_id = gid
+                break
+        light_ids = [str(l.protocol_cfg["id"]) for l in hue_lights]
+        body = {"name": diyhue_group_name, "type": "Entertainment", "lights": light_ids, "class": "TV"}
+        if group_id:
+            requests.put(f"http://{ip}/api/{user}/groups/{group_id}", json={"lights": light_ids}, timeout=3)
+        else:
+            rr = requests.post(f"http://{ip}/api/{user}/groups", json=body, timeout=3).json()
+            if isinstance(rr, list) and rr and "success" in rr[0]:
+                group_id = rr[0]["success"]["id"]
+        # Return int id
+        return int(group_id) if group_id else None
+    except Exception as e:
+        logging.error(f"Failed to create group on {ip}: {e}")
+        return None
+
+
+def sync_entertainment_group_multi(diyhue_group):
+    """Create/update entertainment groups on all Hue bridges present in the group.
+    Returns list of mappings: [{ip, user, group_id, entertainment_uuid}]"""
+    results = []
+    # Group Hue lights by their bridge IP
+    by_ip = {}
+    for light_ref in diyhue_group.lights:
+        light = light_ref()
+        if getattr(light, 'protocol', None) == 'hue':
+            ip = light.protocol_cfg.get('ip')
+            user = light.protocol_cfg.get('hueUser')
+            if not ip or not user:
+                # fallback to single global config if present
+                ip = ip or bridgeConfig["config"].get("hue", {}).get("ip")
+                user = user or bridgeConfig["config"].get("hue", {}).get("hueUser")
+            if not ip or not user:
+                logging.warning(f"Skipping Hue light without ip/user: {getattr(light,'name','?')}")
+                continue
+            by_ip.setdefault((ip, user), []).append(light)
+
+    for (ip, user), lights in by_ip.items():
+        gid = create_hue_entertainment_group_for(ip, user, diyhue_group.name, lights, getattr(diyhue_group, 'locations', {}))
+        if not gid:
+            continue
+        # Resolve entertainment UUID via v2 (if possible)
+        ent_uuid = None
+        try:
+            headers = {"hue-application-key": user}
+            r = requests.get(f"https://{ip}/clip/v2/resource/entertainment_configuration", headers=headers, verify=False, timeout=3)
+            if r.status_code == 200:
+                data = r.json().get("data", [])
+                for cfg in data:
+                    if cfg.get("metadata", {}).get("name", "").find(f"DIYHue_{diyhue_group.name}") >= 0:
+                        ent_uuid = cfg.get("id")
+                        break
+            if not ent_uuid:
+                # fallback using V1 group info
+                g = requests.get(f"http://{ip}/api/{user}/groups/{gid}", timeout=3).json()
+                ent_uuid = (g.get("stream", {}) or {}).get("id") or g.get("uuid")
+        except Exception:
+            pass
+        # Patch positions if we have v2 uuid
+        if ent_uuid:
+            _patch_v2_entertainment_positions(ip, user, ent_uuid, diyhue_group)
+        results.append({"ip": ip, "user": user, "group_id": int(gid), "uuid": ent_uuid})
+    return results
+
+
 def delete_hue_entertainment_group(group_name):
     """
     Delete entertainment group from real Hue bridge

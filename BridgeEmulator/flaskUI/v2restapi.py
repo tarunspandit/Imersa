@@ -704,65 +704,87 @@ class ClipV2ResourceId(Resource):
                     # Sync with real Hue bridge FIRST to get matching UUID
                     hue_proxy_mode = False
                     try:
-                        from services.entertainment_hue_sync import sync_entertainment_group
-                        hue_group_id, entertainment_uuid = sync_entertainment_group(object)
-                        
-                        if hue_group_id and entertainment_uuid:
-                            logging.info(f"✓ Entertainment synced - Group ID: {hue_group_id}, UUID: {entertainment_uuid}")
-                            # Store Hue bridge info
-                            object.hue_bridge_group_id = hue_group_id
-                            object.hue_bridge_uuid = entertainment_uuid
+                        # Multi-bridge sync
+                        from services.entertainment_hue_sync import sync_entertainment_group_multi
+                        sync_results = sync_entertainment_group_multi(object)
+                        if sync_results:
+                            logging.info(f"✓ Entertainment synced across {len(sync_results)} Hue bridge(s)")
+                            # Store for stop() cleanup
+                            object.hue_multi = sync_results
                             
                             # Prepare Hue bridge connectivity
-                            if bridgeConfig["config"].get("hue", {}).get("ip"):
-                                hue_ip = bridgeConfig["config"]["hue"]["ip"]
-                                # Choose the best API user for DTLS PSK (prefer Hue Sync app user)
-                                sel_user = select_entertainment_user(authorisation["user"])
-                                diyhue_user = sel_user.username
-                                diyhue_key = sel_user.client_key
-                                # Build channel remap: DIY (all channels) -> Hue-only compacted index
-                                channel_map = {}
-                                try:
-                                    chs = object.getV2Api()["channels"]
-                                    hue_idx = 0
-                                    for idx, ch in enumerate(chs):
-                                        rid = ch.get("members", [{}])[0].get("service", {}).get("rid")
-                                        lig = ent_get_light_by_rid(rid)
-                                        if lig and getattr(lig, 'protocol', None) == 'hue':
-                                            channel_map[idx] = hue_idx
-                                            hue_idx += 1
-                                except Exception as e:
-                                    logging.debug(f"Channel map build failed: {e}")
+                            # Start Multi-DTLS forwarder for all Hue bridges
+                            sel_user = select_entertainment_user(authorisation["user"])  # DIYHue PSK for Sync client
+                            diyhue_user = sel_user.username
+                            diyhue_key = sel_user.client_key
+                            # Build per-bridge channel maps
+                            per_bridge_maps = {}
+                            try:
+                                chs = object.getV2Api()["channels"]
+                                hue_idx_per_ip = {}
+                                for idx, ch in enumerate(chs):
+                                    rid = ch.get("members", [{}])[0].get("service", {}).get("rid")
+                                    lig = ent_get_light_by_rid(rid)
+                                    if lig and getattr(lig, 'protocol', None) == 'hue':
+                                        ip = lig.protocol_cfg.get('ip')
+                                        if ip is None:
+                                            continue
+                                        if ip not in hue_idx_per_ip:
+                                            hue_idx_per_ip[ip] = 0
+                                        new_idx = hue_idx_per_ip[ip]
+                                        hue_idx_per_ip[ip] += 1
+                                        per_bridge_maps.setdefault(ip, {})[idx] = new_idx
+                            except Exception as e:
+                                logging.debug(f"Per-bridge channel map failed: {e}")
 
-                                from services.dtls_bridge import start_dtls_bridge
-                                logging.info(f"DTLS server using PSK for user '{sel_user.name}' ({diyhue_user[:8]}...) ")
-                                if start_dtls_bridge(diyhue_user, diyhue_key, hue_ip, entertainment_uuid, channel_map):
-                                    logging.info(f"✓ DTLS bridge started - bridging to {hue_ip}:2100")
-                                    object.dtls_proxy_active = True
-                                    hue_proxy_mode = True
-                                else:
-                                    logging.warning("Failed to start DTLS bridge - falling back to direct mode")
+                            # Build targets using sync results and config creds
+                            targets = []
+                            for entry in (object.hue_multi or []):
+                                ip = entry['ip']
+                                uuid = entry.get('uuid')
+                                # Credentials per bridge
+                                key = None
+                                try:
+                                    # Prefer explicit multi-bridge config
+                                    for hb in bridgeConfig["config"].get("hues", []):
+                                        if hb.get('ip') == ip:
+                                            key = hb.get('hueClientKey') or hb.get('hueKey') or hb.get('hueUser')
+                                            user_for_bridge = hb.get('hueUser') or entry.get('user')
+                                            break
+                                except Exception:
+                                    user_for_bridge = entry.get('user')
+                                if not key:
+                                    # fallback single-bridge config
+                                    key = (bridgeConfig["config"].get("hue", {}).get("hueClientKey") or bridgeConfig["config"].get("hue", {}).get("hueKey") or entry.get('user'))
+                                targets.append({
+                                    'ip': ip,
+                                    'user': user_for_bridge or entry.get('user'),
+                                    'key': key,
+                                    'uuid': uuid,
+                                    'channel_map': per_bridge_maps.get(ip, {})
+                                })
+
+                            from services.dtls_bridge import start_multi_dtls_bridge
+                            if start_multi_dtls_bridge(diyhue_user, diyhue_key, targets, mirror_port=int(bridgeConfig["config"].get("streaming", {}).get("mirror_port", 2101))):
+                                logging.info(f"✓ Multi-DTLS bridge started with {len(targets)} target(s)")
+                                object.dtls_proxy_active = True
+                                hue_proxy_mode = True
+                            else:
+                                logging.warning("Failed to start Multi-DTLS bridge - falling back to direct mode")
 
                                 # Start streaming on real bridge (both modes)
-                                try:
-                                    hue_user = bridgeConfig["config"]["hue"]["hueUser"]
-                                    stream_payload = {"stream": {"active": True}}
-                                    r = requests.put(
-                                        f"http://{hue_ip}/api/{hue_user}/groups/{hue_group_id}",
-                                        json=stream_payload,
-                                        timeout=3
-                                    )
-                                    result = r.json() if r.text else {}
-                                    if isinstance(result, list):
-                                        ok = any("success" in item for item in result)
-                                        if ok:
-                                            logging.info(f"✓ Started streaming on real bridge group {hue_group_id}")
-                                        else:
-                                            logging.warning(f"Start streaming response: {result}")
-                                    else:
-                                        logging.info(f"Bridge stream response: {r.text[:200]}")
-                                except Exception as e:
-                                    logging.warning(f"Failed to start streaming on real bridge: {e}")
+                                # Start streaming on each real bridge group
+                                import requests as _rq
+                                for entry in (object.hue_multi or []):
+                                    try:
+                                        ip = entry['ip']
+                                        user = entry['user']
+                                        gid = entry['group_id']
+                                        stream_payload = {"stream": {"active": True}}
+                                        r = _rq.put(f"http://{ip}/api/{user}/groups/{gid}", json=stream_payload, timeout=3)
+                                        _ = r.json() if r.text else {}
+                                    except Exception as e:
+                                        logging.warning(f"Failed to start stream on {entry}")
                     except Exception as e:
                         logging.warning(f"Could not sync with Hue bridge: {e}")
                     
@@ -806,38 +828,29 @@ class ClipV2ResourceId(Resource):
                     proxy_mode = hasattr(object, 'dtls_proxy_active') and object.dtls_proxy_active
                     
                     # Stop streaming on real bridge if in proxy mode
-                    if proxy_mode and hasattr(object, 'hue_bridge_group_id'):
-                        try:
-                            hue_ip = bridgeConfig["config"]["hue"]["ip"]
-                            hue_user = bridgeConfig["config"]["hue"]["hueUser"]
-                            # Stop streaming on real bridge - V1 API requires PUT to /groups/{id} with stream payload
-                            stream_payload = {"stream": {"active": False}}
-                            r = requests.put(
-                                f"http://{hue_ip}/api/{hue_user}/groups/{object.hue_bridge_group_id}",
-                                json=stream_payload,
-                                timeout=3
-                            )
-                            result = r.json() if r.text else {}
-                            if isinstance(result, list):
-                                ok = any("success" in item for item in result)
-                                if ok:
-                                    logging.info(f"✓ Stopped streaming on real bridge group {object.hue_bridge_group_id}")
-                                else:
-                                    logging.warning(f"Stop streaming response: {result}")
-                            else:
-                                logging.info(f"Bridge stream stop response: {r.text[:100]}")
-                        except Exception as e:
-                            logging.warning(f"Failed to stop streaming on real bridge: {e}")
+                    if proxy_mode and hasattr(object, 'hue_multi'):
+                        import requests as _rq
+                        for entry in (object.hue_multi or []):
+                            try:
+                                ip = entry['ip']
+                                user = entry['user']
+                                gid = entry['group_id']
+                                stream_payload = {"stream": {"active": False}}
+                                r = _rq.put(f"http://{ip}/api/{user}/groups/{gid}", json=stream_payload, timeout=3)
+                                _ = r.json() if r.text else {}
+                            except Exception:
+                                pass
                     
                     # Stop DTLS bridge if running
                     if proxy_mode:
                         try:
-                            from services.dtls_bridge import stop_dtls_bridge
+                            from services.dtls_bridge import stop_multi_dtls_bridge, stop_dtls_bridge
+                            stop_multi_dtls_bridge()
                             stop_dtls_bridge()
                             object.dtls_proxy_active = False
-                            logging.info("✓ DTLS bridge stopped")
+                            logging.info("✓ DTLS bridge(s) stopped")
                         except Exception as e:
-                            logging.error(f"Error stopping DTLS bridge: {e}")
+                            logging.error(f"Error stopping DTLS bridge(s): {e}")
                     
                     # First set stream to inactive to signal the service to stop gracefully
                     object.update_attr({"stream": {"active": False}})
@@ -929,6 +942,129 @@ class ClipV2ResourceId(Resource):
             if putDict["action"]["action_type"] == "search":
                 bridgeConfig["config"]["zigbee_device_discovery_info"]["status"] = "active"
                 Thread(target=scanForLights).start()
+        elif resource == "bridge":
+            # Management actions for Hue bridges (pair/list/import/remove)
+            payload = putDict.get("hue") or putDict.get("action") or {}
+            if isinstance(payload, dict) and payload.get("type") == "hue":
+                action = payload.get("action")
+            else:
+                action = payload.get("action") if isinstance(payload, dict) else None
+
+            # Ensure multi-bridge list exists
+            cfg = bridgeConfig.get("config", {})
+            if "hues" not in cfg:
+                cfg["hues"] = []
+                bridgeConfig["config"]["hues"] = cfg["hues"]
+
+            def _save_config():
+                try:
+                    configManager.bridgeConfig.save_config(backup=False, resource="config")
+                except Exception:
+                    pass
+
+            if action == "pair":
+                ip = payload.get("ip")
+                name = payload.get("name") or f"Hue {ip}"
+                devicetype = payload.get("devicetype") or f"Imersa#{bridgeConfig['config'].get('name','Imersa')}"
+                if not ip:
+                    return {"errors": [{"description": "Missing ip"}]}, 400
+                try:
+                    # Ask user to press link button, then attempt pairing with clientkey
+                    body = {"devicetype": devicetype, "generateclientkey": True}
+                    r = requests.post(f"http://{ip}/api", json=body, timeout=5)
+                    res = r.json()
+                    if isinstance(res, list) and res and "error" in res[0]:
+                        err = res[0]["error"]
+                        # linkbutton not pressed
+                        return {"errors": [{"description": err.get('description','pairing failed'), "type": err.get('type')}]}, 202
+                    if isinstance(res, list) and res and "success" in res[0]:
+                        su = res[0]["success"]
+                        username = su.get("username")
+                        clientkey = su.get("clientkey")
+                        entry = {"ip": ip, "hueUser": username, "hueClientKey": clientkey, "name": name}
+                        # Dedup by ip
+                        hues = bridgeConfig["config"]["hues"]
+                        hues = [h for h in hues if h.get("ip") != ip]
+                        hues.append(entry)
+                        bridgeConfig["config"]["hues"] = hues
+                        _save_config()
+                        return {"data": [{"paired": True, "ip": ip, "hueUser": username, "hueClientKey": clientkey}]}
+                    return {"errors": [{"description": f"Unexpected response: {res}"}]}, 500
+                except Exception as e:
+                    return {"errors": [{"description": f"Pairing error: {e}"}]}, 500
+
+            elif action == "list":
+                return {"data": [{"bridges": bridgeConfig["config"].get("hues", [])}]}
+
+            elif action == "remove":
+                ip = payload.get("ip")
+                prune = bool(payload.get("prune_lights", False))
+                if not ip:
+                    return {"errors": [{"description": "Missing ip"}]}, 400
+                hues = bridgeConfig["config"].get("hues", [])
+                hues = [h for h in hues if h.get("ip") != ip]
+                bridgeConfig["config"]["hues"] = hues
+                if prune:
+                    try:
+                        # Remove lights tied to this bridge IP
+                        to_delete = []
+                        for lid, light in bridgeConfig.get("lights", {}).items():
+                            try:
+                                if getattr(light, 'protocol', None) == 'hue' and light.protocol_cfg.get('ip') == ip:
+                                    to_delete.append(lid)
+                            except Exception:
+                                pass
+                        for lid in to_delete:
+                            del bridgeConfig["lights"][lid]
+                        configManager.bridgeConfig.save_config(backup=False, resource="lights")
+                    except Exception:
+                        pass
+                _save_config()
+                return {"data": [{"removed": True, "ip": ip}]}
+
+            elif action == "import_lights":
+                ip = payload.get("ip")
+                if not ip:
+                    return {"errors": [{"description": "Missing ip"}]}, 400
+                # Find user for this ip
+                user = None
+                for hb in bridgeConfig["config"].get("hues", []):
+                    if hb.get("ip") == ip:
+                        user = hb.get("hueUser")
+                        break
+                user = user or bridgeConfig["config"].get("hue", {}).get("hueUser")
+                if not user:
+                    return {"errors": [{"description": "No hueUser found for given ip"}]}, 400
+                # Discover and add new lights
+                from lights.protocols import hue as hue_proto
+                from lights.discover import addNewLight
+                detected = []
+                try:
+                    hue_proto.discover(detected, {"ip": ip, "hueUser": user})
+                except Exception as e:
+                    return {"errors": [{"description": f"Discovery failed: {e}"}]}, 500
+                # Avoid duplicates by uniqueid
+                existing = set()
+                for obj in bridgeConfig.get("lights", {}).values():
+                    try:
+                        if getattr(obj, 'protocol', None) == 'hue':
+                            uid = obj.protocol_cfg.get('uniqueid')
+                            if uid:
+                                existing.add(uid)
+                    except Exception:
+                        pass
+                added = []
+                for l in detected:
+                    uid = l.get("protocol_cfg", {}).get("uniqueid")
+                    if uid and uid in existing:
+                        continue
+                    lid = addNewLight(l["modelid"], l["name"], l["protocol"], l["protocol_cfg"])
+                    if lid:
+                        added.append(lid)
+                return {"data": [{"imported": len(added), "light_ids": added}]}
+
+            else:
+                return {"errors": [{"description": "Unsupported bridge action"}]}, 400
         elif resource == "device":
             if "identify" in putDict and putDict["identify"]["action"] == "identify":
                 object.setV1State({"alert": "select"})

@@ -394,3 +394,169 @@ def stop_dtls_bridge():
     if _dtls_bridge:
         _dtls_bridge.stop()
         _dtls_bridge = None
+
+
+class MultiDTLSBridge:
+    """
+    One DTLS server (port 2100) fans-out decrypted frames to multiple Hue bridges.
+    Applies per-target UUID rewrite and channel filter/remap.
+    Also mirrors decrypted frames to local UDP for non-Hue processing.
+    """
+    def __init__(self, diyhue_user, diyhue_key, targets, listen_port=2100, mirror_host="127.0.0.1", mirror_port=2101):
+        self.diyhue_user = diyhue_user
+        self.diyhue_key = diyhue_key
+        self.listen_port = listen_port
+        self.targets = targets  # list of {ip,user,key,uuid,channel_map}
+        self.mirror_host = mirror_host
+        self.mirror_port = mirror_port
+        self.server_process = None
+        self.client_procs = []
+        self.running = False
+        self.thread = None
+        self.mirror_sock = None
+
+    def start(self):
+        openssl_bin = bridgeConfig["config"].get("openssl", {}).get("bin", "openssl")
+        # Start DTLS server
+        server_cmd = [
+            openssl_bin, 's_server', '-dtls1_2', '-cipher', 'PSK-AES128-GCM-SHA256',
+            '-psk', self.diyhue_key, '-psk_identity', self.diyhue_user,
+            '-nocert', '-accept', str(self.listen_port), '-quiet'
+        ]
+        self.server_process = Popen(server_cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
+        time.sleep(0.4)
+        if self.server_process.poll() is not None:
+            err = self.server_process.stderr.read().decode('utf-8') if self.server_process.stderr else ''
+            logging.error(f"MultiDTLS server failed: {err}")
+            return False
+        # Start clients
+        for t in self.targets:
+            try:
+                client_cmd = [
+                    openssl_bin, 's_client', '-dtls1_2', '-cipher', 'PSK-AES128-GCM-SHA256',
+                    '-psk', t['key'], '-psk_identity', t['user'], '-mtu', '1200',
+                    '-connect', f"{t['ip']}:2100", '-quiet'
+                ]
+                proc = Popen(client_cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
+                time.sleep(0.2)
+                if proc.poll() is not None:
+                    er = proc.stderr.read().decode('utf-8') if proc.stderr else ''
+                    logging.error(f"DTLS client failed for {t['ip']}: {er}")
+                    continue
+                self.client_procs.append({"proc": proc, **t})
+            except Exception as e:
+                logging.error(f"Failed DTLS client for {t.get('ip')}: {e}")
+        if not self.client_procs:
+            logging.error("No DTLS clients started; aborting")
+            try:
+                self.server_process.terminate()
+            except Exception:
+                pass
+            return False
+        # Mirror socket
+        try:
+            self.mirror_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.mirror_sock.setblocking(False)
+        except Exception:
+            self.mirror_sock = None
+        # Thread
+        self.running = True
+        self.thread = threading.Thread(target=self._loop, daemon=True)
+        self.thread.start()
+        logging.info(f"✓ MultiDTLS Bridge started with {len(self.client_procs)} targets")
+        return True
+
+    def _loop(self):
+        buffer_size = 65536
+        while self.running:
+            try:
+                if self.server_process.poll() is not None:
+                    break
+                r, _, _ = select.select([self.server_process.stdout], [], [], 0.05)
+                if not r:
+                    continue
+                data = os.read(self.server_process.stdout.fileno(), buffer_size)
+                if not data:
+                    continue
+                # Mirror locally
+                try:
+                    if self.mirror_sock:
+                        self.mirror_sock.sendto(data, (self.mirror_host, self.mirror_port))
+                except Exception:
+                    pass
+                # Send per-target
+                for t in list(self.client_procs):
+                    proc = t['proc']
+                    if proc.poll() is not None:
+                        self.client_procs.remove(t)
+                        continue
+                    out = data
+                    try:
+                        if out.startswith(b'HueStream') and len(out) > 60 and out[9] == 2:
+                            # UUID rewrite
+                            uuid = t.get('uuid')
+                            if uuid and len(uuid) == 36:
+                                if out[16:52].decode('ascii', 'ignore') != uuid:
+                                    out = out[:16] + uuid.encode('ascii') + out[52:]
+                            # Channel filter/remap
+                            cmap = t.get('channel_map') or {}
+                            if cmap:
+                                header = out[:52]
+                                i = 52
+                                end = len(out)
+                                ba = bytearray(header)
+                                while i + 6 < end:
+                                    ch = out[i]
+                                    if ch in cmap:
+                                        ba.append(cmap[ch])
+                                        ba.extend(out[i+1:i+7])
+                                    i += 7
+                                out = bytes(ba)
+                    except Exception:
+                        pass
+                    try:
+                        proc.stdin.write(out)
+                        proc.stdin.flush()
+                    except Exception:
+                        self.client_procs.remove(t)
+                        try:
+                            proc.terminate()
+                        except Exception:
+                            pass
+            except Exception:
+                if not self.running:
+                    break
+        self.stop()
+
+    def stop(self):
+        self.running = False
+        if self.server_process:
+            try:
+                self.server_process.terminate()
+            except Exception:
+                pass
+        for t in self.client_procs:
+            try:
+                t['proc'].terminate()
+            except Exception:
+                pass
+        self.client_procs.clear()
+        if self.thread and self.thread.is_alive():
+            try:
+                self.thread.join(timeout=1.0)
+            except Exception:
+                pass
+
+
+_multi_dtls = None
+
+def start_multi_dtls_bridge(diyhue_user, diyhue_key, targets, mirror_port=2101):
+    global _multi_dtls
+    _multi_dtls = MultiDTLSBridge(diyhue_user, diyhue_key, targets, listen_port=2100, mirror_port=mirror_port)
+    return _multi_dtls.start()
+
+def stop_multi_dtls_bridge():
+    global _multi_dtls
+    if _multi_dtls:
+        _multi_dtls.stop()
+        _multi_dtls = None
