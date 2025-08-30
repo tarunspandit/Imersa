@@ -123,12 +123,18 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
     if LifxLAN is None:
         logging.info("LIFX: lifxlan not installed; discovery disabled")
         return
+    lifx = None
+    lights: List[Any] = []
     try:
         lifx = LifxLAN()
-        lights = lifx.get_lights() or []
+        try:
+            lights = lifx.get_lights() or []
+        except Exception as e:
+            logging.debug("LIFX: broadcast get_lights failed: %s", e)
+            lights = []
     except Exception as e:
-        logging.warning("LIFX: discovery failed: %s", e)
-        lights = []
+        logging.warning("LIFX: init failed: %s", e)
+        lifx = None
 
     for dev in lights:
         try:
@@ -153,7 +159,9 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
         try:
             if ":" in ip:
                 ip = ip.split(":", 1)[0]
-            dev = lifx.get_device_by_ip(ip)
+            # Create a LAN instance if needed (avoid relying on possibly failed instance)
+            lan = lifx if lifx is not None else LifxLAN()
+            dev = lan.get_device_by_ip(ip)
             if dev is None:
                 continue
             mac = dev.get_mac_addr()
