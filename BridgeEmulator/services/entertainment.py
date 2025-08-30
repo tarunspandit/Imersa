@@ -663,6 +663,13 @@ def entertainmentService(group, user, mirror_port=None):
 
                             # LIFX (lifxlan rapid UDP updates)
                             elif proto == "lifx":
+                                # Respect runtime integration toggle
+                                try:
+                                    lifx_rt = bridgeConfig.get("temp", {}).get("integrations", {}).get("lifx", {})
+                                    if lifx_rt.get("enabled") is False:
+                                        raise Exception("LIFX disabled")
+                                except Exception:
+                                    pass
                                 key = light.protocol_cfg.get("id") or light.protocol_cfg.get("ip")
                                 if key:
                                     op = skipSimilarFrames(light.id_v1, light.state["xy"], light.state["bri"])
@@ -820,6 +827,13 @@ def entertainmentService(group, user, mirror_port=None):
 
                             # LIFX (lifxlan rapid UDP updates)
                             elif proto == "lifx":
+                                # Respect runtime integration toggle
+                                try:
+                                    lifx_rt = bridgeConfig.get("temp", {}).get("integrations", {}).get("lifx", {})
+                                    if lifx_rt.get("enabled") is False:
+                                        raise Exception("LIFX disabled")
+                                except Exception:
+                                    pass
                                 key = light.protocol_cfg.get("id") or light.protocol_cfg.get("ip")
                                 if key:
                                     op = skipSimilarFrames(light.id_v1, light.state["xy"], light.state["bri"])

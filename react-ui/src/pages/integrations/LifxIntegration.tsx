@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, Button, Input, Switch } from '@/components/ui';
 import discoveryService from '@/services/discoveryApi';
-import apiService from '@/services/api';
+import authService from '@/services/authApi';
 import { toast } from 'react-hot-toast';
 import { Lightbulb, Loader2, Save, Plus, RefreshCw, Settings } from 'lucide-react';
 
@@ -68,8 +68,8 @@ const LifxIntegration: React.FC = () => {
   const handleDiscover = async () => {
     try {
       // Trigger a general scan which now includes LIFX when enabled
-      await apiService.getApiKey();
-      await fetch(`/api/${apiService.apiKey}/lights`, { method: 'POST', body: '' });
+      const apiKey = await authService.getApiKey();
+      await fetch(`/api/${apiKey}/lights`, { method: 'POST', body: '' });
       toast.success('Discovery started');
     } catch (e) {
       toast.error('Failed to start discovery');
@@ -87,7 +87,7 @@ const LifxIntegration: React.FC = () => {
         name: manualName || `LIFX ${manualIp}`,
         protocol: 'lifx',
         ip: manualIp,
-        config: {}
+        config: { lightName: manualName || `LIFX ${manualIp}` }
       });
       if (result?.success?.id) {
         toast.success('Device added');
@@ -203,4 +203,3 @@ const LifxIntegration: React.FC = () => {
 };
 
 export default LifxIntegration;
-
