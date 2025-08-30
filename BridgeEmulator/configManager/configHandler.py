@@ -204,7 +204,10 @@ class Config:
                             data["owner"] = self.yaml_config["apiUsers"][data["owner"]]
                         self.yaml_config["groups"][group] = Group.Group(data)
                         for light in data["lights"]:
-                            self.yaml_config["groups"][group].add_light(self.yaml_config["lights"][light])
+                            if light in self.yaml_config["lights"]:
+                                self.yaml_config["groups"][group].add_light(self.yaml_config["lights"][light])
+                            else:
+                                logging.warning(f"Group '{group}' references non-existent light '{light}', skipping")
 
             #scenes
             if os.path.exists(self.configDir + "/scenes.yaml"):

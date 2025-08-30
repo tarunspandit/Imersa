@@ -22,13 +22,16 @@ try:
     def _fix_docker_broadcasts():
         """Add host network broadcast addresses when running in Docker."""
         # Check if running in Docker
-        is_docker = (
-            os.path.exists('/.dockerenv') or 
-            os.environ.get('DOCKER_CONTAINER', False) or
-            (os.path.exists('/proc/1/cgroup') and 
-             os.path.isfile('/proc/1/cgroup') and 
-             'docker' in open('/proc/1/cgroup').read())
-        )
+        try:
+            is_docker = (
+                os.path.exists('/.dockerenv') or 
+                os.environ.get('DOCKER_CONTAINER', False) or
+                (os.path.exists('/proc/1/cgroup') and 
+                 os.path.isfile('/proc/1/cgroup') and 
+                 'docker' in open('/proc/1/cgroup').read())
+            )
+        except:
+            is_docker = False
         
         if not is_docker:
             return
@@ -89,8 +92,7 @@ try:
             logging.info(f"LIFX: Added broadcast addresses for Docker: {added}")
             logging.debug(f"LIFX: Full broadcast list: {current}")
     
-    # Apply Docker fix on import
-    _fix_docker_broadcasts()
+    # Docker fix will be applied lazily on first discovery
     
 except ImportError:
     LIFX_AVAILABLE = False
@@ -319,11 +321,24 @@ def _get_device(light) -> Optional[Any]:
     return _device_cache.discover_device(mac, ip)
 
 
+# Track if Docker fix has been applied
+_docker_fix_applied = False
+
 def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
     """Discover LIFX devices and add them to detectedLights."""
+    global _docker_fix_applied
+    
     if not LIFX_AVAILABLE:
         logging.info("LIFX: lifxlan not available, skipping discovery")
         return
+    
+    # Apply Docker fix on first discovery only
+    if not _docker_fix_applied:
+        try:
+            _fix_docker_broadcasts()
+            _docker_fix_applied = True
+        except Exception as e:
+            logging.debug(f"LIFX: Docker broadcast fix failed: {e}")
         
     logging.info("LIFX: Starting discovery...")
     
