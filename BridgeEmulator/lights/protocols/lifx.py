@@ -1,3 +1,20 @@
+"""
+LIFX Protocol Implementation for Hue Bridge Emulator
+
+Entertainment Mode Optimizations:
+- Power state caching to avoid redundant on/off commands
+- Kelvin value caching per device to reduce get_color calls  
+- Frame rate limiting (configurable, default 30 FPS)
+- Batch processing support for multiple simultaneous updates
+- Parallel UDP packet sending for better performance
+
+Discovery Optimizations (Docker):
+- Subnet scanning instead of broadcast for Docker compatibility
+- Direct unicast GetService messages to each IP
+- Automatic subnet detection from config.yaml host IP
+- Device caching with 5-minute TTL
+"""
+
 import colorsys
 import threading
 import time
@@ -588,32 +605,142 @@ def get_light_state(light: Any) -> Dict:
     return state
 
 
+# Entertainment mode state tracking
+_entertainment_state = {
+    "active": False,
+    "power_states": {},  # Track power state per device
+    "kelvin_cache": {},  # Cache kelvin per device
+    "last_update": {},   # Track last update time per device
+    "frame_limit": 30,   # Max FPS (LIFX can handle ~20 messages/sec)
+}
+
+def start_entertainment_mode() -> None:
+    """Initialize entertainment mode for better performance."""
+    global _entertainment_state
+    _entertainment_state["active"] = True
+    _entertainment_state["power_states"].clear()
+    _entertainment_state["kelvin_cache"].clear()
+    _entertainment_state["last_update"].clear()
+    logging.info("LIFX: Entertainment mode started")
+
+def stop_entertainment_mode() -> None:
+    """Clean up entertainment mode."""
+    global _entertainment_state
+    _entertainment_state["active"] = False
+    _entertainment_state["power_states"].clear()
+    _entertainment_state["kelvin_cache"].clear()
+    _entertainment_state["last_update"].clear()
+    logging.info("LIFX: Entertainment mode stopped")
+
 def send_rgb_rapid(light: Any, r: int, g: int, b: int) -> None:
-    """Send RGB color rapidly for entertainment mode."""
+    """Send RGB color rapidly for entertainment mode with optimizations."""
     device = _get_device(light)
     if not device:
         return
     
     try:
-        # Handle black as power off
-        if r == 0 and g == 0 and b == 0:
-            device.set_power("off", duration=0, rapid=True)
+        import time
+        current_time = time.time()
+        device_id = str(light.protocol_cfg.get("mac", light.name))
+        
+        # Frame rate limiting - skip if too soon since last update
+        if _entertainment_state["active"]:
+            last_update = _entertainment_state["last_update"].get(device_id, 0)
+            min_interval = 1.0 / _entertainment_state["frame_limit"]
+            if current_time - last_update < min_interval:
+                return  # Skip this frame to maintain frame rate limit
+            _entertainment_state["last_update"][device_id] = current_time
+        
+        # Track power state to avoid redundant commands
+        is_black = (r == 0 and g == 0 and b == 0)
+        current_power = _entertainment_state["power_states"].get(device_id, None)
+        
+        if is_black:
+            # Only send power off if not already off
+            if current_power != False:
+                device.set_power("off", duration=0, rapid=True)
+                _entertainment_state["power_states"][device_id] = False
             return
         
-        # Ensure power is on
-        device.set_power("on", duration=0, rapid=True)
+        # Only send power on if not already on
+        if current_power != True:
+            device.set_power("on", duration=0, rapid=True)
+            _entertainment_state["power_states"][device_id] = True
         
         # Convert RGB to HSBK
         h, s, v = _rgb_to_hsv65535(r, g, b)
         
-        # Use cached kelvin or default
-        try:
-            _, _, _, k = device.get_color()
-        except:
-            k = 3500
+        # Use cached kelvin value to avoid repeated get_color calls
+        if device_id not in _entertainment_state["kelvin_cache"]:
+            try:
+                _, _, _, k = device.get_color()
+                _entertainment_state["kelvin_cache"][device_id] = k
+            except:
+                _entertainment_state["kelvin_cache"][device_id] = 3500
         
-        # Send color update
+        k = _entertainment_state["kelvin_cache"][device_id]
+        
+        # Send color update without duration for minimal latency
         device.set_color([h, s, max(1, v), k], duration=0, rapid=True)
         
     except Exception as e:
         logging.debug(f"LIFX: Rapid send failed for {light.name}: {e}")
+
+
+# Batch processing for multiple lights
+_batch_buffer = {
+    "updates": {},  # device_id -> (r, g, b) mapping
+    "last_flush": 0,
+    "batch_interval": 0.016,  # ~60 FPS batch processing
+}
+
+def batch_rgb_update(light: Any, r: int, g: int, b: int) -> None:
+    """Queue RGB update for batch processing."""
+    device = _get_device(light)
+    if not device:
+        return
+    
+    device_id = str(light.protocol_cfg.get("mac", light.name))
+    _batch_buffer["updates"][device_id] = (device, r, g, b)
+    
+    # Check if we should flush the batch
+    import time
+    current_time = time.time()
+    if current_time - _batch_buffer["last_flush"] >= _batch_buffer["batch_interval"]:
+        flush_batch_updates()
+        _batch_buffer["last_flush"] = current_time
+
+def flush_batch_updates() -> None:
+    """Process all queued updates in parallel."""
+    if not _batch_buffer["updates"]:
+        return
+    
+    from concurrent.futures import ThreadPoolExecutor
+    import time
+    
+    def _send_update(item):
+        device, r, g, b = item
+        try:
+            # Skip black handling for batch - just send color
+            if r == 0 and g == 0 and b == 0:
+                device.set_power("off", duration=0, rapid=True)
+            else:
+                h, s, v = _rgb_to_hsv65535(r, g, b)
+                # Use a default kelvin for batch updates
+                k = 3500
+                device.set_color([h, s, max(1, v), k], duration=0, rapid=True)
+        except Exception as e:
+            logging.debug(f"LIFX batch update failed: {e}")
+    
+    # Process all updates in parallel
+    with ThreadPoolExecutor(max_workers=min(len(_batch_buffer["updates"]), 10)) as executor:
+        updates = [(dev, r, g, b) for dev, r, g, b in _batch_buffer["updates"].values()]
+        executor.map(_send_update, updates)
+    
+    _batch_buffer["updates"].clear()
+
+def set_entertainment_frame_limit(fps: int) -> None:
+    """Set the maximum frame rate for entertainment mode."""
+    global _entertainment_state
+    _entertainment_state["frame_limit"] = max(1, min(fps, 60))  # Clamp between 1-60 FPS
+    logging.info(f"LIFX: Entertainment frame limit set to {_entertainment_state['frame_limit']} FPS")
