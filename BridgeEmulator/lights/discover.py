@@ -170,21 +170,7 @@ def manualAddLight(ip: str, protocol: str, config: Dict = {}) -> None:
             try:
                 from lights.protocols import lifx as lifx_protocol
                 if lifx_protocol.LifxLAN is not None:
-                    lan = lifx_protocol.LifxLAN()
-                    dev = None
-                    if hasattr(lan, "get_device_by_ip_addr"):
-                        try:
-                            dev = lan.get_device_by_ip_addr(ip)
-                        except Exception:
-                            dev = None
-                    if dev is None:
-                        try:
-                            for d in lan.get_lights() or []:
-                                if d.get_ip_addr() == ip:
-                                    dev = d
-                                    break
-                        except Exception:
-                            dev = None
+                    dev = lifx_protocol._unicast_discover_by_ip(ip)
                     if dev:
                         label = dev.get_label() or f"LIFX {ip}"
                         mac = dev.get_mac_addr()
@@ -195,6 +181,20 @@ def manualAddLight(ip: str, protocol: str, config: Dict = {}) -> None:
                 logging.info(f"Manual add auto failed for LIFX {ip}: {e}")
     else:
         config["ip"] = ip
+        # Deduplicate for LIFX by id or IP
+        if protocol == "lifx":
+            # If caller did not provide an id, use IP as placeholder for matching
+            candidate_id = config.get("id") or ip
+            for obj in bridgeConfig["lights"].values():
+                try:
+                    if obj.protocol == "lifx" and (
+                        obj.protocol_cfg.get("id") == candidate_id or obj.protocol_cfg.get("ip") == ip
+                    ):
+                        update_light_ip(obj, {"protocol": "lifx", "name": obj.name, "protocol_cfg": {"ip": ip}})
+                        logging.info(f"Manual add lifx: existing light updated with IP {ip}")
+                        return
+                except Exception:
+                    continue
         # Enrich Yeelight config (where possible) so it works without multicast discovery
         if protocol == "yeelight":
             try:
@@ -242,17 +242,9 @@ def manualAddLight(ip: str, protocol: str, config: Dict = {}) -> None:
                 if lifx_protocol.LifxLAN is None:
                     logging.info(f"Manual add proceeding without lifxlan for {ip}")
                 else:
-                    # Try to resolve via lan helpers
+                    # Try to resolve via unicast helper
                     try:
-                        lan = lifx_protocol.LifxLAN()
-                        dev = None
-                        if hasattr(lan, "get_device_by_ip_addr"):
-                            dev = lan.get_device_by_ip_addr(ip)
-                        if dev is None:
-                            for d in lan.get_lights() or []:
-                                if d.get_ip_addr() == ip:
-                                    dev = d
-                                    break
+                        dev = lifx_protocol._unicast_discover_by_ip(ip)
                         if dev:
                             label = dev.get_label() or f"LIFX {ip}"
                             mac = dev.get_mac_addr()
@@ -335,6 +327,17 @@ def is_light_matching(lightObj: Light.Light, light: Dict) -> bool:
             if obj_id and new_id and obj_id == new_id and lightObj.modelid == light["modelid"]:
                 return True
             # Fallback: match by IP if ids are missing or differ (manual add)
+            return (
+                lightObj.protocol_cfg.get("ip") == light["protocol_cfg"].get("ip")
+                and lightObj.modelid == light["modelid"]
+            )
+        if protocol == "lifx":
+            # Match by MAC id when known; fall back to IP if id missing or is an IP placeholder
+            obj_id = lightObj.protocol_cfg.get("id")
+            new_id = light["protocol_cfg"].get("id")
+            if obj_id and new_id and obj_id == new_id and lightObj.modelid == light["modelid"]:
+                return True
+            # If ids are IPs or missing, match by IP to prevent duplicates
             return (
                 lightObj.protocol_cfg.get("ip") == light["protocol_cfg"].get("ip")
                 and lightObj.modelid == light["modelid"]

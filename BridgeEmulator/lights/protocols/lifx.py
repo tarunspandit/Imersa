@@ -9,13 +9,68 @@ logging = logManager.logger.get_logger(__name__)
 
 try:
     # lifxlan docs: https://github.com/mclarkk/lifxlan
-    from lifxlan import LifxLAN
+    from lifxlan import LifxLAN, Light as LifxLight
+    import lifxlan.device as lifx_device_mod
 except Exception:
     LifxLAN = None  # Graceful degradation if library not installed
+    LifxLight = None
+    lifx_device_mod = None
 
 
 # Simple cache to avoid repeated lookups
 _DEVICE_CACHE: Dict[str, Any] = {}
+
+
+def _get_mac_from_arp(ip: str) -> Optional[str]:
+    """Try to resolve a device's MAC via the ARP table (Linux/Unix)."""
+    try:
+        with open("/proc/net/arp", "r", encoding="utf-8") as fp:
+            lines = fp.read().strip().splitlines()
+        for line in lines[1:]:  # skip header
+            parts = [p for p in line.split(" ") if p]
+            if len(parts) >= 4:
+                ip_addr, hw_type, flags, mac = parts[0], parts[1], parts[2], parts[3]
+                if ip_addr == ip and mac and mac != "00:00:00:00:00:00":
+                    return mac
+    except Exception:
+        pass
+    # Fallback: try 'ip neigh' via /proc/self/mount; avoid spawning external processes
+    return None
+
+
+def _unicast_discover_by_ip(ip: str) -> Optional[Any]:
+    """Discover a single device by targeting only its IP using lifxlan's broadcast workflow.
+
+    This works by temporarily overriding lifxlan's UDP_BROADCAST_IP_ADDRS to a list containing
+    only the given IP address, forcing a 'broadcast' packet to be sent directly to that host.
+    """
+    if LifxLAN is None or lifx_device_mod is None:
+        return None
+    try:
+        # Preserve and override broadcast addresses
+        original_addrs = list(getattr(lifx_device_mod, 'UDP_BROADCAST_IP_ADDRS', []))
+        lifx_device_mod.UDP_BROADCAST_IP_ADDRS = [ip]
+        try:
+            lan = LifxLAN()
+            devs = lan.get_devices() or []
+            for d in devs:
+                try:
+                    if hasattr(d, 'get_ip_addr') and d.get_ip_addr() == ip:
+                        return d
+                except Exception:
+                    continue
+            # fallback: match first light with same ip
+            for l in (lan.get_lights() or []):
+                try:
+                    if l.get_ip_addr() == ip:
+                        return l
+                except Exception:
+                    continue
+        finally:
+            lifx_device_mod.UDP_BROADCAST_IP_ADDRS = original_addrs
+    except Exception:
+        return None
+    return None
 
 
 def _scale_bri_254_to_65535(bri: int) -> int:
@@ -82,30 +137,11 @@ def _get_device(light) -> Optional[Any]:
         return None
 
     dev = None
-    if mac:
-        try:
-            # Prefer direct by MAC when available
-            if hasattr(lifx, "get_device_by_mac_addr"):
-                dev = lifx.get_device_by_mac_addr(mac)
-        except Exception:
-            dev = None
+    # First, try a unicast discovery to the IP if we have one
     if dev is None and ip:
-        try:
-            if hasattr(lifx, "get_device_by_ip_addr"):
-                dev = lifx.get_device_by_ip_addr(ip)
-            else:
-                # Fallback: scan and match by IP
-                for d in lifx.get_lights() or []:
-                    try:
-                        if d.get_ip_addr() == ip:
-                            dev = d
-                            break
-                    except Exception:
-                        continue
-        except Exception:
-            dev = None
+        dev = _unicast_discover_by_ip(ip)
+    # Otherwise, broadcast discovery (may fail in restricted networks)
     if dev is None:
-        # Fallback: search discovered devices by ip/mac
         try:
             for d in lifx.get_lights() or []:
                 try:
@@ -119,6 +155,14 @@ def _get_device(light) -> Optional[Any]:
                     continue
         except Exception:
             pass
+    # Last resort: construct a Light from ARP-resolved MAC and IP
+    if dev is None and ip and LifxLight is not None:
+        try:
+            mac_guess = mac or _get_mac_from_arp(ip)
+            if mac_guess:
+                dev = LifxLight(mac_guess, ip)
+        except Exception:
+            dev = None
 
     key = mac or ip
     if key and dev is not None:
@@ -135,6 +179,7 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
     if LifxLAN is None:
         logging.info("LIFX: lifxlan not installed; discovery disabled")
         return
+    logging.info("LIFX: discovery started")
     lifx = None
     lights: List[Any] = []
     try:
@@ -148,6 +193,7 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
         logging.warning("LIFX: init failed: %s", e)
         lifx = None
 
+    added = 0
     for dev in lights:
         try:
             ip = dev.get_ip_addr()
@@ -160,6 +206,7 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
                 "modelid": "LCT015",
                 "protocol_cfg": {"ip": ip, "id": mac, "label": label}
             })
+            added += 1
         except Exception:
             continue
 
@@ -171,35 +218,33 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
         try:
             if ":" in ip:
                 ip = ip.split(":", 1)[0]
-            lan = lifx if lifx is not None else LifxLAN()
-            dev = None
-            # Try direct IP-lookup if available
-            if hasattr(lan, "get_device_by_ip_addr"):
+            dev = _unicast_discover_by_ip(ip)
+            mac = None
+            label = None
+            if dev is not None:
                 try:
-                    dev = lan.get_device_by_ip_addr(ip)
+                    mac = dev.get_mac_addr()
                 except Exception:
-                    dev = None
-            # Fallback: scan and filter
-            if dev is None:
+                    mac = None
                 try:
-                    for d in lan.get_lights() or []:
-                        if d.get_ip_addr() == ip:
-                            dev = d
-                            break
+                    label = dev.get_label()
                 except Exception:
-                    dev = None
-            if dev is None:
-                continue
-            mac = dev.get_mac_addr()
-            label = dev.get_label() or f"LIFX {ip}"
+                    label = None
+            # Try ARP for MAC if needed
+            if mac is None:
+                mac = _get_mac_from_arp(ip)
+            if label is None:
+                label = f"LIFX {ip}"
             detectedLights.append({
                 "protocol": "lifx",
                 "name": label,
                 "modelid": "LCT015",
-                "protocol_cfg": {"ip": ip, "id": mac, "label": label}
+                "protocol_cfg": {"ip": ip, "id": mac or ip, "label": label}
             })
+            added += 1
         except Exception:
             continue
+    logging.info(f"LIFX: discovery finished. Added {added} bulbs")
 
 
 def set_light(light: Any, data: Dict) -> None:
@@ -209,6 +254,7 @@ def set_light(light: Any, data: Dict) -> None:
     """
     dev = _get_device(light)
     if dev is None:
+        logging.warning("LIFX: set_light could not resolve device for %s (ip=%s, id=%s)", light.name, light.protocol_cfg.get("ip"), light.protocol_cfg.get("id"))
         return
 
     duration_ms = 0
