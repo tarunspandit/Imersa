@@ -96,6 +96,56 @@ def vite_icon():
         return send_from_directory(docker_react_path, 'vite.svg')
     return '', 404
 
+@core.route('/lifx-settings', methods=['GET', 'POST'])
+def lifx_settings():
+    """Handle LIFX settings for React UI."""
+    if request.method == 'POST':
+        # Save settings to config
+        try:
+            settings = request.get_json()
+            if not bridgeConfig.get("config"):
+                bridgeConfig["config"] = {}
+            if not bridgeConfig["config"].get("lifx"):
+                bridgeConfig["config"]["lifx"] = {}
+            
+            # Update config with new settings
+            bridgeConfig["config"]["lifx"].update(settings)
+            
+            # Also update temp/integrations for runtime
+            if not bridgeConfig.get("temp"):
+                bridgeConfig["temp"] = {}
+            if not bridgeConfig["temp"].get("integrations"):
+                bridgeConfig["temp"]["integrations"] = {}
+            if not bridgeConfig["temp"]["integrations"].get("lifx"):
+                bridgeConfig["temp"]["integrations"]["lifx"] = {}
+            bridgeConfig["temp"]["integrations"]["lifx"].update(settings)
+            
+            # Update entertainment settings in real-time
+            from lights.protocols import lifx as lifx_protocol
+            lifx_protocol.update_entertainment_settings(settings)
+            
+            # Save config to disk
+            configManager.bridgeConfig.save_config(backup=False)
+            
+            return json.dumps({"success": True})
+        except Exception as e:
+            logging.error(f"Failed to save LIFX settings: {e}")
+            return json.dumps({"error": str(e)}), 500
+    
+    # GET - return current settings
+    settings = {}
+    try:
+        # Try runtime settings first
+        if bridgeConfig.get("temp", {}).get("integrations", {}).get("lifx"):
+            settings = bridgeConfig["temp"]["integrations"]["lifx"]
+        # Fall back to config
+        elif bridgeConfig.get("config", {}).get("lifx"):
+            settings = bridgeConfig["config"]["lifx"]
+    except Exception as e:
+        logging.error(f"Failed to get LIFX settings: {e}")
+    
+    return json.dumps({"settings": settings})
+
 @core.route('/debug/react-ui')
 def debug_react_ui():
     # Debug endpoint to check React UI installation

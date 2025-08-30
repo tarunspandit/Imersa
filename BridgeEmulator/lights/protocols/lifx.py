@@ -347,6 +347,18 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
         logging.info("LIFX: lifxlan not available, skipping discovery")
         return
     
+    # Load entertainment settings on startup
+    try:
+        import configManager
+        config = configManager.bridgeConfig.yaml_config
+        lifx_settings = config.get("config", {}).get("lifx", {})
+        if not lifx_settings:
+            lifx_settings = config.get("temp", {}).get("integrations", {}).get("lifx", {})
+        if lifx_settings:
+            update_entertainment_settings(lifx_settings)
+    except Exception as e:
+        logging.debug(f"LIFX: Could not load entertainment settings: {e}")
+    
     # Get host IP from bridgeConfig to determine subnet
     try:
         from configManager import bridgeConfig
@@ -612,6 +624,10 @@ _entertainment_state = {
     "kelvin_cache": {},  # Cache kelvin per device
     "last_update": {},   # Track last update time per device
     "frame_limit": 30,   # Max FPS (LIFX can handle ~20 messages/sec)
+    "smoothing_enabled": False,  # Whether to apply color smoothing
+    "smoothing_ms": 50,  # Smoothing time window in milliseconds
+    "color_history": {},  # Recent color history per device for smoothing
+    "target_colors": {},  # Target colors for smooth transitions
 }
 
 def start_entertainment_mode() -> None:
@@ -632,6 +648,69 @@ def stop_entertainment_mode() -> None:
     _entertainment_state["last_update"].clear()
     logging.info("LIFX: Entertainment mode stopped")
 
+def _apply_smoothing(device_id: str, r: int, g: int, b: int) -> Tuple[int, int, int]:
+    """Apply exponential moving average smoothing to prevent flickering.
+    
+    This doesn't add delay - it immediately responds to changes but smooths
+    out rapid oscillations by blending with recent history.
+    """
+    if not _entertainment_state["smoothing_enabled"]:
+        return r, g, b
+    
+    import time
+    current_time = time.time() * 1000  # Convert to milliseconds
+    
+    # Initialize history if needed
+    if device_id not in _entertainment_state["color_history"]:
+        _entertainment_state["color_history"][device_id] = []
+        _entertainment_state["target_colors"][device_id] = (r, g, b)
+    
+    history = _entertainment_state["color_history"][device_id]
+    target = _entertainment_state["target_colors"][device_id]
+    
+    # Add current color to history with timestamp
+    history.append((current_time, r, g, b))
+    
+    # Remove old entries outside smoothing window
+    smoothing_window = _entertainment_state["smoothing_ms"]
+    cutoff_time = current_time - smoothing_window
+    history[:] = [(t, r, g, b) for t, r, g, b in history if t > cutoff_time]
+    
+    if len(history) <= 1:
+        return r, g, b
+    
+    # Calculate weighted average based on time (newer = more weight)
+    total_weight = 0
+    weighted_r = weighted_g = weighted_b = 0
+    
+    for t, hr, hg, hb in history:
+        # Exponential decay weight - more recent colors have more influence
+        age = current_time - t
+        weight = 1.0 * (1.0 - (age / smoothing_window))
+        weight = max(0.1, weight)  # Minimum weight
+        
+        weighted_r += hr * weight
+        weighted_g += hg * weight
+        weighted_b += hb * weight
+        total_weight += weight
+    
+    if total_weight > 0:
+        # Blend current color with weighted average
+        # Use higher blend factor for current to maintain reactivity
+        blend_factor = 0.7  # 70% current, 30% history
+        smooth_r = int(r * blend_factor + (weighted_r / total_weight) * (1 - blend_factor))
+        smooth_g = int(g * blend_factor + (weighted_g / total_weight) * (1 - blend_factor))
+        smooth_b = int(b * blend_factor + (weighted_b / total_weight) * (1 - blend_factor))
+        
+        # Clamp to valid range
+        smooth_r = max(0, min(255, smooth_r))
+        smooth_g = max(0, min(255, smooth_g))
+        smooth_b = max(0, min(255, smooth_b))
+        
+        return smooth_r, smooth_g, smooth_b
+    
+    return r, g, b
+
 def send_rgb_rapid(light: Any, r: int, g: int, b: int) -> None:
     """Send RGB color rapidly for entertainment mode with optimizations."""
     device = _get_device(light)
@@ -642,6 +721,9 @@ def send_rgb_rapid(light: Any, r: int, g: int, b: int) -> None:
         import time
         current_time = time.time()
         device_id = str(light.protocol_cfg.get("mac", light.name))
+        
+        # Apply smoothing if enabled
+        r, g, b = _apply_smoothing(device_id, r, g, b)
         
         # Frame rate limiting - skip if too soon since last update
         if _entertainment_state["active"]:
@@ -744,3 +826,34 @@ def set_entertainment_frame_limit(fps: int) -> None:
     global _entertainment_state
     _entertainment_state["frame_limit"] = max(1, min(fps, 60))  # Clamp between 1-60 FPS
     logging.info(f"LIFX: Entertainment frame limit set to {_entertainment_state['frame_limit']} FPS")
+
+def set_smoothing_enabled(enabled: bool) -> None:
+    """Enable or disable color smoothing."""
+    global _entertainment_state
+    _entertainment_state["smoothing_enabled"] = enabled
+    if not enabled:
+        # Clear history when disabling
+        _entertainment_state["color_history"].clear()
+        _entertainment_state["target_colors"].clear()
+    logging.info(f"LIFX: Smoothing {'enabled' if enabled else 'disabled'}")
+
+def set_smoothing_time(ms: int) -> None:
+    """Set the smoothing time window in milliseconds."""
+    global _entertainment_state
+    _entertainment_state["smoothing_ms"] = max(10, min(ms, 500))  # Clamp between 10-500ms
+    logging.info(f"LIFX: Smoothing time set to {_entertainment_state['smoothing_ms']}ms")
+
+def update_entertainment_settings(settings: Dict[str, Any]) -> None:
+    """Update entertainment settings from config."""
+    global _entertainment_state
+    
+    if "max_fps" in settings:
+        set_entertainment_frame_limit(settings["max_fps"])
+    
+    if "smoothing_enabled" in settings:
+        set_smoothing_enabled(settings["smoothing_enabled"])
+    
+    if "smoothing_ms" in settings:
+        set_smoothing_time(settings["smoothing_ms"])
+    
+    logging.info(f"LIFX: Updated entertainment settings from config")

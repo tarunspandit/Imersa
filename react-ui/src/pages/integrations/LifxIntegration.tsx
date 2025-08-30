@@ -8,12 +8,16 @@ import { Lightbulb, Loader2, Save, Plus, RefreshCw, Settings } from 'lucide-reac
 type LifxSettings = {
   enabled: boolean;
   max_fps: number;
+  smoothing_enabled: boolean;
+  smoothing_ms: number;
   static_ips: string[];
 };
 
 const defaultSettings: LifxSettings = {
   enabled: true,
-  max_fps: 120,
+  max_fps: 30,
+  smoothing_enabled: false,
+  smoothing_ms: 50,
   static_ips: []
 };
 
@@ -142,9 +146,65 @@ const LifxIntegration: React.FC = () => {
             </div>
 
             <div>
-              <label className="text-sm font-medium">Max FPS (entertainment)</label>
-              <Input type="number" min={30} max={240} value={settings.max_fps}
-                onChange={(e) => setSettings({ ...settings, max_fps: Number(e.target.value || 0) })} />
+              <label className="text-sm font-medium mb-2 block">Entertainment FPS Limit</label>
+              <div className="space-y-2">
+                <div className="flex items-center gap-4">
+                  <input 
+                    type="range" 
+                    min={10} 
+                    max={60} 
+                    value={settings.max_fps}
+                    onChange={(e) => setSettings({ ...settings, max_fps: Number(e.target.value) })}
+                    className="flex-1"
+                  />
+                  <div className="w-16 text-center font-mono text-sm">
+                    {settings.max_fps} FPS
+                  </div>
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  Lower values reduce network load. LIFX handles ~20 msgs/sec optimally.
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-3 pt-2 border-t">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="font-medium">Anti-Flicker Smoothing</div>
+                  <div className="text-xs text-muted-foreground">
+                    Prevents rapid color oscillations without adding delay
+                  </div>
+                </div>
+                <Switch 
+                  checked={settings.smoothing_enabled} 
+                  onCheckedChange={(v) => setSettings({ ...settings, smoothing_enabled: !!v })} 
+                />
+              </div>
+              
+              {settings.smoothing_enabled && (
+                <div>
+                  <label className="text-sm font-medium mb-2 block">Smoothing Window</label>
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-4">
+                      <input 
+                        type="range" 
+                        min={10} 
+                        max={200} 
+                        step={10}
+                        value={settings.smoothing_ms}
+                        onChange={(e) => setSettings({ ...settings, smoothing_ms: Number(e.target.value) })}
+                        className="flex-1"
+                      />
+                      <div className="w-16 text-center font-mono text-sm">
+                        {settings.smoothing_ms}ms
+                      </div>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      Time window for color averaging. Lower = more reactive, Higher = smoother
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div>
