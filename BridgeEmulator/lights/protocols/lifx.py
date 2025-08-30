@@ -1,6 +1,9 @@
 import colorsys
 import threading
 import time
+import os
+import subprocess
+import socket
 from typing import Any, Dict, List, Optional, Tuple
 from collections import defaultdict
 
@@ -14,6 +17,81 @@ try:
     from lifxlan import LifxLAN, Light as LifxLight, Device as LifxDevice
     import lifxlan.device as lifx_device_mod
     LIFX_AVAILABLE = True
+    
+    # Fix broadcast addresses for Docker
+    def _fix_docker_broadcasts():
+        """Add host network broadcast addresses when running in Docker."""
+        # Check if running in Docker
+        is_docker = (
+            os.path.exists('/.dockerenv') or 
+            os.environ.get('DOCKER_CONTAINER', False) or
+            (os.path.exists('/proc/1/cgroup') and 
+             os.path.isfile('/proc/1/cgroup') and 
+             'docker' in open('/proc/1/cgroup').read())
+        )
+        
+        if not is_docker:
+            return
+        
+        logging.info("LIFX: Detected Docker environment, fixing broadcast addresses")
+        
+        # Get current addresses
+        current = list(getattr(lifx_device_mod, 'UDP_BROADCAST_IP_ADDRS', []))
+        
+        # Add common home network broadcasts
+        common_broadcasts = [
+            "192.168.1.255",   # Most common
+            "192.168.0.255",   # Alternative
+            "192.168.2.255",   # Some routers
+            "10.0.0.255",      # Some networks
+            "10.0.1.255",      # Apple routers
+        ]
+        
+        # Try to detect actual host network
+        try:
+            # Get gateway to infer host network
+            result = subprocess.run(
+                ['ip', 'route', 'show', 'default'],
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+            
+            if result.returncode == 0 and 'via' in result.stdout:
+                # Parse gateway IP
+                for line in result.stdout.strip().split('\n'):
+                    if 'default' in line and 'via' in line:
+                        parts = line.split()
+                        gateway = parts[parts.index('via') + 1]
+                        
+                        # If gateway is Docker's (172.x), use environment hint
+                        if gateway.startswith('172.'):
+                            # Check for environment variable hint
+                            host_net = os.environ.get('HOST_NETWORK', '192.168.1.0')
+                            octets = host_net.split('.')[:3]
+                            host_broadcast = f"{'.'.join(octets)}.255"
+                            if host_broadcast not in common_broadcasts:
+                                common_broadcasts.insert(0, host_broadcast)
+        except:
+            pass
+        
+        # Add all broadcasts that aren't already present
+        added = []
+        for addr in common_broadcasts:
+            if addr not in current:
+                current.append(addr)
+                added.append(addr)
+        
+        # Update lifxlan's list
+        lifx_device_mod.UDP_BROADCAST_IP_ADDRS = current
+        
+        if added:
+            logging.info(f"LIFX: Added broadcast addresses for Docker: {added}")
+            logging.debug(f"LIFX: Full broadcast list: {current}")
+    
+    # Apply Docker fix on import
+    _fix_docker_broadcasts()
+    
 except ImportError:
     LIFX_AVAILABLE = False
     LifxLAN = None
@@ -119,7 +197,7 @@ class LifxDeviceCache:
             return None
             
         try:
-            # Fallback to targeted discovery
+            # Method 1: Try targeted discovery by overriding broadcast addresses
             if lifx_device_mod:
                 original_addrs = list(getattr(lifx_device_mod, 'UDP_BROADCAST_IP_ADDRS', []))
                 lifx_device_mod.UDP_BROADCAST_IP_ADDRS = [ip]
@@ -128,10 +206,24 @@ class LifxDeviceCache:
                     lan = LifxLAN(num_lights=1)  # Hint for faster discovery
                     devices = lan.get_lights() or []
                     for device in devices:
-                        if device.get_ip_addr() == ip:
-                            return device
+                        try:
+                            if device.get_ip_addr() == ip:
+                                return device
+                        except:
+                            continue
                 finally:
                     lifx_device_mod.UDP_BROADCAST_IP_ADDRS = original_addrs
+            
+            # Method 2: Try direct Light construction (works in some cases)
+            if LifxLight and ip:
+                try:
+                    # Create a Light with just the IP (MAC will be discovered later)
+                    device = LifxLight("00:00:00:00:00:00", ip)
+                    # Verify it's responsive
+                    device.get_power()
+                    return device
+                except:
+                    pass
                     
         except Exception as e:
             logging.debug(f"LIFX: Unicast discovery failed for {ip}: {e}")
@@ -162,6 +254,11 @@ class LifxDeviceCache:
 
 # Global cache instance
 _device_cache = LifxDeviceCache()
+
+# Export for external use (e.g., manual discovery)
+def _unicast_discover_by_ip(ip: str) -> Optional[Any]:
+    """Legacy compatibility function for manual discovery."""
+    return _device_cache.discover_device(ip=ip)
 
 
 
@@ -232,34 +329,73 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
     
     added = 0
     
+    # Get configuration options
+    num_lights = opts.get("num_lights") if opts else None
+    timeout = opts.get("discovery_timeout", 10) if opts else 10  # Increased default timeout
+    static_ips = opts.get("static_ips", []) if opts else []
+    
+    # First, try static IPs (works better in Docker)
+    if static_ips:
+        logging.info(f"LIFX: Trying static IPs: {static_ips}")
+        for ip in static_ips:
+            try:
+                if ":" in ip:
+                    ip = ip.split(":", 1)[0]
+                    
+                device = _device_cache.discover_device(ip=ip)
+                if device:
+                    try:
+                        mac = device.get_mac_addr()
+                        label = device.get_label() or f"LIFX {ip}"
+                        
+                        already_exists = any(
+                            d.get("protocol_cfg", {}).get("id") == mac 
+                            for d in detectedLights
+                        )
+                        
+                        if not already_exists:
+                            detectedLights.append({
+                                "protocol": "lifx",
+                                "name": label,
+                                "modelid": "LCT015",
+                                "protocol_cfg": {
+                                    "ip": ip,
+                                    "id": mac or ip,
+                                    "label": label
+                                }
+                            })
+                            added += 1
+                            logging.info(f"LIFX: Added {label} at {ip}")
+                    except Exception as e:
+                        logging.debug(f"LIFX: Error getting device info for {ip}: {e}")
+            except Exception as e:
+                logging.debug(f"LIFX: Failed to connect to {ip}: {e}")
+    
+    # Then try broadcast discovery (may not work in Docker)
     try:
-        # Get number of lights hint for faster discovery
-        num_lights = None
-        if opts and "num_lights" in opts:
-            num_lights = opts["num_lights"]
-            
         lifx = LifxLAN(num_lights=num_lights)
         
-        # Set discovery timeout
-        timeout = 5
-        if opts and "discovery_timeout" in opts:
-            timeout = opts["discovery_timeout"]
-            
         start_time = time.time()
         devices = []
         
         # Try discovery with timeout and multiple attempts
-        attempts = 3
-        for attempt in range(attempts):
+        logging.info(f"LIFX: Attempting broadcast discovery (timeout: {timeout}s)")
+        attempts = 0
+        max_attempts = max(3, int(timeout / 3))
+        
+        while time.time() - start_time < timeout and attempts < max_attempts:
+            attempts += 1
             try:
+                logging.debug(f"LIFX: Discovery attempt {attempts}/{max_attempts}")
                 devices = lifx.get_lights()
                 if devices:
+                    logging.info(f"LIFX: Broadcast found {len(devices)} device(s)")
                     break
-                time.sleep(1)
+                time.sleep(min(3, timeout / max_attempts))
             except Exception as e:
-                logging.debug(f"LIFX: Discovery attempt {attempt+1} failed: {e}")
-                if attempt < attempts - 1:
-                    time.sleep(1)
+                logging.debug(f"LIFX: Broadcast attempt {attempts} failed: {e}")
+                if attempts < max_attempts:
+                    time.sleep(min(3, timeout / max_attempts))
                 continue
         
         for device in devices:
