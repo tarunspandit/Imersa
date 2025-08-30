@@ -447,9 +447,6 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
                 logging.debug(f"LIFX: Error processing device: {e}")
                 continue
     
-    except Exception as e:
-        logging.warning(f"LIFX: Discovery error: {e}")
-    
     # Also try static IPs if provided
     if opts and "static_ips" in opts:
         for ip in opts["static_ips"]:
