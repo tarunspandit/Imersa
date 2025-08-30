@@ -237,15 +237,19 @@ def _keepalive_worker():
                         if cached and cached[0]:
                             devices_to_ping.append((device_id, cached[0]))
             
+            # Log if we have devices to ping
+            if devices_to_ping:
+                logging.info(f"LIFX: Sending keep-alive to {len(devices_to_ping)} device(s)")
+            
             # Send keep-alive packets (outside lock to avoid blocking)
             for device_id, device in devices_to_ping:
                 try:
                     # Use GetPower as lightweight keep-alive - it's fast and doesn't change state
                     device.get_power()
                     _keepalive_state["last_ping"][device_id] = current_time
-                    logging.debug(f"LIFX: Keep-alive sent to {device_id}")
+                    logging.info(f"LIFX: Keep-alive sent successfully to {device_id}")
                 except Exception as e:
-                    logging.debug(f"LIFX: Keep-alive failed for {device_id}: {e}")
+                    logging.warning(f"LIFX: Keep-alive failed for {device_id}: {e}")
                     # Remove from active set if device is unreachable
                     _keepalive_state["active_devices"].discard(device_id)
             
@@ -443,14 +447,11 @@ def _scan_subnet_for_lifx(subnet: str = "192.168.1") -> List[Any]:
     return devices
 
 
-def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
-    """Discover LIFX devices and add them to detectedLights."""
+def initialize_lifx():
+    """Initialize LIFX module and start keep-alive for existing devices."""
+    logging.info("LIFX: Initializing module")
     
-    if not LIFX_AVAILABLE:
-        logging.info("LIFX: lifxlan not available, skipping discovery")
-        return
-    
-    # Load entertainment settings on startup
+    # Load entertainment settings
     try:
         import configManager
         config = configManager.bridgeConfig.yaml_config
@@ -459,8 +460,49 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
             lifx_settings = config.get("temp", {}).get("integrations", {}).get("lifx", {})
         if lifx_settings:
             update_entertainment_settings(lifx_settings)
+            logging.info(f"LIFX: Loaded settings - FPS: {lifx_settings.get('max_fps', 30)}, Smoothing: {lifx_settings.get('smoothing_enabled', False)}, Keep-alive: {lifx_settings.get('keepalive_interval', 45)}s")
     except Exception as e:
-        logging.debug(f"LIFX: Could not load entertainment settings: {e}")
+        logging.error(f"LIFX: Could not load entertainment settings: {e}")
+    
+    # Start keep-alive for existing LIFX devices
+    if LIFX_AVAILABLE:
+        try:
+            lights = config.get("lights", {})
+            lifx_count = 0
+            for light_id, light_obj in lights.items():
+                # Handle both dict and object formats
+                if isinstance(light_obj, dict):
+                    protocol = light_obj.get("protocol")
+                    protocol_cfg = light_obj.get("protocol_cfg", {})
+                else:
+                    protocol = getattr(light_obj, "protocol", None)
+                    protocol_cfg = getattr(light_obj, "protocol_cfg", {})
+                
+                if protocol == "lifx":
+                    device_id = protocol_cfg.get("id") or protocol_cfg.get("mac") or protocol_cfg.get("ip")
+                    if device_id:
+                        register_device_for_keepalive(device_id)
+                        lifx_count += 1
+                        logging.debug(f"LIFX: Registered device {device_id} for keep-alive")
+            
+            if lifx_count > 0:
+                logging.info(f"LIFX: Registered {lifx_count} existing device(s) for keep-alive")
+                if not _keepalive_state["running"]:
+                    start_keepalive()
+            else:
+                logging.info("LIFX: No existing devices found to register for keep-alive")
+        except Exception as e:
+            logging.error(f"LIFX: Error registering existing devices: {e}")
+
+# Don't call at import time - config may not be loaded yet
+# initialize_lifx() should be called after config is loaded
+
+def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
+    """Discover LIFX devices and add them to detectedLights."""
+    
+    if not LIFX_AVAILABLE:
+        logging.info("LIFX: lifxlan not available, skipping discovery")
+        return
     
     # Get host IP from bridgeConfig to determine subnet
     try:
@@ -753,7 +795,9 @@ def start_entertainment_mode() -> None:
     _entertainment_state["power_states"].clear()
     _entertainment_state["kelvin_cache"].clear()
     _entertainment_state["last_update"].clear()
-    logging.info("LIFX: Entertainment mode started")
+    _entertainment_state["color_history"].clear()
+    _entertainment_state["target_colors"].clear()
+    logging.info(f"LIFX: Entertainment mode started - FPS: {_entertainment_state['frame_limit']}, Smoothing: {_entertainment_state['smoothing_enabled']}, Smoothing window: {_entertainment_state['smoothing_ms']}ms")
 
 def stop_entertainment_mode() -> None:
     """Clean up entertainment mode."""
@@ -812,8 +856,8 @@ def _apply_smoothing(device_id: str, r: int, g: int, b: int) -> Tuple[int, int, 
     
     if total_weight > 0:
         # Blend current color with weighted average
-        # Use higher blend factor for current to maintain reactivity
-        blend_factor = 0.7  # 70% current, 30% history
+        # Dynamic blend factor based on smoothing window - longer window = more smoothing
+        blend_factor = max(0.3, 1.0 - (smoothing_window / 300.0))  # 30-70% current based on window
         smooth_r = int(r * blend_factor + (weighted_r / total_weight) * (1 - blend_factor))
         smooth_g = int(g * blend_factor + (weighted_g / total_weight) * (1 - blend_factor))
         smooth_b = int(b * blend_factor + (weighted_b / total_weight) * (1 - blend_factor))
@@ -839,15 +883,20 @@ def send_rgb_rapid(light: Any, r: int, g: int, b: int) -> None:
         device_id = str(light.protocol_cfg.get("mac", light.name))
         
         # Apply smoothing if enabled
+        original_rgb = (r, g, b)
         r, g, b = _apply_smoothing(device_id, r, g, b)
+        if _entertainment_state["smoothing_enabled"] and original_rgb != (r, g, b):
+            logging.debug(f"LIFX: Smoothing applied - Original: {original_rgb}, Smoothed: ({r}, {g}, {b})")
         
         # Frame rate limiting - skip if too soon since last update
-        if _entertainment_state["active"]:
-            last_update = _entertainment_state["last_update"].get(device_id, 0)
-            min_interval = 1.0 / _entertainment_state["frame_limit"]
-            if current_time - last_update < min_interval:
-                return  # Skip this frame to maintain frame rate limit
-            _entertainment_state["last_update"][device_id] = current_time
+        last_update = _entertainment_state["last_update"].get(device_id, 0)
+        min_interval = 1.0 / _entertainment_state["frame_limit"]
+        if current_time - last_update < min_interval:
+            # Only log if entertainment mode is active to avoid spam during normal operation
+            if _entertainment_state["active"]:
+                logging.debug(f"LIFX: FPS limit - skipping frame (interval: {current_time - last_update:.3f}s < {min_interval:.3f}s)")
+            return  # Skip this frame to maintain frame rate limit
+        _entertainment_state["last_update"][device_id] = current_time
         
         # Track power state to avoid redundant commands
         is_black = (r == 0 and g == 0 and b == 0)

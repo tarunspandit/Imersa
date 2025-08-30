@@ -161,6 +161,12 @@ def entertainmentService(group, user, mirror_port=None):
     except Exception as e:
         logging.error(f"Failed to initialize entertainment stream state: {e}")
         return
+    
+    # Start LIFX entertainment mode for better performance
+    try:
+        lifx_protocol.start_entertainment_mode()
+    except Exception as e:
+        logging.debug(f"Could not start LIFX entertainment mode: {e}")
 
     lights_v2 = []
     lights_v1 = {}
@@ -1140,6 +1146,13 @@ def entertainmentService(group, user, mirror_port=None):
     
     bridgeConfig["groups"][group.id_v1].stream["owner"] = None
     bridgeConfig["groups"][group.id_v1].stream["active"] = False
+    
+    # Stop LIFX entertainment mode
+    try:
+        lifx_protocol.stop_entertainment_mode()
+    except Exception as e:
+        logging.debug(f"Could not stop LIFX entertainment mode: {e}")
+    
     for light in group.lights:
         bridgeConfig["lights"][light().id_v1].state["mode"] = "homeautomation"
 

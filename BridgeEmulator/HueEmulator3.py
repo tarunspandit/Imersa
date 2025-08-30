@@ -112,6 +112,14 @@ def main():
     updateManager.startupCheck()
 
     Thread(target=daylightSensor, args=[bridgeConfig["config"]["timezone"], bridgeConfig["sensors"]["1"]]).start()
+    
+    # Initialize LIFX with keep-alive for existing devices
+    try:
+        from lights.protocols import lifx
+        lifx.initialize_lifx()
+    except Exception as e:
+        logging.debug(f"LIFX initialization error: {e}")
+    
     ### start services
     if bridgeConfig["config"]["deconz"]["enabled"]:
         Thread(target=deconz.websocketClient).start()
