@@ -1,5 +1,8 @@
 import colorsys
+import threading
+import time
 from typing import Any, Dict, List, Optional, Tuple
+from collections import defaultdict
 
 import logManager
 
@@ -8,81 +11,159 @@ from functions.colors import convert_xy
 logging = logManager.logger.get_logger(__name__)
 
 try:
-    # lifxlan docs: https://github.com/mclarkk/lifxlan
-    from lifxlan import LifxLAN, Light as LifxLight
+    from lifxlan import LifxLAN, Light as LifxLight, Device as LifxDevice
     import lifxlan.device as lifx_device_mod
-except Exception:
-    LifxLAN = None  # Graceful degradation if library not installed
+    LIFX_AVAILABLE = True
+except ImportError:
+    LIFX_AVAILABLE = False
+    LifxLAN = None
     LifxLight = None
+    LifxDevice = None
     lifx_device_mod = None
+    logging.warning("LIFX: lifxlan library not installed")
 
 
-# Simple cache to avoid repeated lookups
-_DEVICE_CACHE: Dict[str, Any] = {}
-
-
-def _is_valid_mac(value: Optional[str]) -> bool:
-    if not value or not isinstance(value, str):
-        return False
-    parts = value.split(":")
-    if len(parts) != 6:
-        return False
-    try:
-        return all(len(p) == 2 and int(p, 16) >= 0 for p in parts)
-    except Exception:
-        return False
-
-
-def _get_mac_from_arp(ip: str) -> Optional[str]:
-    """Try to resolve a device's MAC via the ARP table (Linux/Unix)."""
-    try:
-        with open("/proc/net/arp", "r", encoding="utf-8") as fp:
-            lines = fp.read().strip().splitlines()
-        for line in lines[1:]:  # skip header
-            parts = [p for p in line.split(" ") if p]
-            if len(parts) >= 4:
-                ip_addr, hw_type, flags, mac = parts[0], parts[1], parts[2], parts[3]
-                if ip_addr == ip and mac and mac != "00:00:00:00:00:00":
-                    return mac
-    except Exception:
-        pass
-    # Fallback: try 'ip neigh' via /proc/self/mount; avoid spawning external processes
-    return None
-
-
-def _unicast_discover_by_ip(ip: str) -> Optional[Any]:
-    """Discover a single device by targeting only its IP using lifxlan's broadcast workflow.
-
-    This works by temporarily overriding lifxlan's UDP_BROADCAST_IP_ADDRS to a list containing
-    only the given IP address, forcing a 'broadcast' packet to be sent directly to that host.
-    """
-    if LifxLAN is None or lifx_device_mod is None:
-        return None
-    try:
-        # Preserve and override broadcast addresses
-        original_addrs = list(getattr(lifx_device_mod, 'UDP_BROADCAST_IP_ADDRS', []))
-        lifx_device_mod.UDP_BROADCAST_IP_ADDRS = [ip]
+class LifxDeviceCache:
+    """Thread-safe cache for LIFX devices with TTL and lazy refresh."""
+    
+    def __init__(self, ttl: int = 300):  # 5 minute TTL
+        self._cache: Dict[str, Tuple[Any, float]] = {}
+        self._lock = threading.RLock()
+        self._ttl = ttl
+        self._lan_instance = None
+        self._discovery_lock = threading.Lock()
+        self._last_discovery = 0
+        self._discovery_interval = 30  # Minimum seconds between discoveries
+        
+    def _get_lan(self):
+        """Get or create LifxLAN instance."""
+        if not LIFX_AVAILABLE:
+            return None
+        if self._lan_instance is None:
+            try:
+                self._lan_instance = LifxLAN()
+            except Exception as e:
+                logging.error(f"LIFX: Failed to create LifxLAN instance: {e}")
+        return self._lan_instance
+    
+    def get(self, key: str) -> Optional[Any]:
+        """Get device from cache if not expired."""
+        with self._lock:
+            if key in self._cache:
+                device, timestamp = self._cache[key]
+                if time.time() - timestamp < self._ttl:
+                    return device  # Skip validation check for performance
+            return None
+    
+    def put(self, key: str, device: Any) -> None:
+        """Store device in cache."""
+        with self._lock:
+            self._cache[key] = (device, time.time())
+    
+    def clear_expired(self) -> None:
+        """Remove expired entries from cache."""
+        with self._lock:
+            current_time = time.time()
+            expired = [k for k, (_, t) in self._cache.items() if current_time - t >= self._ttl]
+            for k in expired:
+                del self._cache[k]
+    
+    def discover_device(self, mac: Optional[str] = None, ip: Optional[str] = None) -> Optional[Any]:
+        """Discover a specific device by MAC or IP."""
+        if not LIFX_AVAILABLE:
+            return None
+            
+        # Check cache first
+        cache_key = mac or ip
+        if cache_key:
+            cached = self.get(cache_key)
+            if cached:
+                return cached
+        
+        lan = self._get_lan()
+        if not lan:
+            return None
+            
+        # Try targeted discovery
+        device = None
+        
+        if ip:
+            # Try unicast discovery to specific IP
+            device = self._unicast_discover(ip)
+            
+        if not device and (time.time() - self._last_discovery > self._discovery_interval):
+            # Fallback to broadcast discovery (rate limited)
+            with self._discovery_lock:
+                if time.time() - self._last_discovery > self._discovery_interval:
+                    device = self._broadcast_discover(mac, ip)
+                    self._last_discovery = time.time()
+        
+        if device and cache_key:
+            self.put(cache_key, device)
+            # Also cache by both MAC and IP if available
+            try:
+                device_mac = device.get_mac_addr()
+                device_ip = device.get_ip_addr()
+                if device_mac and device_mac != cache_key:
+                    self.put(device_mac, device)
+                if device_ip and device_ip != cache_key:
+                    self.put(device_ip, device)
+            except:
+                pass
+                
+        return device
+    
+    def _unicast_discover(self, ip: str) -> Optional[Any]:
+        """Discover device by sending unicast to specific IP."""
+        if not LIFX_AVAILABLE:
+            return None
+            
         try:
-            lan = LifxLAN()
-            devs = lan.get_devices() or []
-            for d in devs:
+            # Fallback to targeted discovery
+            if lifx_device_mod:
+                original_addrs = list(getattr(lifx_device_mod, 'UDP_BROADCAST_IP_ADDRS', []))
+                lifx_device_mod.UDP_BROADCAST_IP_ADDRS = [ip]
+                
                 try:
-                    if hasattr(d, 'get_ip_addr') and d.get_ip_addr() == ip:
-                        return d
-                except Exception:
-                    continue
-            # fallback: match first light with same ip
-            for l in (lan.get_lights() or []):
-                try:
-                    if l.get_ip_addr() == ip:
-                        return l
-                except Exception:
-                    continue
-        finally:
-            lifx_device_mod.UDP_BROADCAST_IP_ADDRS = original_addrs
-    except Exception:
+                    lan = LifxLAN(num_lights=1)  # Hint for faster discovery
+                    devices = lan.get_lights() or []
+                    for device in devices:
+                        if device.get_ip_addr() == ip:
+                            return device
+                finally:
+                    lifx_device_mod.UDP_BROADCAST_IP_ADDRS = original_addrs
+                    
+        except Exception as e:
+            logging.debug(f"LIFX: Unicast discovery failed for {ip}: {e}")
+            
         return None
-    return None
+    
+    def _broadcast_discover(self, mac: Optional[str] = None, ip: Optional[str] = None) -> Optional[Any]:
+        """Discover device via broadcast."""
+        lan = self._get_lan()
+        if not lan:
+            return None
+            
+        try:
+            devices = lan.get_lights() or []
+            for device in devices:
+                try:
+                    if mac and device.get_mac_addr() == mac:
+                        return device
+                    if ip and device.get_ip_addr() == ip:
+                        return device
+                except:
+                    continue
+        except Exception as e:
+            logging.debug(f"LIFX: Broadcast discovery failed: {e}")
+            
+        return None
+
+
+# Global cache instance
+_device_cache = LifxDeviceCache()
+
+
 
 
 def _scale_bri_254_to_65535(bri: int) -> int:
@@ -127,262 +208,269 @@ def _rgb_to_hsv65535(r: int, g: int, b: int) -> Tuple[int, int, int]:
 
 
 def _get_device(light) -> Optional[Any]:
-    """Resolve and cache a lifxlan device by MAC (preferred) or IP."""
-    if LifxLAN is None:
-        logging.info("LIFX: lifxlan not installed; skipping device resolution")
+    """Get LIFX device for a light object, using cache."""
+    if not LIFX_AVAILABLE:
         return None
+        
     mac = light.protocol_cfg.get("id")
     ip = light.protocol_cfg.get("ip")
-    # Some callers pass host:port strings; split out port if present
+    
+    # Handle host:port format
     if isinstance(ip, str) and ":" in ip:
         ip = ip.split(":", 1)[0]
-
-    if mac and mac in _DEVICE_CACHE:
-        return _DEVICE_CACHE.get(mac)
-    if ip and ip in _DEVICE_CACHE:
-        return _DEVICE_CACHE.get(ip)
-
-    try:
-        lifx = LifxLAN()
-    except Exception as e:
-        logging.warning("LIFX: Failed to init LifxLAN: %s", e)
-        return None
-
-    dev = None
-    # First, try a unicast discovery to the IP if we have one
-    if dev is None and ip:
-        dev = _unicast_discover_by_ip(ip)
-    # Otherwise, broadcast discovery (may fail in restricted networks)
-    if dev is None:
-        try:
-            for d in lifx.get_lights() or []:
-                try:
-                    if _is_valid_mac(mac) and getattr(d, "mac_addr", None) and d.get_mac_addr() == mac:
-                        dev = d
-                        break
-                    if ip and d.get_ip_addr() == ip:
-                        dev = d
-                        break
-                except Exception:
-                    continue
-        except Exception:
-            pass
-    # Last resort: construct a Light from ARP-resolved MAC and IP
-    if dev is None and ip and LifxLight is not None:
-        try:
-            mac_guess = mac if _is_valid_mac(mac) else _get_mac_from_arp(ip)
-            if mac_guess and _is_valid_mac(mac_guess):
-                dev = LifxLight(mac_guess, ip)
-        except Exception:
-            dev = None
-
-    key = mac or ip
-    if key and dev is not None:
-        _DEVICE_CACHE[key] = dev
-    return dev
+    
+    return _device_cache.discover_device(mac, ip)
 
 
 def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
-    """Discover LIFX devices over LAN via lifxlan and append to detectedLights.
-
-    Each discovered device is mapped to a Hue-like light using modelid LCT015
-    (color-capable). White-only bulbs will still work for on/off/brightness/ct.
-    """
-    if LifxLAN is None:
-        logging.info("LIFX: lifxlan not installed; discovery disabled")
+    """Discover LIFX devices and add them to detectedLights."""
+    if not LIFX_AVAILABLE:
+        logging.info("LIFX: lifxlan not available, skipping discovery")
         return
-    logging.info("LIFX: discovery started")
-    lifx = None
-    lights: List[Any] = []
-    try:
-        lifx = LifxLAN()
-        try:
-            lights = lifx.get_lights() or []
-        except Exception as e:
-            logging.debug("LIFX: broadcast get_lights failed: %s", e)
-            lights = []
-    except Exception as e:
-        logging.warning("LIFX: init failed: %s", e)
-        lifx = None
-
+        
+    logging.info("LIFX: Starting discovery...")
+    
     added = 0
-    for dev in lights:
-        try:
-            ip = dev.get_ip_addr()
-            label = dev.get_label() or "LIFX"
-            mac = dev.get_mac_addr()
-            # Default to Hue color bulb mapping
-            detectedLights.append({
-                "protocol": "lifx",
-                "name": label,
-                "modelid": "LCT015",
-                "protocol_cfg": {"ip": ip, "id": mac, "label": label}
-            })
-            added += 1
-        except Exception:
-            continue
-
-    # Optional: discover specific static IPs provided in config
-    static_ips: List[str] = []
-    if opts and isinstance(opts, dict):
-        static_ips = opts.get("static_ips", []) or []
-    for ip in static_ips:
-        try:
-            if ":" in ip:
-                ip = ip.split(":", 1)[0]
-            dev = _unicast_discover_by_ip(ip)
-            mac = None
-            label = None
-            if dev is not None:
-                try:
-                    mac = dev.get_mac_addr()
-                except Exception:
-                    mac = None
-                try:
-                    label = dev.get_label()
-                except Exception:
-                    label = None
-            # Try ARP for MAC if needed
-            if mac is None:
-                mac = _get_mac_from_arp(ip)
-            if label is None:
-                label = f"LIFX {ip}"
-            detectedLights.append({
-                "protocol": "lifx",
-                "name": label,
-                "modelid": "LCT015",
-                "protocol_cfg": {"ip": ip, "id": mac or ip, "label": label}
-            })
-            added += 1
-        except Exception:
-            continue
-    logging.info(f"LIFX: discovery finished. Added {added} bulbs")
+    
+    try:
+        # Get number of lights hint for faster discovery
+        num_lights = None
+        if opts and "num_lights" in opts:
+            num_lights = opts["num_lights"]
+            
+        lifx = LifxLAN(num_lights=num_lights)
+        
+        # Set discovery timeout
+        timeout = 5
+        if opts and "discovery_timeout" in opts:
+            timeout = opts["discovery_timeout"]
+            
+        start_time = time.time()
+        devices = []
+        
+        # Try discovery with timeout and multiple attempts
+        attempts = 3
+        for attempt in range(attempts):
+            try:
+                devices = lifx.get_lights()
+                if devices:
+                    break
+                time.sleep(1)
+            except Exception as e:
+                logging.debug(f"LIFX: Discovery attempt {attempt+1} failed: {e}")
+                if attempt < attempts - 1:
+                    time.sleep(1)
+                continue
+        
+        for device in devices:
+            try:
+                ip = device.get_ip_addr()
+                mac = device.get_mac_addr()
+                label = device.get_label() or f"LIFX {mac[-8:]}"
+                
+                # Check if already in list
+                already_exists = any(
+                    d.get("protocol_cfg", {}).get("id") == mac 
+                    for d in detectedLights
+                )
+                
+                if not already_exists:
+                    # Determine model based on capabilities
+                    if device.supports_color():
+                        modelid = "LCT015"  # Color bulb
+                    else:
+                        modelid = "LWB010"  # White bulb
+                    
+                    detectedLights.append({
+                        "protocol": "lifx",
+                        "name": label,
+                        "modelid": modelid,
+                        "protocol_cfg": {
+                            "ip": ip,
+                            "id": mac,
+                            "label": label
+                        }
+                    })
+                    added += 1
+                    
+                    # Cache the device
+                    _device_cache.put(mac, device)
+                    _device_cache.put(ip, device)
+                    
+            except Exception as e:
+                logging.debug(f"LIFX: Error processing device: {e}")
+                continue
+    
+    except Exception as e:
+        logging.warning(f"LIFX: Discovery error: {e}")
+    
+    # Also try static IPs if provided
+    if opts and "static_ips" in opts:
+        for ip in opts["static_ips"]:
+            try:
+                if ":" in ip:
+                    ip = ip.split(":", 1)[0]
+                    
+                device = _device_cache.discover_device(ip=ip)
+                if device:
+                    try:
+                        mac = device.get_mac_addr()
+                        label = device.get_label() or f"LIFX {ip}"
+                        
+                        already_exists = any(
+                            d.get("protocol_cfg", {}).get("id") == mac 
+                            for d in detectedLights
+                        )
+                        
+                        if not already_exists:
+                            detectedLights.append({
+                                "protocol": "lifx",
+                                "name": label,
+                                "modelid": "LCT015",
+                                "protocol_cfg": {
+                                    "ip": ip,
+                                    "id": mac or ip,
+                                    "label": label
+                                }
+                            })
+                            added += 1
+                    except:
+                        pass
+            except:
+                continue
+    
+    logging.info(f"LIFX: Discovery complete. Added {added} device(s)")
 
 
 def set_light(light: Any, data: Dict) -> None:
-    """Apply state changes to a LIFX light.
-
-    Supports keys: on, bri, xy, hue, sat, ct, transitiontime (optional)
-    """
-    dev = _get_device(light)
-    if dev is None:
-        logging.warning("LIFX: set_light could not resolve device for %s (ip=%s, id=%s)", light.name, light.protocol_cfg.get("ip"), light.protocol_cfg.get("id"))
+    """Set LIFX light state."""
+    device = _get_device(light)
+    if not device:
+        logging.debug(f"LIFX: Device not found for {light.name}")
         return
-
-    duration_ms = 0
-    if "transitiontime" in data:
-        # Hue transitiontime is in deciseconds; lifxlan expects milliseconds
-        try:
-            duration_ms = int(max(0, float(data["transitiontime"])) * 100)
-        except Exception:
-            duration_ms = 0
-
+    
     try:
+        # Extract transition time
+        duration_ms = 0
+        if "transitiontime" in data:
+            # Hue uses deciseconds, LIFX uses milliseconds
+            duration_ms = int(max(0, float(data["transitiontime"])) * 100)
+        
+        # Handle power state
         if "on" in data:
-            dev.set_power("on" if data["on"] else "off", duration=duration_ms)
-
-        # Read current HSBK to preserve unspecified channels
+            power = "on" if data["on"] else "off"
+            device.set_power(power, duration=duration_ms, rapid=(duration_ms == 0))
+        
+        # Get current color state to preserve unchanged values
         try:
-            current_h, current_s, current_b, current_k = dev.get_color()
-        except Exception:
-            current_h, current_s, current_b, current_k = (0, 0, 32768, 3500)
-
+            current_h, current_s, current_b, current_k = device.get_color()
+        except:
+            current_h, current_s, current_b, current_k = 0, 0, 32768, 3500
+        
         target_h, target_s, target_b, target_k = current_h, current_s, current_b, current_k
-
-        # Brightness
+        color_changed = False
+        
+        # Handle brightness
         if "bri" in data and data["bri"] is not None:
             target_b = _scale_bri_254_to_65535(int(data["bri"]))
-
-        # Color temperature (dominates over color if present)
+            color_changed = True
+        
+        # Handle color temperature (takes precedence over color)
         if "ct" in data and data["ct"] is not None:
             target_k = _mirek_to_kelvin(int(data["ct"]))
-            target_s = 0  # use white channel
-
-        # XY color
-        if "xy" in data and isinstance(data["xy"], list) and len(data["xy"]) == 2:
+            target_s = 0  # Use white channel
+            color_changed = True
+        
+        # Handle XY color
+        elif "xy" in data and isinstance(data["xy"], list) and len(data["xy"]) == 2:
             x, y = float(data["xy"][0]), float(data["xy"][1])
-            # Use provided bri if present, else approximate from current_b
-            bri_254 = int(data.get("bri", _scale_bri_65535_to_254(target_b)))
             r, g, b = convert_xy(x, y, 255)
             h655, s655, v655 = _rgb_to_hsv65535(r, g, b)
             target_h, target_s = h655, s655
-            # Keep brightness derived from bri (already set above) or v component
             if "bri" not in data:
-                target_b = max(target_b, v655)
-            # keep kelvin
-
-        # Hue/Sat color
-        hue_changed = "hue" in data and data["hue"] is not None
-        sat_changed = "sat" in data and data["sat"] is not None
-        if hue_changed or sat_changed:
-            if hue_changed:
-                # Hue already uses 0..65535 in Hue API
+                target_b = v655
+            color_changed = True
+        
+        # Handle Hue/Saturation
+        elif "hue" in data or "sat" in data:
+            if "hue" in data and data["hue"] is not None:
                 target_h = int(max(0, min(int(data["hue"]), 65535)))
-            if sat_changed:
+                color_changed = True
+            if "sat" in data and data["sat"] is not None:
                 target_s = _scale_sat_254_to_65535(int(data["sat"]))
-
-        # Apply color if any color channel changed
-        if (target_h, target_s, target_b, target_k) != (current_h, current_s, current_b, current_k):
-            dev.set_color([target_h, target_s, target_b, target_k], duration=duration_ms, rapid=(duration_ms == 0))
-
+                color_changed = True
+        
+        # Apply color changes
+        if color_changed:
+            device.set_color(
+                [target_h, target_s, target_b, target_k],
+                duration=duration_ms,
+                rapid=(duration_ms == 0)
+            )
+            
     except Exception as e:
-        logging.warning("LIFX: error setting state for %s: %s", light.name, e)
+        logging.warning(f"LIFX: Error setting state for {light.name}: {e}")
 
 
 def get_light_state(light: Any) -> Dict:
-    """Query live state from a LIFX device and map to Hue fields."""
-    dev = _get_device(light)
-    if dev is None:
-        return {}
-    state: Dict[str, Any] = {}
+    """Get current LIFX light state."""
+    device = _get_device(light)
+    if not device:
+        return {"on": False, "reachable": False}
+    
+    state = {"reachable": True}
+    
     try:
-        pwr = dev.get_power()
-        state["on"] = bool(pwr and int(pwr) > 0)
-    except Exception:
-        state["on"] = False
-    try:
-        h, s, b, k = dev.get_color()
+        # Get power state
+        power = device.get_power()
+        state["on"] = bool(power and int(power) > 0)
+        
+        # Get color state
+        h, s, b, k = device.get_color()
         state["bri"] = _scale_bri_65535_to_254(int(b))
-        # Decide color mode: treat low saturation as CT mode
-        if int(s) < 512:
+        state["hue"] = int(h)
+        state["sat"] = _scale_sat_65535_to_254(int(s))
+        
+        # Determine color mode
+        if int(s) < 512:  # Low saturation, white mode
             state["ct"] = max(153, min(500, _kelvin_to_mirek(int(k))))
             state["colormode"] = "ct"
         else:
-            state["hue"] = int(h)
-            state["sat"] = _scale_sat_65535_to_254(int(s))
             state["colormode"] = "hs"
-    except Exception:
-        pass
+            
+    except Exception as e:
+        logging.debug(f"LIFX: Error getting state for {light.name}: {e}")
+        state["reachable"] = False
+    
     return state
 
 
 def send_rgb_rapid(light: Any, r: int, g: int, b: int) -> None:
-    """High-FPS path: set color rapidly using UDP without waiting for ACKs.
-
-    - Automatically turns power on when sending non-zero color.
-    - Turns power off if RGB is 0,0,0 to avoid extra traffic.
-    """
-    dev = _get_device(light)
-    if dev is None:
+    """Send RGB color rapidly for entertainment mode."""
+    device = _get_device(light)
+    if not device:
         return
+    
     try:
+        # Handle black as power off
         if r == 0 and g == 0 and b == 0:
-            try:
-                dev.set_power("off", duration=0, rapid=True)
-            except Exception:
-                pass
+            device.set_power("off", duration=0, rapid=True)
             return
-        # Ensure power on for visible updates
-        try:
-            dev.set_power("on", duration=0, rapid=True)
-        except Exception:
-            pass
+        
+        # Ensure power is on
+        device.set_power("on", duration=0, rapid=True)
+        
+        # Convert RGB to HSBK
         h, s, v = _rgb_to_hsv65535(r, g, b)
-        # Keep previous kelvin or use neutral 3500K
+        
+        # Use cached kelvin or default
         try:
-            _, _, _, k = dev.get_color()
-        except Exception:
+            _, _, _, k = device.get_color()
+        except:
             k = 3500
-        dev.set_color([h, s, max(1, v), k], duration=0, rapid=True)
+        
+        # Send color update
+        device.set_color([h, s, max(1, v), k], duration=0, rapid=True)
+        
     except Exception as e:
-        logging.debug("LIFX rapid send failed for %s: %s", light.name, e)
+        logging.debug(f"LIFX: Rapid send failed for {light.name}: {e}")
