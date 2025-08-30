@@ -84,12 +84,24 @@ def _get_device(light) -> Optional[Any]:
     dev = None
     if mac:
         try:
-            dev = lifx.get_device_by_mac_addr(mac)
+            # Prefer direct by MAC when available
+            if hasattr(lifx, "get_device_by_mac_addr"):
+                dev = lifx.get_device_by_mac_addr(mac)
         except Exception:
             dev = None
     if dev is None and ip:
         try:
-            dev = lifx.get_device_by_ip(ip)
+            if hasattr(lifx, "get_device_by_ip_addr"):
+                dev = lifx.get_device_by_ip_addr(ip)
+            else:
+                # Fallback: scan and match by IP
+                for d in lifx.get_lights() or []:
+                    try:
+                        if d.get_ip_addr() == ip:
+                            dev = d
+                            break
+                    except Exception:
+                        continue
         except Exception:
             dev = None
     if dev is None:
@@ -159,9 +171,23 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
         try:
             if ":" in ip:
                 ip = ip.split(":", 1)[0]
-            # Create a LAN instance if needed (avoid relying on possibly failed instance)
             lan = lifx if lifx is not None else LifxLAN()
-            dev = lan.get_device_by_ip(ip)
+            dev = None
+            # Try direct IP-lookup if available
+            if hasattr(lan, "get_device_by_ip_addr"):
+                try:
+                    dev = lan.get_device_by_ip_addr(ip)
+                except Exception:
+                    dev = None
+            # Fallback: scan and filter
+            if dev is None:
+                try:
+                    for d in lan.get_lights() or []:
+                        if d.get_ip_addr() == ip:
+                            dev = d
+                            break
+                except Exception:
+                    dev = None
             if dev is None:
                 continue
             mac = dev.get_mac_addr()

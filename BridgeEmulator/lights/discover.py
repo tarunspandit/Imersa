@@ -170,8 +170,21 @@ def manualAddLight(ip: str, protocol: str, config: Dict = {}) -> None:
             try:
                 from lights.protocols import lifx as lifx_protocol
                 if lifx_protocol.LifxLAN is not None:
-                    lifx = lifx_protocol.LifxLAN()
-                    dev = lifx.get_device_by_ip(ip)
+                    lan = lifx_protocol.LifxLAN()
+                    dev = None
+                    if hasattr(lan, "get_device_by_ip_addr"):
+                        try:
+                            dev = lan.get_device_by_ip_addr(ip)
+                        except Exception:
+                            dev = None
+                    if dev is None:
+                        try:
+                            for d in lan.get_lights() or []:
+                                if d.get_ip_addr() == ip:
+                                    dev = d
+                                    break
+                        except Exception:
+                            dev = None
                     if dev:
                         label = dev.get_label() or f"LIFX {ip}"
                         mac = dev.get_mac_addr()
@@ -227,22 +240,33 @@ def manualAddLight(ip: str, protocol: str, config: Dict = {}) -> None:
             try:
                 from lights.protocols import lifx as lifx_protocol
                 if lifx_protocol.LifxLAN is None:
-                    logging.info(f"Manual add failed for LIFX {ip}: lifxlan not installed")
-                    return
-                lifx = lifx_protocol.LifxLAN()
-                dev = lifx.get_device_by_ip(ip)
-                if not dev:
-                    logging.info(f"Manual add rejected for {ip}: not a LIFX device or unreachable")
-                    return
-                label = dev.get_label() or f"LIFX {ip}"
-                mac = dev.get_mac_addr()
-                config.setdefault("id", mac)
-                config.setdefault("label", label)
-                if name == "New Light":
-                    name = label
+                    logging.info(f"Manual add proceeding without lifxlan for {ip}")
+                else:
+                    # Try to resolve via lan helpers
+                    try:
+                        lan = lifx_protocol.LifxLAN()
+                        dev = None
+                        if hasattr(lan, "get_device_by_ip_addr"):
+                            dev = lan.get_device_by_ip_addr(ip)
+                        if dev is None:
+                            for d in lan.get_lights() or []:
+                                if d.get_ip_addr() == ip:
+                                    dev = d
+                                    break
+                        if dev:
+                            label = dev.get_label() or f"LIFX {ip}"
+                            mac = dev.get_mac_addr()
+                            config.setdefault("id", mac)
+                            config.setdefault("label", label)
+                            if name == "New Light":
+                                name = label
+                    except Exception as e2:
+                        logging.info(f"Manual add (lifxlan resolve) failed for {ip}: {e2}")
+                # Ensure an identifier exists to avoid duplicates; fallback to IP as id
+                config.setdefault("id", ip)
+                # Proceed to add even if unverified; control may resolve at runtime
             except Exception as e:
-                logging.info(f"Manual add failed for LIFX {ip}: {e}")
-                return
+                logging.info(f"Manual add lifx handler error for {ip}: {e}")
         addNewLight(modelid, name, protocol, config)
 
 def discoveryEvent() -> None:
