@@ -291,6 +291,33 @@ def yeelight_settings():
     
     return {"status": "success", "settings": music}
 
+@core.route('/lifx-settings', methods=['GET', 'POST'])
+def lifx_settings():
+    try:
+        temp = bridgeConfig.setdefault("temp", {})
+        integrations = temp.setdefault("integrations", {})
+        lifx = integrations.setdefault("lifx", {"enabled": True, "max_fps": 120, "static_ips": []})
+        if flask_login.current_user.is_authenticated or True:
+            if request.method == 'POST':
+                data = request.get_json(force=True)
+                if isinstance(data, dict):
+                    # Only accept specific keys
+                    for k in ["enabled", "max_fps", "static_ips"]:
+                        if k in data:
+                            lifx[k] = data[k]
+                    # Persist a copy in config for durability (not required for runtime)
+                    cfg = bridgeConfig.setdefault("config", {})
+                    cfg_lifx = cfg.setdefault("lifx", {})
+                    for k in ["enabled", "max_fps", "static_ips"]:
+                        if k in lifx:
+                            cfg_lifx[k] = lifx[k]
+                    configManager.bridgeConfig.save_config()
+                return {"status": "success", "settings": lifx}
+        return {"status": "success", "settings": lifx}
+    except Exception as e:
+        logging.debug(f"lifx-settings error: {e}")
+        return {"status": "error", "message": str(e)}, 500
+
 @core.route('/entertainment-wizard')
 def entertainment_wizard():
     # React UI will handle the wizard

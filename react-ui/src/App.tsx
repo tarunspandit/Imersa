@@ -20,6 +20,7 @@ import SettingsComplete from './pages/SettingsComplete';
 import BridgeManagement from './pages/BridgeManagement';
 import AppUsers from './pages/AppUsers';
 import IntegrationHub from './pages/integrations/IntegrationHub';
+import LifxIntegration from './pages/integrations/LifxIntegration';
 import TradfriIntegration from './pages/integrations/TradfriIntegration';
 import PhilipsHueIntegration from './pages/integrations/PhilipsHueIntegration';
 import GoveeIntegration from './pages/integrations/GoveeIntegration';
@@ -115,6 +116,7 @@ function App() {
               <Route path="users" element={<AppUsers />} />
               <Route path="integrations" element={<IntegrationHub />} />
               <Route path="integrations/tradfri" element={<TradfriIntegration />} />
+              <Route path="integrations/lifx" element={<LifxIntegration />} />
               <Route path="integrations/philips-hue" element={<PhilipsHueIntegration />} />
               <Route path="integrations/govee" element={<GoveeIntegration />} />
               <Route path="integrations/deconz" element={<DeconzIntegration />} />

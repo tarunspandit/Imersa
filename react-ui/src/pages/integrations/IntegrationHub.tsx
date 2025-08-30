@@ -31,7 +31,7 @@ const integrations: Integration[] = [
     name: 'LIFX',
     description: 'Control LIFX LAN bulbs with realtime updates',
     icon: Lightbulb,
-    path: '/lights',
+    path: '/integrations/lifx',
     status: 'available'
   },
   {

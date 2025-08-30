@@ -89,7 +89,9 @@ def _lifx_tuning():
     Returns (max_fps:int)
     """
     try:
-        lifx_cfg = bridgeConfig.get("config", {}).get("lifx", {})
+        lifx_cfg = bridgeConfig.get("temp", {}).get("integrations", {}).get("lifx", {})
+        if not lifx_cfg:
+            lifx_cfg = bridgeConfig.get("config", {}).get("lifx", {})
     except Exception:
         lifx_cfg = {}
     max_fps = lifx_cfg.get("max_fps", 120)

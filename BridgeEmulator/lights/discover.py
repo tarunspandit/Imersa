@@ -362,9 +362,26 @@ def discover_lights(detectedLights: List[Dict], device_ips: List[str]) -> None:
         # Multicast discovery only. For networks blocking multicast, use manual add
         # or set a very specific IP with protocol "auto" from the UI.
         yeelight.discover(detectedLights)
-    if bridgeConfig["config"].get("lifx", {}).get("enabled", False):
-        # LIFX LAN discovery via lifxlan when available (plus static IPs)
-        lifx.discover(detectedLights, bridgeConfig["config"].get("lifx", {}))
+    # LIFX discovery controlled by runtime integration settings (temp store)
+    lifx_runtime = bridgeConfig.get("temp", {}).get("integrations", {}).get("lifx", {})
+    lifx_config = bridgeConfig.get("config", {}).get("lifx", {})
+    lifx_enabled = lifx_runtime.get("enabled")
+    if lifx_enabled is None:
+        lifx_enabled = True if lifx_config == {} else bool(lifx_config.get("enabled", True))
+    if lifx_enabled:
+        opts = {}
+        # Merge static IPs preference: runtime first, then config
+        static_ips = []
+        if isinstance(lifx_config, dict):
+            static_ips.extend(lifx_config.get("static_ips", []) or [])
+        if isinstance(lifx_runtime, dict):
+            # runtime overrides/extends
+            rt_ips = lifx_runtime.get("static_ips", []) or []
+            static_ips.extend([ip for ip in rt_ips if ip not in static_ips])
+            if "max_fps" in lifx_runtime:
+                opts["max_fps"] = lifx_runtime.get("max_fps")
+        opts["static_ips"] = static_ips
+        lifx.discover(detectedLights, opts)
     # native_multi probe all esp8266 lights with firmware from diyhue repo
     if bridgeConfig["config"]["native_multi"]["enabled"]:
         native_multi.discover(detectedLights, device_ips)
