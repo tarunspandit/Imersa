@@ -21,6 +21,18 @@ except Exception:
 _DEVICE_CACHE: Dict[str, Any] = {}
 
 
+def _is_valid_mac(value: Optional[str]) -> bool:
+    if not value or not isinstance(value, str):
+        return False
+    parts = value.split(":")
+    if len(parts) != 6:
+        return False
+    try:
+        return all(len(p) == 2 and int(p, 16) >= 0 for p in parts)
+    except Exception:
+        return False
+
+
 def _get_mac_from_arp(ip: str) -> Optional[str]:
     """Try to resolve a device's MAC via the ARP table (Linux/Unix)."""
     try:
@@ -145,7 +157,7 @@ def _get_device(light) -> Optional[Any]:
         try:
             for d in lifx.get_lights() or []:
                 try:
-                    if mac and getattr(d, "mac_addr", None) and d.get_mac_addr() == mac:
+                    if _is_valid_mac(mac) and getattr(d, "mac_addr", None) and d.get_mac_addr() == mac:
                         dev = d
                         break
                     if ip and d.get_ip_addr() == ip:
@@ -158,8 +170,8 @@ def _get_device(light) -> Optional[Any]:
     # Last resort: construct a Light from ARP-resolved MAC and IP
     if dev is None and ip and LifxLight is not None:
         try:
-            mac_guess = mac or _get_mac_from_arp(ip)
-            if mac_guess:
+            mac_guess = mac if _is_valid_mac(mac) else _get_mac_from_arp(ip)
+            if mac_guess and _is_valid_mac(mac_guess):
                 dev = LifxLight(mac_guess, ip)
         except Exception:
             dev = None
