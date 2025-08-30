@@ -346,7 +346,7 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
     
     # Get configuration options
     num_lights = opts.get("num_lights") if opts else None
-    timeout = opts.get("discovery_timeout", 10) if opts else 10  # Increased default timeout
+    timeout = opts.get("discovery_timeout", 60) if opts else 60  # Increased default timeout
     static_ips = opts.get("static_ips", []) if opts else []
     
     # First, try static IPs (works better in Docker)
