@@ -473,6 +473,7 @@ class GroupsApiService {
     if (type.includes('hue')) return 'philips_hue';
     if (type.includes('wled')) return 'wled';
     if (type.includes('yeelight')) return 'yeelight';
+    if (type.includes('lifx')) return 'lifx';
     if (type.includes('nanoleaf')) return 'nanoleaf';
     return 'generic';
   }

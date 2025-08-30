@@ -69,6 +69,9 @@ class Config:
                     config["homeassistant"] = {"enabled": False}
                 if "yeelight" not in config:
                     config["yeelight"] = {"enabled": True}
+                if "lifx" not in config:
+                    # Enable LIFX by default; allow static IPs list and FPS tuning
+                    config["lifx"] = {"enabled": True, "max_fps": 120, "static_ips": ["192.168.1.182"]}
                 if "native_multi" not in config:
                     config["native_multi"] = {"enabled": True}
                 if "tasmota" not in config:
@@ -136,6 +139,7 @@ class Config:
                     "tradfri": {},
                     "homeassistant": {"enabled":False},
                     "yeelight": {"enabled":True},
+                    "lifx": {"enabled":True, "max_fps": 120, "static_ips": ["192.168.1.182"]},
                     "native_multi": {"enabled":True},
                     "tasmota": {"enabled":True},
                     "wled": {"enabled":True},

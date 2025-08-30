@@ -27,6 +27,14 @@ const integrations: Integration[] = [
     status: 'available'
   },
   {
+    id: 'lifx',
+    name: 'LIFX',
+    description: 'Control LIFX LAN bulbs with realtime updates',
+    icon: Lightbulb,
+    path: '/lights',
+    status: 'available'
+  },
+  {
     id: 'philips-hue',
     name: 'Philips Hue',
     description: 'Import lights and scenes from Hue bridges',

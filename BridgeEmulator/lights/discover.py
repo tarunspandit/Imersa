@@ -5,7 +5,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple, Union, Generator
-from lights.protocols import tpkasa, wled, mqtt, hyperion, yeelight, hue, deconz, native_multi, tasmota, shelly, esphome, tradfri, elgato, govee
+from lights.protocols import tpkasa, wled, mqtt, hyperion, yeelight, hue, deconz, native_multi, tasmota, shelly, esphome, tradfri, elgato, govee, lifx
 from services import homeAssistantWS
 from HueObjects import Light, StreamEvent
 from functions.core import nextFreeId
@@ -166,6 +166,20 @@ def manualAddLight(ip: str, protocol: str, config: Dict = {}) -> None:
                         logging.info(f"Manual add auto (library) rejected for {ip}: not a Yeelight or LAN control disabled")
                 except Exception as ee:
                     logging.info(f"Manual add auto library fallback failed for {ip}: {ee}")
+            # Try LIFX as alternative for manual auto add
+            try:
+                from lights.protocols import lifx as lifx_protocol
+                if lifx_protocol.LifxLAN is not None:
+                    lifx = lifx_protocol.LifxLAN()
+                    dev = lifx.get_device_by_ip(ip)
+                    if dev:
+                        label = dev.get_label() or f"LIFX {ip}"
+                        mac = dev.get_mac_addr()
+                        logging.info(f"Found light lifx {label}")
+                        addNewLight("LCT015", label, "lifx", {"ip": ip, "id": mac, "label": label})
+                        return
+            except Exception as e:
+                logging.info(f"Manual add auto failed for LIFX {ip}: {e}")
     else:
         config["ip"] = ip
         # Enrich Yeelight config (where possible) so it works without multicast discovery
@@ -208,6 +222,27 @@ def manualAddLight(ip: str, protocol: str, config: Dict = {}) -> None:
                 except Exception as ee:
                     logging.info(f"Manual add (library) failed for Yeelight {ip}: {ee}")
                     return
+        # LIFX enrichment
+        if protocol == "lifx":
+            try:
+                from lights.protocols import lifx as lifx_protocol
+                if lifx_protocol.LifxLAN is None:
+                    logging.info(f"Manual add failed for LIFX {ip}: lifxlan not installed")
+                    return
+                lifx = lifx_protocol.LifxLAN()
+                dev = lifx.get_device_by_ip(ip)
+                if not dev:
+                    logging.info(f"Manual add rejected for {ip}: not a LIFX device or unreachable")
+                    return
+                label = dev.get_label() or f"LIFX {ip}"
+                mac = dev.get_mac_addr()
+                config.setdefault("id", mac)
+                config.setdefault("label", label)
+                if name == "New Light":
+                    name = label
+            except Exception as e:
+                logging.info(f"Manual add failed for LIFX {ip}: {e}")
+                return
         addNewLight(modelid, name, protocol, config)
 
 def discoveryEvent() -> None:
@@ -268,7 +303,7 @@ def is_light_matching(lightObj: Light.Light, light: Dict) -> bool:
         return (lightObj.protocol_cfg["mac"] == light["protocol_cfg"]["mac"] and
                 lightObj.protocol_cfg["light_nr"] == light["protocol_cfg"]["light_nr"] and
                 lightObj.modelid == light["modelid"])
-    if protocol in ["yeelight", "tasmota", "tradfri", "hyperion", "tpkasa"]:
+    if protocol in ["yeelight", "tasmota", "tradfri", "hyperion", "tpkasa", "lifx"]:
         # Prefer matching by unique id when available; fall back to IP for Yeelight
         if protocol == "yeelight":
             obj_id = lightObj.protocol_cfg.get("id")
@@ -327,6 +362,9 @@ def discover_lights(detectedLights: List[Dict], device_ips: List[str]) -> None:
         # Multicast discovery only. For networks blocking multicast, use manual add
         # or set a very specific IP with protocol "auto" from the UI.
         yeelight.discover(detectedLights)
+    if bridgeConfig["config"].get("lifx", {}).get("enabled", False):
+        # LIFX LAN discovery via lifxlan when available (plus static IPs)
+        lifx.discover(detectedLights, bridgeConfig["config"].get("lifx", {}))
     # native_multi probe all esp8266 lights with firmware from diyhue repo
     if bridgeConfig["config"]["native_multi"]["enabled"]:
         native_multi.discover(detectedLights, device_ips)

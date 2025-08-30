@@ -211,7 +211,7 @@ class DiscoveryService {
     const apiKey = authService.getStoredApiKey();
     
     // Add as light or sensor based on protocol
-    if (['native', 'native_multi', 'native_single', 'wled', 'yeelight', 'tasmota'].includes(device.protocol)) {
+    if (['native', 'native_multi', 'native_single', 'wled', 'yeelight', 'tasmota', 'lifx'].includes(device.protocol)) {
       const response = await this.client.post(`/api/${apiKey}/lights`, device);
       return response.data;
     } else {
@@ -241,6 +241,9 @@ class DiscoveryService {
         case 'yeelight':
           // Yeelight uses TCP, would need backend support
           return { success: false, message: 'Yeelight test requires backend support' };
+        case 'lifx':
+          // LIFX LAN uses UDP; backend handles discovery/control. Use discovery or manual add.
+          return { success: false, message: 'LIFX test requires backend support' };
         
         case 'tasmota':
           const tasmotaResponse = await axios.get(`http://${device.ip}/cm?cmnd=Status`, { timeout: 5000 });
@@ -267,6 +270,7 @@ class DiscoveryService {
       { id: 'hue', name: 'Philips Hue', description: 'Official Philips Hue bridges', icon: '🌈' },
       { id: 'wled', name: 'WLED', description: 'WLED LED controllers', icon: '✨' },
       { id: 'yeelight', name: 'Yeelight', description: 'Xiaomi Yeelight devices', icon: '💫' },
+      { id: 'lifx', name: 'LIFX', description: 'LIFX LAN bulbs', icon: '🟡' },
       { id: 'tradfri', name: 'IKEA Tradfri', description: 'IKEA smart lighting', icon: '🏠' },
       { id: 'tasmota', name: 'Tasmota', description: 'Tasmota firmware devices', icon: '⚡' },
       { id: 'shelly', name: 'Shelly', description: 'Shelly smart relays', icon: '🔧' },

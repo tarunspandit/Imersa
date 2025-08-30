@@ -8,6 +8,7 @@ from functions.colors import convert_rgb_xy, convert_xy
 import paho.mqtt.publish as publish
 import time
 from concurrent.futures import ThreadPoolExecutor
+from lights.protocols import lifx as lifx_protocol
 from collections import deque
 
 logging = logManager.logger.get_logger(__name__)
@@ -40,6 +41,7 @@ lastAppliedFrame = {}
 YeelightConnections = {}
 _music_server = None
 _yeelight_last_send = {}
+_lifx_last_send = {}
 udp_socket_pool = {}  # Socket pool to prevent creating 600+ sockets/second
 
 _worker_count = get_worker_count()
@@ -79,6 +81,19 @@ def _yeelight_tuning():
         briTolerange = int(music_cfg["bri_tolerance"])
     # sanitize
     return max(10, int(max_fps)), max(0, int(smooth_ms))
+
+
+def _lifx_tuning():
+    """Get LIFX performance tuning from config.
+
+    Returns (max_fps:int)
+    """
+    try:
+        lifx_cfg = bridgeConfig.get("config", {}).get("lifx", {})
+    except Exception:
+        lifx_cfg = {}
+    max_fps = lifx_cfg.get("max_fps", 120)
+    return max(30, int(max_fps))
 
 
 def getObject(v2uuid):
@@ -644,6 +659,23 @@ def entertainmentService(group, user, mirror_port=None):
                                         _yeelight_last_send[ip] = now
 
 
+                            # LIFX (lifxlan rapid UDP updates)
+                            elif proto == "lifx":
+                                key = light.protocol_cfg.get("id") or light.protocol_cfg.get("ip")
+                                if key:
+                                    op = skipSimilarFrames(light.id_v1, light.state["xy"], light.state["bri"])
+                                    now_ts = time.time()
+                                    max_fps = _lifx_tuning()
+                                    min_interval = 1.0 / max_fps
+                                    last_ts = _lifx_last_send.get(key, 0)
+                                    if now_ts - last_ts >= min_interval:
+                                        if op in (1, 2):
+                                            try:
+                                                lifx_protocol.send_rgb_rapid(light, r, g, b)
+                                            except Exception:
+                                                pass
+                                            _lifx_last_send[key] = now_ts
+
                             # WLED (Realtime UDP 21324, DNRGB)
                             elif proto == "wled":
                                 ip = light.protocol_cfg["ip"]
@@ -784,6 +816,22 @@ def entertainmentService(group, user, mirror_port=None):
                                         c.command("set_rgb", [(r * 65536) + (g * 256) + b, "smooth", smooth_ms])
                                         _yeelight_last_send[ip] = now
 
+                            # LIFX (lifxlan rapid UDP updates)
+                            elif proto == "lifx":
+                                key = light.protocol_cfg.get("id") or light.protocol_cfg.get("ip")
+                                if key:
+                                    op = skipSimilarFrames(light.id_v1, light.state["xy"], light.state["bri"])
+                                    now_ts = time.time()
+                                    max_fps = _lifx_tuning()
+                                    min_interval = 1.0 / max_fps
+                                    last_ts = _lifx_last_send.get(key, 0)
+                                    if now_ts - last_ts >= min_interval:
+                                        if op in (1, 2):
+                                            try:
+                                                lifx_protocol.send_rgb_rapid(light, r, g, b)
+                                            except Exception:
+                                                pass
+                                            _lifx_last_send[key] = now_ts
 
                             elif proto == "wled":
                                 ip = light.protocol_cfg["ip"]
