@@ -7,12 +7,20 @@ Entertainment Mode Optimizations:
 - Frame rate limiting (configurable, default 30 FPS)
 - Batch processing support for multiple simultaneous updates
 - Parallel UDP packet sending for better performance
+- Anti-flicker smoothing with exponential moving average
 
 Discovery Optimizations (Docker):
 - Subnet scanning instead of broadcast for Docker compatibility
 - Direct unicast GetService messages to each IP
 - Automatic subnet detection from config.yaml host IP
 - Device caching with 5-minute TTL
+
+Keep-Alive Mechanism:
+- Background thread sends periodic GetPower packets (default 45s interval)
+- Prevents LIFX bulbs from going into sleep/timeout state
+- Automatically registers devices during discovery and first use
+- Configurable interval (10-120 seconds) via UI
+- Only pings devices that are actively being used
 """
 
 import colorsys
@@ -23,6 +31,7 @@ import subprocess
 import socket
 from typing import Any, Dict, List, Optional, Tuple
 from collections import defaultdict
+from datetime import datetime, timedelta
 
 import logManager
 
@@ -200,6 +209,91 @@ class LifxDeviceCache:
 # Global cache instance
 _device_cache = LifxDeviceCache()
 
+# Keep-alive tracking
+_keepalive_state = {
+    "thread": None,
+    "running": False,
+    "interval": 45,  # seconds between keep-alive pings
+    "last_ping": {},  # device_id -> last ping time
+    "active_devices": set(),  # Set of device IDs that need keep-alive
+}
+
+def _keepalive_worker():
+    """Background thread that sends periodic keep-alive packets to LIFX devices."""
+    logging.info("LIFX: Keep-alive thread started")
+    
+    while _keepalive_state["running"]:
+        try:
+            current_time = datetime.now()
+            devices_to_ping = []
+            
+            # Check which devices need a keep-alive
+            with _device_cache._lock:
+                for device_id in list(_keepalive_state["active_devices"]):
+                    last_ping = _keepalive_state["last_ping"].get(device_id, datetime.min)
+                    if (current_time - last_ping).total_seconds() >= _keepalive_state["interval"]:
+                        # Get device from cache
+                        cached = _device_cache._cache.get(device_id)
+                        if cached and cached[0]:
+                            devices_to_ping.append((device_id, cached[0]))
+            
+            # Send keep-alive packets (outside lock to avoid blocking)
+            for device_id, device in devices_to_ping:
+                try:
+                    # Use GetPower as lightweight keep-alive - it's fast and doesn't change state
+                    device.get_power()
+                    _keepalive_state["last_ping"][device_id] = current_time
+                    logging.debug(f"LIFX: Keep-alive sent to {device_id}")
+                except Exception as e:
+                    logging.debug(f"LIFX: Keep-alive failed for {device_id}: {e}")
+                    # Remove from active set if device is unreachable
+                    _keepalive_state["active_devices"].discard(device_id)
+            
+            # Sleep for a bit before next check
+            time.sleep(5)  # Check every 5 seconds, but only ping based on interval
+            
+        except Exception as e:
+            logging.error(f"LIFX: Keep-alive thread error: {e}")
+            time.sleep(5)
+    
+    logging.info("LIFX: Keep-alive thread stopped")
+
+def start_keepalive():
+    """Start the keep-alive background thread."""
+    global _keepalive_state
+    
+    if _keepalive_state["running"]:
+        return  # Already running
+    
+    _keepalive_state["running"] = True
+    _keepalive_state["thread"] = threading.Thread(target=_keepalive_worker, daemon=True)
+    _keepalive_state["thread"].start()
+    logging.info("LIFX: Keep-alive mechanism started")
+
+def stop_keepalive():
+    """Stop the keep-alive background thread."""
+    global _keepalive_state
+    
+    _keepalive_state["running"] = False
+    if _keepalive_state["thread"]:
+        _keepalive_state["thread"].join(timeout=2)
+        _keepalive_state["thread"] = None
+    logging.info("LIFX: Keep-alive mechanism stopped")
+
+def register_device_for_keepalive(device_id: str):
+    """Register a device to receive keep-alive packets."""
+    _keepalive_state["active_devices"].add(device_id)
+    _keepalive_state["last_ping"][device_id] = datetime.now()
+    
+    # Start keep-alive thread if not running
+    if not _keepalive_state["running"]:
+        start_keepalive()
+
+def set_keepalive_interval(seconds: int):
+    """Set the interval between keep-alive pings."""
+    _keepalive_state["interval"] = max(10, min(seconds, 300))  # Clamp between 10-300 seconds
+    logging.info(f"LIFX: Keep-alive interval set to {_keepalive_state['interval']} seconds")
+
 # Export for external use (e.g., manual discovery)
 def _unicast_discover_by_ip(ip: str) -> Optional[Any]:
     """Legacy compatibility function for manual discovery."""
@@ -261,7 +355,16 @@ def _get_device(light) -> Optional[Any]:
     if isinstance(ip, str) and ":" in ip:
         ip = ip.split(":", 1)[0]
     
-    return _device_cache.discover_device(mac, ip)
+    device = _device_cache.discover_device(mac, ip)
+    
+    # Register for keep-alive if we got a device
+    if device and mac:
+        register_device_for_keepalive(mac)
+    elif device and ip:
+        # Use IP as identifier if no MAC
+        register_device_for_keepalive(ip)
+    
+    return device
 
 
 # No longer tracking Docker fix - using subnet scanning instead
@@ -472,6 +575,9 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
                     _device_cache.put(mac, device)
                     _device_cache.put(ip, device)
                     
+                    # Register for keep-alive
+                    register_device_for_keepalive(mac)
+                    
             except Exception as e:
                 logging.debug(f"LIFX: Error processing device: {e}")
                 continue
@@ -506,12 +612,22 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
                                 }
                             })
                             added += 1
+                            
+                            # Register for keep-alive
+                            if mac:
+                                register_device_for_keepalive(mac)
+                            else:
+                                register_device_for_keepalive(ip)
                     except:
                         pass
             except:
                 continue
     
     logging.info(f"LIFX: Discovery complete. Added {added} device(s)")
+    
+    # Start keep-alive thread if we have devices
+    if added > 0 and not _keepalive_state["running"]:
+        start_keepalive()
 
 
 def set_light(light: Any, data: Dict) -> None:
@@ -855,5 +971,8 @@ def update_entertainment_settings(settings: Dict[str, Any]) -> None:
     
     if "smoothing_ms" in settings:
         set_smoothing_time(settings["smoothing_ms"])
+    
+    if "keepalive_interval" in settings:
+        set_keepalive_interval(settings["keepalive_interval"])
     
     logging.info(f"LIFX: Updated entertainment settings from config")

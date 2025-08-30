@@ -10,6 +10,7 @@ type LifxSettings = {
   max_fps: number;
   smoothing_enabled: boolean;
   smoothing_ms: number;
+  keepalive_interval: number;
   static_ips: string[];
 };
 
@@ -18,6 +19,7 @@ const defaultSettings: LifxSettings = {
   max_fps: 30,
   smoothing_enabled: false,
   smoothing_ms: 50,
+  keepalive_interval: 45,
   static_ips: []
 };
 
@@ -205,6 +207,29 @@ const LifxIntegration: React.FC = () => {
                   </div>
                 </div>
               )}
+            </div>
+
+            <div className="space-y-3 pt-2 border-t">
+              <label className="text-sm font-medium mb-2 block">Keep-Alive Interval</label>
+              <div className="space-y-2">
+                <div className="flex items-center gap-4">
+                  <input 
+                    type="range" 
+                    min={10} 
+                    max={120} 
+                    step={5}
+                    value={settings.keepalive_interval}
+                    onChange={(e) => setSettings({ ...settings, keepalive_interval: Number(e.target.value) })}
+                    className="flex-1"
+                  />
+                  <div className="w-16 text-center font-mono text-sm">
+                    {settings.keepalive_interval}s
+                  </div>
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  Prevents bulbs from timing out. Lower = more network traffic, Higher = may timeout
+                </div>
+              </div>
             </div>
 
             <div>

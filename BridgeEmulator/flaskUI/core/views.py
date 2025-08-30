@@ -96,55 +96,7 @@ def vite_icon():
         return send_from_directory(docker_react_path, 'vite.svg')
     return '', 404
 
-@core.route('/lifx-settings', methods=['GET', 'POST'])
-def lifx_settings():
-    """Handle LIFX settings for React UI."""
-    if request.method == 'POST':
-        # Save settings to config
-        try:
-            settings = request.get_json()
-            if not bridgeConfig.get("config"):
-                bridgeConfig["config"] = {}
-            if not bridgeConfig["config"].get("lifx"):
-                bridgeConfig["config"]["lifx"] = {}
-            
-            # Update config with new settings
-            bridgeConfig["config"]["lifx"].update(settings)
-            
-            # Also update temp/integrations for runtime
-            if not bridgeConfig.get("temp"):
-                bridgeConfig["temp"] = {}
-            if not bridgeConfig["temp"].get("integrations"):
-                bridgeConfig["temp"]["integrations"] = {}
-            if not bridgeConfig["temp"]["integrations"].get("lifx"):
-                bridgeConfig["temp"]["integrations"]["lifx"] = {}
-            bridgeConfig["temp"]["integrations"]["lifx"].update(settings)
-            
-            # Update entertainment settings in real-time
-            from lights.protocols import lifx as lifx_protocol
-            lifx_protocol.update_entertainment_settings(settings)
-            
-            # Save config to disk
-            configManager.bridgeConfig.save_config(backup=False)
-            
-            return json.dumps({"success": True})
-        except Exception as e:
-            logging.error(f"Failed to save LIFX settings: {e}")
-            return json.dumps({"error": str(e)}), 500
-    
-    # GET - return current settings
-    settings = {}
-    try:
-        # Try runtime settings first
-        if bridgeConfig.get("temp", {}).get("integrations", {}).get("lifx"):
-            settings = bridgeConfig["temp"]["integrations"]["lifx"]
-        # Fall back to config
-        elif bridgeConfig.get("config", {}).get("lifx"):
-            settings = bridgeConfig["config"]["lifx"]
-    except Exception as e:
-        logging.error(f"Failed to get LIFX settings: {e}")
-    
-    return json.dumps({"settings": settings})
+# Removed duplicate route - using the one at line 344 instead
 
 @core.route('/debug/react-ui')
 def debug_react_ui():
@@ -346,19 +298,36 @@ def lifx_settings():
     try:
         temp = bridgeConfig.setdefault("temp", {})
         integrations = temp.setdefault("integrations", {})
-        lifx = integrations.setdefault("lifx", {"enabled": True, "max_fps": 120, "static_ips": []})
+        lifx = integrations.setdefault("lifx", {
+            "enabled": True, 
+            "max_fps": 30, 
+            "smoothing_enabled": False,
+            "smoothing_ms": 50,
+            "keepalive_interval": 45,
+            "static_ips": []
+        })
         if flask_login.current_user.is_authenticated or True:
             if request.method == 'POST':
                 data = request.get_json(force=True)
                 if isinstance(data, dict):
                     # Only accept specific keys
-                    for k in ["enabled", "max_fps", "static_ips"]:
+                    allowed_keys = ["enabled", "max_fps", "smoothing_enabled", "smoothing_ms", 
+                                   "keepalive_interval", "static_ips"]
+                    for k in allowed_keys:
                         if k in data:
                             lifx[k] = data[k]
-                    # Persist a copy in config for durability (not required for runtime)
+                    
+                    # Update entertainment settings in real-time
+                    try:
+                        from lights.protocols import lifx as lifx_protocol
+                        lifx_protocol.update_entertainment_settings(lifx)
+                    except Exception as e:
+                        logging.debug(f"Could not update LIFX entertainment settings: {e}")
+                    
+                    # Persist a copy in config for durability
                     cfg = bridgeConfig.setdefault("config", {})
                     cfg_lifx = cfg.setdefault("lifx", {})
-                    for k in ["enabled", "max_fps", "static_ips"]:
+                    for k in allowed_keys:
                         if k in lifx:
                             cfg_lifx[k] = lifx[k]
                     configManager.bridgeConfig.save_config()
