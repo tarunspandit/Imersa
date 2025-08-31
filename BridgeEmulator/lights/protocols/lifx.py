@@ -1096,18 +1096,15 @@ def set_light(light: Any, data: Dict) -> None:
         return
 
 
-# Handle Hue v2 gradient payloads early (works for gradient models & matrix)
+# Handle Hue v2 gradient payloads early (for gradient-capable models)
 try:
     grad = data.get("gradient")
-    if isinstance(grad, dict):
-        pts = grad.get("points")
-    else:
-        pts = None
+    pts = grad.get("points") if isinstance(grad, dict) else None
     if pts:
         set_light_gradient(light, pts)
         return
 except Exception as _e:
-    logging.debug(f"LIFX: gradient pre‑handler skipped: {_e}")
+    logging.debug(f"LIFX: gradient pre-handler skipped: {_e}")
     
     # Submit to executor for parallel execution
     executor = _get_parallel_executor()
@@ -1116,33 +1113,27 @@ except Exception as _e:
     # The future will complete in the background
 
 
-def set_lights_batch(lights: List[Any], data: Dict) -> None:
 
-# Fast‑path: if this is a gradient update, apply per light and return
-try:
-    grad = data.get("gradient") if isinstance(data, dict) else None
-    if isinstance(grad, dict) and grad.get("points"):
-        for light in lights or []:
-            set_light_gradient(light, grad.get("points"))
-        return
-except Exception as _e:
-    logging.debug(f"LIFX: batch gradient guard skipped: {_e}")
+def set_lights_batch(lights: List[Any], data: Dict) -> None:
     """Set multiple LIFX lights simultaneously in parallel."""
+    # Fast-path: apply gradient payloads directly to each light
+    try:
+        grad = data.get("gradient") if isinstance(data, dict) else None
+        if isinstance(grad, dict) and grad.get("points"):
+            for light in lights or []:
+                set_light_gradient(light, grad.get("points"))
+            return
+    except Exception as _e:
+        logging.debug(f"LIFX: batch gradient guard skipped: {_e}")
     if not lights:
         return
-    
     executor = _get_parallel_executor()
-    futures = []
-    
+    futures: List[Any] = []
     for light in lights:
         device = _get_device(light)
         if device:
-            future = executor.submit(_set_light_worker, device, data, light.name)
-            futures.append(future)
-    
-    # Don't wait - let them all execute in parallel
-    if futures:
-        logging.debug(f"LIFX: Submitted {len(futures)} parallel light updates")
+            futures.append(executor.submit(_set_light_worker, device, data, light.name))
+    # Fire-and-forget (do not join)
 
 
 def set_light_multizone(light: Any, zone_colors: List[Tuple[int, int, int]]) -> None:
@@ -1194,31 +1185,23 @@ def set_light_gradient(light: Any, gradient_points: List[Dict]) -> None:
         return
 
     def _parse_points(points):
-        """Return sorted list of (pos, (x,y)) where pos in [0,1]."""
         stops = []
         if not isinstance(points, list) or len(points) == 0:
-            return [(0.0, (0.32, 0.33))]  # neutral white fallback
-        # Normalize shapes
+            return [(0.0, (0.32, 0.33))]
         for i, p in enumerate(points):
             pos = None
             xy = None
             if isinstance(p, dict):
                 xy = p.get("color") or p.get("xy")
-                pos = p.get("position", None)
-                if pos is None:
-                    pos = p.get("pos", None)
-                if pos is None:
-                    pos = p.get("offset", None)
+                pos = p.get("position", p.get("pos", p.get("offset", None)))
             elif isinstance(p, (list, tuple)) and len(p) >= 2:
                 xy = (float(p[0]), float(p[1]))
             if xy is not None:
                 stops.append([pos, (float(xy[0]), float(xy[1]))])
-        # Assign even spacing if any position missing
         if any(s[0] is None for s in stops):
             n = max(1, len(stops))
             for j, s in enumerate(stops):
                 s[0] = 0.0 if n == 1 else j / float(n - 1)
-        # Clamp & sort
         for s in stops:
             s[0] = max(0.0, min(1.0, float(s[0])))
         stops.sort(key=lambda s: s[0])
@@ -1232,16 +1215,14 @@ def set_light_gradient(light: Any, gradient_points: List[Dict]) -> None:
         )
 
     def _resample(points_xy, count):
-        """Resample gradient stops into count RGB tuples."""
         stops = _parse_points(points_xy)
-        # Preconvert to RGB for smoothness
         rgb_stops = [(pos, convert_xy(xy[0], xy[1], 255)) for pos, xy in stops]
         if count <= 1:
             return [rgb_stops[-1][1]]
         colors = []
         for i in range(count):
             t = 0.0 if count == 1 else i / float(count - 1)
-            # Find the two surrounding stops
+            # find segment
             k = 0
             while k < len(rgb_stops) - 1 and t > rgb_stops[k+1][0]:
                 k += 1
@@ -1257,38 +1238,32 @@ def set_light_gradient(light: Any, gradient_points: List[Dict]) -> None:
         return colors
 
     try:
-        # Prefer explicit gradient point count when present (linear multizone)
         points_capable = int(light.protocol_cfg.get("points_capable", 0) or 0)
-
-        # Detect matrix/tile
+        # Detect matrix/tile capability
         is_matrix = False
         try:
             feats = device.get_product_features()
-            is_matrix = bool(feats.get("matrix") or feats.get("chain"))
+            is_matrix = bool(getattr(feats, "get", lambda *_: None)("matrix") or getattr(feats, "get", lambda *_: None)("chain"))
         except Exception:
-            # Heuristic: TileChain methods imply matrix
             is_matrix = hasattr(device, "project_matrix") or hasattr(device, "set_tile_colors")
 
         if points_capable > 0 and not is_matrix:
-            # Linear multizone devices (beams/strips)
             zone_colors = _resample(gradient_points, points_capable)
             set_light_multizone(light, zone_colors)
             return
 
-        # Matrix/tile devices (Candle, Tile, Ceiling, Tubes mapped as matrix)
-        # Determine an appropriate canvas size; send_rgb_zones_rapid will adapt.
+        # Matrix/tile devices
         total_zones = 0
         try:
             total_zones = int(light.protocol_cfg.get("total_zones", 0) or 0)
         except Exception:
             total_zones = 0
         if total_zones <= 0:
-            # Try to infer from known dimensions helper
             try:
                 w, h = _matrix_dims(light)
                 total_zones = max(1, int(w) * int(h))
             except Exception:
-                total_zones = 64  # sensible default for a single tile
+                total_zones = 64
 
         zone_colors = _resample(gradient_points, total_zones)
         send_rgb_zones_rapid(light, zone_colors)
