@@ -936,8 +936,6 @@ else:
     device.set_zone_colors(hsbk_colors, duration=0, rapid=True)
         logging.debug(f"LIFX: Set {len(zone_colors)} zone colors for {light.name}")
         
-    except Exception as e:
-        logging.warning(f"LIFX: Failed to set multizone for {light.name}: {e}")
 
 
 def set_light_gradient(light: Any, gradient_points: List[Dict]) -> None:
