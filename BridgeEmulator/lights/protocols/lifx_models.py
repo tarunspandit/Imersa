@@ -225,15 +225,15 @@ def get_hue_model_from_lifx(lifx_product_id: int, product_name: str = None) -> s
         elif "downlight" in name_lower:
             return "LCA005"  # Use latest A19 model (no downlight model exists)
         elif "candle" in name_lower:
-            return "LCA005"  # Use latest A19 model (no candle model exists)
+            return "LCX004"  # Ambiance Gradient for matrix capability
         elif "filament" in name_lower:
             return "LTW001"  # Tunable white (no filament model exists)
         elif "strip" in name_lower or " z " in name_lower:
-            return "LST002"  # Regular light strip
+            return "LCX004"  # Ambiance Gradient strip
         elif "beam" in name_lower:
-            return "LCX004"  # Gradient strip
+            return "LCX004"  # Ambiance Gradient strip
         elif "tile" in name_lower:
-            return "LCX002"  # Use gradient strip (no tile model exists)
+            return "LCX004"  # Ambiance Gradient for matrix
         elif "mini" in name_lower:
             if "white to warm" in name_lower:
                 return "LTW001"  # Tunable white
@@ -246,9 +246,9 @@ def get_hue_model_from_lifx(lifx_product_id: int, product_name: str = None) -> s
         elif "white" in name_lower:
             return "LWB010"  # White only
         elif "neon" in name_lower:
-            return "915005987201"  # Signe gradient (neon-like)
+            return "LCX004"  # Ambiance Gradient for zones
         elif "string" in name_lower or "holiday" in name_lower:
-            return "LST002"  # String lights
+            return "LCX004"  # Ambiance Gradient for addressable zones
     
     # Default to color bulb
     return DEFAULT_HUE_MODEL
