@@ -1426,8 +1426,8 @@ def send_rgb_zones_rapid(light: Any, zone_colors: List[Tuple[int, int, int]]) ->
                         product_id = getattr(device, 'product', None) or device.get_product()
                         
                         if product_id in [57, 68, 137, 138, 185, 186, 187, 188, 215, 216]:  # Candle
-                            matrix_width = 5
-                            matrix_height = 6
+                            matrix_width = 6  # 26 zones in 6×5 grid
+                            matrix_height = 5
                         elif product_id in [176, 177]:  # Ceiling
                             matrix_width = 8
                             matrix_height = 7
@@ -1435,8 +1435,8 @@ def send_rgb_zones_rapid(light: Any, zone_colors: List[Tuple[int, int, int]]) ->
                             matrix_width = 10
                             matrix_height = 12
                         elif product_id in [217, 218]:  # Tube
-                            matrix_width = 8
-                            matrix_height = 7
+                            matrix_width = 5  # 51 zones in 11×5 vertical arrangement
+                            matrix_height = 11
                         elif product_id in [219, 220]:  # Luna
                             matrix_width = 8
                             matrix_height = 8

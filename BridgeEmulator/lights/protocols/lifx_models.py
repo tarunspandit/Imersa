@@ -200,6 +200,26 @@ LIFX_CAPABILITIES = {
     "outdoor": [161, 162, 171, 173, 174, 175, 213, 214, 221, 222, 225],  # Outdoor rated products
 }
 
+
+    
+def get_matrix_zone_count(product_id: int) -> int:
+    """Get the actual zone count for Matrix devices based on product ID."""
+    zone_counts = {
+        # Candle variants - 26 zones
+        57: 26, 68: 26, 137: 26, 138: 26, 185: 26, 186: 26, 187: 26, 188: 26, 215: 26, 216: 26,
+        # Tube variants - 51 zones  
+        217: 51, 218: 51,
+        # Tile - 64 zones
+        55: 64,
+        # Ceiling 15" - 56 zones
+        176: 56, 177: 56,
+        # Ceiling 26" - 120 zones
+        201: 120, 202: 120,
+        # Luna - 64 zones
+        219: 64, 220: 64,
+    }
+    return zone_counts.get(product_id, 64)  # Default to 64 if unknown
+
 def get_hue_model_from_lifx(lifx_product_id: int, product_name: str = None) -> str:
     """
     Get appropriate Hue model ID from LIFX product ID.
@@ -497,13 +517,13 @@ def _get_device_matrix_dimensions(device) -> Optional[Tuple[int, int]]:
             
             # Known matrix dimensions  
             if product_id in [57, 68, 137, 138, 185, 186, 187, 188, 215, 216]:  # Candle
-                return (5, 6)
+                return (6, 5)  # 26 zones
             elif product_id in [176, 177]:  # Ceiling
                 return (8, 7)
             elif product_id in [201, 202]:  # Ceiling 13x26
                 return (10, 12)
             elif product_id in [217, 218]:  # Tube
-                return (8, 7)
+                return (5, 11)  # 51 zones
             elif product_id in [219, 220]:  # Luna
                 return (8, 8)
             elif product_id == 55:  # Tile
