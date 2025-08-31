@@ -1401,6 +1401,7 @@ def send_rgb_zones_rapid(light: Any, zone_colors: List[Tuple[int, int, int]]) ->
         
         if is_matrix:
             # Matrix/Polychrome devices (Candle, Tile, Ceiling)
+            logging.info(f"LIFX: Processing Matrix device {light.name} - device type: {type(device).__name__}")
             try:
                 # Get matrix dimensions from protocol_cfg or query device
                 matrix_width = light.protocol_cfg.get('matrix_width', 0)
@@ -1461,15 +1462,40 @@ def send_rgb_zones_rapid(light: Any, zone_colors: List[Tuple[int, int, int]]) ->
                             r, g, b = zone_colors[-1] if zone_colors else (0, 0, 0)
                         
                         h, s, v = _rgb_to_hsv65535(r, g, b)
-                        matrix_colors.append([h, s, max(1, v), 3500])
+                        # Ensure we're sending proper HSBK values
+                        hsbk = [int(h), int(s), int(max(1, v)), 3500]
+                        matrix_colors.append(hsbk)
+                        
+                # Debug: Log the actual HSBK values being sent
+                if matrix_colors:
+                    logging.info(f"LIFX: Matrix {light.name} - First 3 HSBK values: {matrix_colors[:3]}")
+                    logging.info(f"LIFX: Matrix dimensions: {matrix_width}x{matrix_height}, total colors: {len(matrix_colors)}")
                 
                 # Send to device using the appropriate method
                 if hasattr(device, 'set_tile_colors'):
                     # For single tile or non-chain matrix devices
-                    # Set colors starting at (0,0) with appropriate width
-                    device.set_tile_colors(0, matrix_colors[:64], duration=0, 
-                                         tile_count=1, x=0, y=0, width=matrix_width, rapid=True)
-                    logging.debug(f"LIFX: Set {len(matrix_colors)} matrix zones ({matrix_width}x{matrix_height}) for {light.name}")
+                    # IMPORTANT: width should be 8 for standard tiles, not matrix_width
+                    # The width parameter tells the API how to interpret the linear color array
+                    try:
+                        # Pad colors to 64 if needed (8x8 tile)
+                        colors_to_send = matrix_colors[:]
+                        while len(colors_to_send) < 64:
+                            colors_to_send.append([0, 0, 0, 3500])  # Black padding
+                        
+                        # Use width=8 for standard tile format
+                        device.set_tile_colors(0, colors_to_send[:64], duration=0, 
+                                             tile_count=1, x=0, y=0, width=8, rapid=True)
+                        logging.info(f"LIFX: Successfully called set_tile_colors for {light.name} with {len(colors_to_send[:64])} colors (width=8)")
+                    except Exception as e:
+                        logging.error(f"LIFX: set_tile_colors failed for {light.name}: {e}")
+                        # Try fallback to simple color
+                        if zone_colors:
+                            avg_r = sum(c[0] for c in zone_colors) // len(zone_colors)
+                            avg_g = sum(c[1] for c in zone_colors) // len(zone_colors)
+                            avg_b = sum(c[2] for c in zone_colors) // len(zone_colors)
+                            h, s, v = _rgb_to_hsv65535(avg_r, avg_g, avg_b)
+                            device.set_color([h, s, max(1, v), 3500], duration=0, rapid=True)
+                            logging.info(f"LIFX: Fallback to set_color for {light.name}")
                 elif hasattr(device, 'set_tilechain_colors'):
                     # For chained tiles
                     tiles = []
