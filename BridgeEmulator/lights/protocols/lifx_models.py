@@ -8,48 +8,47 @@ Maps LIFX product IDs to appropriate Philips Hue model IDs and capabilities
 # Priority: Gradient/Entertainment > Latest Gen > Color Range > Form Factor
 
 LIFX_TO_HUE_MODEL = {
-    # ALL MULTIZONE PRODUCTS -> Gradient-capable models (entertainment optimized)
-    31: "LCX006",    # LIFX Z - Gradient strip (most capable strip model)
-    32: "LCX006",    # LIFX Z
-    38: "LCX004",    # LIFX Beam - Gradient strip with zones
-    117: "LCX006",   # LIFX Z US
-    118: "LCX006",   # LIFX Z Intl
+    # ALL MULTIZONE PRODUCTS -> LCX004 Ambiance Gradient (allows multiple in entertainment zone)
+    31: "LCX004",    # LIFX Z - Ambiance Gradient
+    32: "LCX004",    # LIFX Z
+    38: "LCX004",    # LIFX Beam - Ambiance Gradient
+    117: "LCX004",   # LIFX Z US
+    118: "LCX004",   # LIFX Z Intl
     119: "LCX004",   # LIFX Beam US
     120: "LCX004",   # LIFX Beam Intl
-    141: "915005987201",  # LIFX Neon US - Signe gradient (vertical)
-    142: "915005987201",  # LIFX Neon Intl
-    161: "915005987201",  # LIFX Outdoor Neon US
-    162: "915005987201",  # LIFX Outdoor Neon Intl
-    205: "915005987201",  # LIFX Indoor Neon US
-    206: "915005987201",  # LIFX Indoor Neon Intl
-    213: "LCX004",   # LIFX Permanent Outdoor US - Gradient strip
+    141: "LCX004",   # LIFX Neon US - Ambiance Gradient
+    142: "LCX004",   # LIFX Neon Intl
+    161: "LCX004",   # LIFX Outdoor Neon US
+    162: "LCX004",   # LIFX Outdoor Neon Intl
+    205: "LCX004",   # LIFX Indoor Neon US
+    206: "LCX004",   # LIFX Indoor Neon Intl
+    213: "LCX004",   # LIFX Permanent Outdoor US
     214: "LCX004",   # LIFX Permanent Outdoor Intl
-    217: "915005987201",  # LIFX Tube US - Signe-like tube
-    218: "915005987201",  # LIFX Tube Intl
+    217: "LCX004",   # LIFX Tube US - Ambiance Gradient
+    218: "LCX004",   # LIFX Tube Intl
     
-    # ALL MATRIX PRODUCTS -> Use gradient strips for matrix capability
-    # Since there's no actual Hue tile/panel model in light_types, use gradient strips
-    55: "LCX002",    # LIFX Tile - Use gradient strip (supports points)
-    57: "LCX002",    # LIFX Candle (has matrix!) - gradient for effects
-    68: "LCX002",    # LIFX Candle
-    137: "LCX002",   # LIFX Candle Color US
-    138: "LCX002",   # LIFX Candle Colour Intl
-    143: "LST002",   # LIFX String US - Regular strip (no gradient model for strings)
-    144: "LST002",   # LIFX String Intl
-    176: "LCX002",   # LIFX Ceiling US - Matrix as gradient
-    177: "LCX002",   # LIFX Ceiling Intl
-    185: "LCX002",   # LIFX Candle Color US
-    186: "LCX002",   # LIFX Candle Colour Intl
-    187: "LCX002",   # LIFX Candle Color US
-    188: "LCX002",   # LIFX Candle Colour Intl
-    201: "LCX002",   # LIFX Ceiling 13x26 US - Large matrix as gradient
-    202: "LCX002",   # LIFX Ceiling 13x26 Intl
-    203: "LST002",   # LIFX String US
-    204: "LST002",   # LIFX String Intl
-    215: "LCX002",   # LIFX Candle Color US
-    216: "LCX002",   # LIFX Candle Colour Intl
-    219: "LCX002",   # LIFX Luna US - Round matrix as gradient
-    220: "LCX002",   # LIFX Luna Intl
+    # ALL MATRIX PRODUCTS -> LCX004 Ambiance Gradient (avoids Play strip limitation)
+    55: "LCX004",    # LIFX Tile - Ambiance Gradient
+    57: "LCX004",    # LIFX Candle - Ambiance Gradient
+    68: "LCX004",    # LIFX Candle
+    137: "LCX004",   # LIFX Candle Color US
+    138: "LCX004",   # LIFX Candle Colour Intl
+    143: "LCX004",   # LIFX String US - Ambiance Gradient for addressable zones
+    144: "LCX004",   # LIFX String Intl
+    176: "LCX004",   # LIFX Ceiling US - Ambiance Gradient
+    177: "LCX004",   # LIFX Ceiling Intl
+    185: "LCX004",   # LIFX Candle Color US
+    186: "LCX004",   # LIFX Candle Colour Intl
+    187: "LCX004",   # LIFX Candle Color US
+    188: "LCX004",   # LIFX Candle Colour Intl
+    201: "LCX004",   # LIFX Ceiling 13x26 US - Ambiance Gradient
+    202: "LCX004",   # LIFX Ceiling 13x26 Intl
+    203: "LCX004",   # LIFX String US
+    204: "LCX004",   # LIFX String Intl
+    215: "LCX004",   # LIFX Candle Color US
+    216: "LCX004",   # LIFX Candle Colour Intl
+    219: "LCX004",   # LIFX Luna US - Ambiance Gradient
+    220: "LCX004",   # LIFX Luna Intl
     
     # INFRARED CAPABLE (Night Vision) -> Latest Hue bulb models with best features
     29: "LCA005",    # LIFX A19 Night Vision - Latest A19 model
