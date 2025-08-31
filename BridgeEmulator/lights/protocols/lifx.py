@@ -1096,16 +1096,16 @@ def set_light(light: Any, data: Dict) -> None:
         return
 
 
-# Handle Hue v2 gradient payloads early (for gradient-capable models)
-try:
-    grad = data.get("gradient")
-    pts = grad.get("points") if isinstance(grad, dict) else None
-    if pts:
-        set_light_gradient(light, pts)
-        return
-except Exception as _e:
-    logging.debug(f"LIFX: gradient pre-handler skipped: {_e}")
-    
+    # Handle Hue v2 gradient payloads early (for gradient-capable models)
+    try:
+        grad = data.get("gradient")
+        pts = grad.get("points") if isinstance(grad, dict) else None
+        if pts:
+            set_light_gradient(light, pts)
+            return
+    except Exception as _e:
+        logging.debug(f"LIFX: gradient pre-handler skipped: {_e}")
+        
     # Submit to executor for parallel execution
     executor = _get_parallel_executor()
     future = executor.submit(_set_light_worker, device, data, light.name)
@@ -1907,4 +1907,3 @@ def _matrix_dims(light: Any, zone_count: int) -> tuple[int,int]:
     
     # Default to linear arrangement for unknown
     return max(1, zone_count), 1
-
