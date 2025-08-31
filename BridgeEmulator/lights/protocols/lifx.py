@@ -1276,13 +1276,13 @@ def send_rgb_zones_rapid(light: Any, zone_colors: List[Tuple[int, int, int]]) ->
             is_multizone = hasattr(device, 'set_zone_colors')
         
         if is_matrix:
-    # Some devices (e.g., LIFX Candle Color) report 'matrix' but are actually MultiZone under the hood.
-    has_tile_methods = hasattr(device, 'set_tile_colors') or hasattr(device, 'set_tilechain_colors')
-    has_multizone = hasattr(device, 'set_zone_colors') or hasattr(device, 'extended_set_zone_color')
-    if not has_tile_methods and has_multizone:
-        # Treat as multizone instead of matrix
-        is_matrix = False
-    else:
+            # Some devices (e.g., LIFX Candle Color) report 'matrix' but are actually MultiZone under the hood.
+            has_tile_methods = hasattr(device, 'set_tile_colors') or hasattr(device, 'set_tilechain_colors')
+            has_multizone = hasattr(device, 'set_zone_colors') or hasattr(device, 'extended_set_zone_color')
+            if not has_tile_methods and has_multizone:
+                # Stay in matrix path; do NOT demote to multizone
+                pass
+            else:
         try:
             # Matrix/Tile devices (Tile, Ceiling, etc.)
             # Get matrix dimensions from protocol_cfg or query device
