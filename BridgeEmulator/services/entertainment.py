@@ -532,6 +532,7 @@ def entertainmentService(group, user, mirror_port=None):
                 nativeLights = {}
                 esphomeLights = {}
                 mqttLights = []
+                lifxLights = {}    # Collect LIFX zones for batch processing
                 # Clear wledLights lights list for new frame
                 for ip in list(wledLights.keys()):
                     if "lights" in wledLights[ip]:
@@ -667,7 +668,7 @@ def entertainmentService(group, user, mirror_port=None):
                                         _yeelight_last_send[ip] = now
 
 
-                            # LIFX (lifxlan rapid UDP updates)
+                            # LIFX (lifxlan rapid UDP updates with zone support)
                             elif proto == "lifx":
                                 # Respect runtime integration toggle
                                 try:
@@ -676,20 +677,43 @@ def entertainmentService(group, user, mirror_port=None):
                                         raise Exception("LIFX disabled")
                                 except Exception:
                                     pass
+                                
                                 key = light.protocol_cfg.get("id") or light.protocol_cfg.get("ip")
                                 if key:
-                                    op = skipSimilarFrames(light.id_v1, light.state["xy"], light.state["bri"])
-                                    now_ts = time.time()
-                                    max_fps = _lifx_tuning()
-                                    min_interval = 1.0 / max_fps
-                                    last_ts = _lifx_last_send.get(key, 0)
-                                    if now_ts - last_ts >= min_interval:
-                                        if op in (1, 2):
-                                            try:
-                                                lifx_protocol.send_rgb_rapid(light, r, g, b)
-                                            except Exception:
-                                                pass
-                                            _lifx_last_send[key] = now_ts
+                                    if key not in lifxLights:
+                                        lifxLights[key] = {
+                                            "light": light,
+                                            "zones": {},  # zone_index -> (r, g, b)
+                                            "gradient_points": [],
+                                            "is_gradient": is_gradient_model,
+                                            "points_capable": light.protocol_cfg.get("points_capable", 0)
+                                        }
+                                    
+                                    # Collect gradient points for gradient-capable devices
+                                    if is_gradient_model:
+                                        # In API v1, dev_type==1 means gradient point
+                                        # In API v2, seg_index > 0 typically means additional segments
+                                        is_gradient_point = (apiVersion == 1 and 'dev_type' in locals() and dev_type == 1) or \
+                                                           (apiVersion == 2 and seg_index > 0)
+                                        
+                                        if is_gradient_point:  # Gradient point
+                                            lifxLights[key]["gradient_points"].append({
+                                                "id": seg_index,
+                                                "color": [r, g, b]
+                                            })
+                                        else:  # Whole device color or first segment
+                                            lifxLights[key]["zones"][0] = [r, g, b]
+                                            # For API v2, collect as first gradient point
+                                            if apiVersion == 2:
+                                                lifxLights[key]["gradient_points"].append({
+                                                    "id": seg_index,
+                                                    "color": [r, g, b]
+                                                })
+                                            else:
+                                                lifxLights[key]["gradient_points"] = [{"id": 0, "color": [r, g, b]}]
+                                    else:
+                                        # Non-gradient device - single color
+                                        lifxLights[key]["zones"][0] = [r, g, b]
 
                             # WLED (Realtime UDP 21324, DNRGB)
                             elif proto == "wled":
@@ -831,7 +855,7 @@ def entertainmentService(group, user, mirror_port=None):
                                         c.command("set_rgb", [(r * 65536) + (g * 256) + b, "smooth", smooth_ms])
                                         _yeelight_last_send[ip] = now
 
-                            # LIFX (lifxlan rapid UDP updates)
+                            # LIFX (lifxlan rapid UDP updates with zone support)
                             elif proto == "lifx":
                                 # Respect runtime integration toggle
                                 try:
@@ -840,20 +864,43 @@ def entertainmentService(group, user, mirror_port=None):
                                         raise Exception("LIFX disabled")
                                 except Exception:
                                     pass
+                                
                                 key = light.protocol_cfg.get("id") or light.protocol_cfg.get("ip")
                                 if key:
-                                    op = skipSimilarFrames(light.id_v1, light.state["xy"], light.state["bri"])
-                                    now_ts = time.time()
-                                    max_fps = _lifx_tuning()
-                                    min_interval = 1.0 / max_fps
-                                    last_ts = _lifx_last_send.get(key, 0)
-                                    if now_ts - last_ts >= min_interval:
-                                        if op in (1, 2):
-                                            try:
-                                                lifx_protocol.send_rgb_rapid(light, r, g, b)
-                                            except Exception:
-                                                pass
-                                            _lifx_last_send[key] = now_ts
+                                    if key not in lifxLights:
+                                        lifxLights[key] = {
+                                            "light": light,
+                                            "zones": {},  # zone_index -> (r, g, b)
+                                            "gradient_points": [],
+                                            "is_gradient": is_gradient_model,
+                                            "points_capable": light.protocol_cfg.get("points_capable", 0)
+                                        }
+                                    
+                                    # Collect gradient points for gradient-capable devices
+                                    if is_gradient_model:
+                                        # In API v1, dev_type==1 means gradient point
+                                        # In API v2, seg_index > 0 typically means additional segments
+                                        is_gradient_point = (apiVersion == 1 and 'dev_type' in locals() and dev_type == 1) or \
+                                                           (apiVersion == 2 and seg_index > 0)
+                                        
+                                        if is_gradient_point:  # Gradient point
+                                            lifxLights[key]["gradient_points"].append({
+                                                "id": seg_index,
+                                                "color": [r, g, b]
+                                            })
+                                        else:  # Whole device color or first segment
+                                            lifxLights[key]["zones"][0] = [r, g, b]
+                                            # For API v2, collect as first gradient point
+                                            if apiVersion == 2:
+                                                lifxLights[key]["gradient_points"].append({
+                                                    "id": seg_index,
+                                                    "color": [r, g, b]
+                                                })
+                                            else:
+                                                lifxLights[key]["gradient_points"] = [{"id": 0, "color": [r, g, b]}]
+                                    else:
+                                        # Non-gradient device - single color
+                                        lifxLights[key]["zones"][0] = [r, g, b]
 
                             elif proto == "wled":
                                 ip = light.protocol_cfg["ip"]
@@ -1053,10 +1100,86 @@ def entertainmentService(group, user, mirror_port=None):
                             except:
                                 pass
 
+                    # LIFX zone/gradient processing
+                    if lifxLights:
+                        max_fps = _lifx_tuning()
+                        min_interval = 1.0 / max_fps
+                        now_ts = time.time()
+                        
+                        for key, data in lifxLights.items():
+                            # Check frame rate limit
+                            last_ts = _lifx_last_send.get(key, 0)
+                            if now_ts - last_ts < min_interval:
+                                continue
+                                
+                            light = data["light"]
+                            points_capable = data["points_capable"]
+                            gradient_points = data["gradient_points"]
+                            zones = data["zones"]
+                            
+                            try:
+                                if points_capable > 0 and gradient_points:
+                                    # Device supports zones/gradient
+                                    # Sort gradient points by ID
+                                    gradient_points.sort(key=lambda x: x["id"])
+                                    
+                                    # Build zone colors array
+                                    zone_colors = []
+                                    
+                                    # If we have multiple gradient points, interpolate between them
+                                    if len(gradient_points) > 1:
+                                        # Map gradient points to zones
+                                        for i in range(points_capable):
+                                            # Find position in gradient (0.0 to 1.0)
+                                            position = i / max(1, points_capable - 1)
+                                            
+                                            # Find surrounding gradient points
+                                            for j in range(len(gradient_points) - 1):
+                                                pt1_pos = gradient_points[j]["id"] / max(1, len(gradient_points) - 1)
+                                                pt2_pos = gradient_points[j + 1]["id"] / max(1, len(gradient_points) - 1)
+                                                
+                                                if pt1_pos <= position <= pt2_pos:
+                                                    # Interpolate between these two points
+                                                    if pt2_pos - pt1_pos > 0:
+                                                        t = (position - pt1_pos) / (pt2_pos - pt1_pos)
+                                                    else:
+                                                        t = 0
+                                                    
+                                                    r1, g1, b1 = gradient_points[j]["color"]
+                                                    r2, g2, b2 = gradient_points[j + 1]["color"]
+                                                    
+                                                    r = int(r1 + (r2 - r1) * t)
+                                                    g = int(g1 + (g2 - g1) * t)
+                                                    b = int(b1 + (b2 - b1) * t)
+                                                    
+                                                    zone_colors.append((r, g, b))
+                                                    break
+                                            else:
+                                                # Use last color for remaining zones
+                                                if gradient_points:
+                                                    zone_colors.append(tuple(gradient_points[-1]["color"]))
+                                    else:
+                                        # Single gradient point - use it for all zones
+                                        color = tuple(gradient_points[0]["color"])
+                                        zone_colors = [color] * points_capable
+                                    
+                                    # Send zones to device
+                                    lifx_protocol.send_rgb_zones_rapid(light, zone_colors)
+                                    
+                                elif zones:
+                                    # Non-gradient device with single color
+                                    r, g, b = zones.get(0, [0, 0, 0])
+                                    lifx_protocol.send_rgb_rapid(light, r, g, b)
+                                    
+                                _lifx_last_send[key] = now_ts
+                                
+                            except Exception as e:
+                                logging.debug(f"LIFX zone processing error: {e}")
+
                     # Hue lights are handled via DTLS tunnel, no need for API calls
 
                     # (Yeelight updates are already sent inline in the loops above.)
-    # Home Assistant batch
+                    # Home Assistant batch
                     if haLights:
                         from services.homeAssistantWS import homeassistant_ws_client
                         if homeassistant_ws_client and not homeassistant_ws_client.client_terminated:
