@@ -58,7 +58,7 @@ except ImportError:
 logging = logManager.logger.get_logger(__name__)
 
 try:
-    from lifxlan import LifxLAN, Light as LifxLight, Device as LifxDevice, MultiZoneLight, TileChain
+    from lifxlan import LifxLAN, Light as LifxLight, Device as LifxDevice
     import lifxlan.device as lifx_device_mod
     LIFX_AVAILABLE = True
     
@@ -69,63 +69,8 @@ except ImportError:
     LifxLAN = None
     LifxLight = None
     LifxDevice = None
-    MultiZoneLight = None
-    TileChain = None
     lifx_device_mod = None
     logging.warning("LIFX: lifxlan library not installed")
-
-
-def _create_proper_device(mac: str, ip: str, source_id: int = None) -> Optional[Any]:
-    """Create the proper LIFX device type based on its capabilities.
-    
-    Args:
-        mac: MAC address of the device
-        ip: IP address of the device
-        source_id: Optional source ID for the device
-        
-    Returns:
-        Properly typed device (MultiZoneLight, TileChain, or Light)
-    """
-    if not LIFX_AVAILABLE:
-        return None
-        
-    try:
-        import random
-        if source_id is None:
-            source_id = random.randrange(2, 1 << 32)
-            
-        # First create a basic device to check capabilities
-        from lifxlan import Light as LifxLight, MultiZoneLight, TileChain
-        
-        # Create basic Light first to get product features
-        device = LifxLight(mac, ip, source_id=source_id)
-        
-        # Get product features to determine device type
-        try:
-            features = device.get_product_features()
-            
-            # Check for multizone support (strips, beams)
-            if features.get('multizone', False):
-                logging.debug(f"LIFX: Creating MultiZoneLight for {mac}")
-                return MultiZoneLight(mac, ip, source_id=source_id)
-            
-            # Check for chain/matrix support (tiles, candles)  
-            elif features.get('chain', False) or features.get('matrix', False):
-                logging.debug(f"LIFX: Creating TileChain for {mac}")
-                return TileChain(mac, ip, source_id=source_id)
-            
-            # Default to basic Light
-            else:
-                logging.debug(f"LIFX: Creating basic Light for {mac}")
-                return device
-                
-        except Exception as e:
-            logging.debug(f"LIFX: Could not get features, using basic Light: {e}")
-            return device
-            
-    except Exception as e:
-        logging.error(f"LIFX: Failed to create device {mac} at {ip}: {e}")
-        return None
 
 
 class LifxDeviceCache:
@@ -235,31 +180,28 @@ class LifxDeviceCache:
                     for device in devices:
                         try:
                             if device.get_ip_addr() == ip:
-                                # Device is already properly typed by LifxLAN
                                 return device
                         except:
                             continue
                 finally:
                     lifx_device_mod.UDP_BROADCAST_IP_ADDRS = original_addrs
             
-            # Method 2: Try direct device construction with proper type
-            try:
-                # Create a Light with just the IP (MAC will be discovered later)
-                from lifxlan import Light as LifxLight
-                temp_device = LifxLight("00:00:00:00:00:00", ip)
-                # Verify it's responsive and get MAC
-                temp_device.get_power()
-                mac = temp_device.get_mac_addr()
-                # Now create proper device type
-                return _create_proper_device(mac, ip)
-            except:
-                pass
+            # Method 2: Try direct Light construction (works in some cases)
+            if LifxLight and ip:
+                try:
+                    # Create a Light with just the IP (MAC will be discovered later)
+                    device = LifxLight("00:00:00:00:00:00", ip)
+                    # Verify it's responsive
+                    device.get_power()
+                    return device
+                except:
+                    pass
                     
         except Exception as e:
             logging.debug(f"LIFX: Unicast discovery failed for {ip}: {e}")
             
         return None
-
+    
     def _broadcast_discover(self, mac: Optional[str] = None, ip: Optional[str] = None) -> Optional[Any]:
         """Discover device via broadcast."""
         lan = self._get_lan()
@@ -491,7 +433,7 @@ def _rgb_to_hsv65535(r: int, g: int, b: int) -> Tuple[int, int, int]:
 
 
 def _get_device(light) -> Optional[Any]:
-    """Get LIFX device for a light object, using cache and ensuring proper type."""
+    """Get LIFX device for a light object, using cache."""
     if not LIFX_AVAILABLE:
         return None
         
@@ -502,53 +444,7 @@ def _get_device(light) -> Optional[Any]:
     if isinstance(ip, str) and ":" in ip:
         ip = ip.split(":", 1)[0]
     
-    # Try to get from cache first
-    device = _device_cache.get(mac or ip)
-    
-    # If cached device exists, check if it's the right type
-    if device:
-        try:
-            features = device.get_product_features()
-            is_multizone = features.get('multizone', False)
-            is_chain = features.get('chain', False) or features.get('matrix', False)
-            
-            # Check if we have the right device type
-            from lifxlan import MultiZoneLight, TileChain
-            if is_multizone and not isinstance(device, MultiZoneLight):
-                logging.debug(f"LIFX: Cached device is wrong type, recreating as MultiZoneLight")
-                device = None  # Force re-discovery
-            elif is_chain and not isinstance(device, TileChain):
-                logging.debug(f"LIFX: Cached device is wrong type, recreating as TileChain")
-                device = None  # Force re-discovery
-        except:
-            pass
-    
-    # If no cached device or wrong type, discover it
-    if not device:
-        device = _device_cache.discover_device(mac, ip)
-        
-        # Ensure we have the proper device type
-        if device and mac and ip:
-            try:
-                # Get features to determine proper type
-                features = device.get_product_features()
-                is_multizone = features.get('multizone', False)
-                is_chain = features.get('chain', False) or features.get('matrix', False)
-                
-                from lifxlan import MultiZoneLight, TileChain
-                
-                # Create proper device type if needed
-                if is_multizone and not isinstance(device, MultiZoneLight):
-                    device = MultiZoneLight(mac, ip)
-                    _device_cache.put(mac, device)
-                    _device_cache.put(ip, device)
-                elif is_chain and not isinstance(device, TileChain):
-                    device = TileChain(mac, ip)
-                    _device_cache.put(mac, device)
-                    _device_cache.put(ip, device)
-                    
-            except Exception as e:
-                logging.debug(f"LIFX: Could not determine device type: {e}")
+    device = _device_cache.discover_device(mac, ip)
     
     # Register for keep-alive if we got a device
     if device:
@@ -560,6 +456,7 @@ def _get_device(light) -> Optional[Any]:
             register_device_for_keepalive(mac, device_ip)
     
     return device
+
 
 # No longer tracking Docker fix - using subnet scanning instead
 
@@ -585,10 +482,10 @@ def _scan_ip_direct(ip: str, timeout: float = 0.5) -> Optional[Any]:
         response = unpack_lifx_message(data)
         
         if isinstance(response, StateService):
-            # Create proper device type based on MAC
+            # Create Light object for this device
             mac = response.target_addr
-            device = _create_proper_device(mac, ip)
-            return device
+            light = LifxLight(mac, ip)
+            return light
             
     except:
         pass
@@ -599,6 +496,7 @@ def _scan_ip_direct(ip: str, timeout: float = 0.5) -> Optional[Any]:
             pass
     
     return None
+
 
 def _scan_subnet_for_lifx(subnet: str = "192.168.1") -> List[Any]:
     """Scan a subnet for LIFX devices when broadcast fails."""
@@ -1712,6 +1610,7 @@ def _matrix_dims(light: Any, zone_count: int) -> tuple[int,int]:
     if zone_count == 49: return 7, 7
     return max(1, zone_count), 1
 
+def send_rgb_zones_rapid(light: Any, zone_colors: List[Tuple[int, int, int]]) -> None:
     device = _get_device(light)
     if not device or not zone_colors:
         return
