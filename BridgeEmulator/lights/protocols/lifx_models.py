@@ -1,3 +1,7 @@
+MULTIZONE_PIDS=set()
+MATRIX_PIDS=set()
+EXTENDED_MZ_PIDS=set()
+GRADIENT_MODEL='LCX004'
 """
 LIFX Model Identification and Mapping
 Maps LIFX product IDs to appropriate Philips Hue model IDs and capabilities
@@ -269,11 +273,6 @@ def get_lifx_capabilities(lifx_product_id: int, features: dict = None) -> dict:
     # Check if product is multizone or matrix
     is_multizone = lifx_product_id in LIFX_CAPABILITIES.get("multizone", [])
     is_matrix = lifx_product_id in LIFX_CAPABILITIES.get("matrix", [])
-# Polychrome devices (e.g., Candle Color) often expose 'matrix' features
-# but are controlled via MultiZone messages in lifxlan. Enable multizone fallback.
-if lifx_product_id in {57, 68, 137, 138, 185, 186, 187, 188}:
-    is_multizone = True
-
     
     capabilities = {
         "certified": True,
@@ -513,3 +512,49 @@ def _get_device_matrix_dimensions(device) -> Optional[Tuple[int, int]]:
         return None
     except:
         return None
+
+def get_hue_model_from_lifx(lifx_product_id: int, product_name: Optional[str] = None) -> str:
+    if lifx_product_id in LIFX_TO_HUE_MODEL:
+        return LIFX_TO_HUE_MODEL[lifx_product_id]
+    if lifx_product_id in MULTIZONE_PIDS or lifx_product_id in MATRIX_PIDS:
+        return GRADIENT_MODEL
+    return DEFAULT_HUE_MODEL
+
+def get_lifx_capabilities(lifx_product_id: int, features: Optional[dict] = None) -> dict:
+    features = features or {}
+    is_multizone = lifx_product_id in MULTIZONE_PIDS or bool(features.get("multizone"))
+    is_matrix    = lifx_product_id in MATRIX_PIDS or bool(features.get("matrix"))
+    return {
+        "multizone": is_multizone,
+        "matrix": is_matrix,
+        "extended_multizone": lifx_product_id in EXTENDED_MZ_PIDS,
+        "control": {
+            "colorgamuttype": "C",
+            "colorgamut": [[0.6915,0.3083],[0.1700,0.7000],[0.1532,0.0475]],
+            "mindimlevel": 2000,
+            "maxlumen": 1100,
+        }
+    }
+
+def identify_lifx_model(device) -> Tuple[str, dict, str]:
+    pid, name = -1, "LIFX"
+    try:
+        if hasattr(device, "get_product_id"):
+            pid = int(device.get_product_id())
+    except Exception:
+        pass
+    try:
+        if hasattr(device, "get_label"):
+            name = device.get_label() or name
+    except Exception:
+        pass
+    hue_model = get_hue_model_from_lifx(pid, name)
+    features = {}
+    try:
+        if hasattr(device, "get_product_features"):
+            features = device.get_product_features() or {}
+    except Exception:
+        features = {}
+    caps = get_lifx_capabilities(pid, features)
+    return hue_model, caps, name
+
