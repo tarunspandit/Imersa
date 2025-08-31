@@ -9,173 +9,174 @@ Maps LIFX product IDs to appropriate Philips Hue model IDs and capabilities
 
 LIFX_TO_HUE_MODEL = {
     # ALL MULTIZONE PRODUCTS -> Gradient-capable models (entertainment optimized)
-    31: "LCX006",    # LIFX Z - Gradient strip V4 (most capable)
+    31: "LCX006",    # LIFX Z - Gradient strip (most capable strip model)
     32: "LCX006",    # LIFX Z
-    38: "915005987201",  # LIFX Beam - Play gradient strip
+    38: "LCX004",    # LIFX Beam - Gradient strip with zones
     117: "LCX006",   # LIFX Z US
     118: "LCX006",   # LIFX Z Intl
-    119: "915005987201",  # LIFX Beam US
-    120: "915005987201",  # LIFX Beam Intl
-    141: "LCX002",   # LIFX Neon US - Gradient Signe
-    142: "LCX002",   # LIFX Neon Intl
-    161: "LCX002",   # LIFX Outdoor Neon US
-    162: "LCX002",   # LIFX Outdoor Neon Intl
-    205: "LCX002",   # LIFX Indoor Neon US
-    206: "LCX002",   # LIFX Indoor Neon Intl
-    213: "LCX004",   # LIFX Permanent Outdoor US - Gradient strip outdoor
+    119: "LCX004",   # LIFX Beam US
+    120: "LCX004",   # LIFX Beam Intl
+    141: "915005987201",  # LIFX Neon US - Signe gradient (vertical)
+    142: "915005987201",  # LIFX Neon Intl
+    161: "915005987201",  # LIFX Outdoor Neon US
+    162: "915005987201",  # LIFX Outdoor Neon Intl
+    205: "915005987201",  # LIFX Indoor Neon US
+    206: "915005987201",  # LIFX Indoor Neon Intl
+    213: "LCX004",   # LIFX Permanent Outdoor US - Gradient strip
     214: "LCX004",   # LIFX Permanent Outdoor Intl
-    217: "LCX002",   # LIFX Tube US - Gradient tube
-    218: "LCX002",   # LIFX Tube Intl
+    217: "915005987201",  # LIFX Tube US - Signe-like tube
+    218: "915005987201",  # LIFX Tube Intl
     
-    # ALL MATRIX PRODUCTS -> Most capable 2D control models
-    55: "440400982841",   # LIFX Tile - Hue Tile/Panel
-    57: "440400982841",   # LIFX Candle (has matrix!)
-    68: "440400982841",   # LIFX Candle
-    137: "440400982841",  # LIFX Candle Color US
-    138: "440400982841",  # LIFX Candle Colour Intl
-    143: "LST004",    # LIFX String US - Latest string lights
-    144: "LST004",    # LIFX String Intl
-    176: "440400982841",  # LIFX Ceiling US - Matrix ceiling
-    177: "440400982841",  # LIFX Ceiling Intl
-    185: "440400982841",  # LIFX Candle Color US
-    186: "440400982841",  # LIFX Candle Colour Intl
-    187: "440400982841",  # LIFX Candle Color US
-    188: "440400982841",  # LIFX Candle Colour Intl
-    201: "440400982841",  # LIFX Ceiling 13x26 US
-    202: "440400982841",  # LIFX Ceiling 13x26 Intl
-    203: "LST004",    # LIFX String US
-    204: "LST004",    # LIFX String Intl
-    215: "440400982841",  # LIFX Candle Color US
-    216: "440400982841",  # LIFX Candle Colour Intl
-    219: "440400982841",  # LIFX Luna US - Matrix round
-    220: "440400982841",  # LIFX Luna Intl
+    # ALL MATRIX PRODUCTS -> Use gradient strips for matrix capability
+    # Since there's no actual Hue tile/panel model in light_types, use gradient strips
+    55: "LCX002",    # LIFX Tile - Use gradient strip (supports points)
+    57: "LCX002",    # LIFX Candle (has matrix!) - gradient for effects
+    68: "LCX002",    # LIFX Candle
+    137: "LCX002",   # LIFX Candle Color US
+    138: "LCX002",   # LIFX Candle Colour Intl
+    143: "LST002",   # LIFX String US - Regular strip (no gradient model for strings)
+    144: "LST002",   # LIFX String Intl
+    176: "LCX002",   # LIFX Ceiling US - Matrix as gradient
+    177: "LCX002",   # LIFX Ceiling Intl
+    185: "LCX002",   # LIFX Candle Color US
+    186: "LCX002",   # LIFX Candle Colour Intl
+    187: "LCX002",   # LIFX Candle Color US
+    188: "LCX002",   # LIFX Candle Colour Intl
+    201: "LCX002",   # LIFX Ceiling 13x26 US - Large matrix as gradient
+    202: "LCX002",   # LIFX Ceiling 13x26 Intl
+    203: "LST002",   # LIFX String US
+    204: "LST002",   # LIFX String Intl
+    215: "LCX002",   # LIFX Candle Color US
+    216: "LCX002",   # LIFX Candle Colour Intl
+    219: "LCX002",   # LIFX Luna US - Round matrix as gradient
+    220: "LCX002",   # LIFX Luna Intl
     
-    # INFRARED CAPABLE (Night Vision) -> Latest entertainment bulbs
-    29: "LCT024",    # LIFX A19 Night Vision
-    30: "LCT024",    # LIFX BR30 Night Vision
-    45: "LCT024",    # LIFX A19 Night Vision
-    46: "LCT024",    # LIFX BR30 Night Vision
-    64: "LCT024",    # LIFX A19 Night Vision
-    65: "LCT024",    # LIFX BR30 Night Vision
-    109: "LCT024",   # LIFX A19 Night Vision
-    110: "LCT024",   # LIFX BR30 Night Vision
-    111: "LCT024",   # LIFX A19 Night Vision
-    112: "LCT024",   # LIFX BR30 Night Vision Intl
+    # INFRARED CAPABLE (Night Vision) -> Latest Hue bulb models with best features
+    29: "LCA005",    # LIFX A19 Night Vision - Latest A19 model
+    30: "LCA005",    # LIFX BR30 Night Vision - Use A19 model (no BR30 gradient)
+    45: "LCA005",    # LIFX A19 Night Vision
+    46: "LCA005",    # LIFX BR30 Night Vision
+    64: "LCA005",    # LIFX A19 Night Vision
+    65: "LCA005",    # LIFX BR30 Night Vision
+    109: "LCA005",   # LIFX A19 Night Vision
+    110: "LCA005",   # LIFX BR30 Night Vision
+    111: "LCA005",   # LIFX A19 Night Vision
+    112: "LCA005",   # LIFX BR30 Night Vision Intl
     
-    # HEV ANTIBACTERIAL -> Latest gen for special features
-    90: "LCT024",    # LIFX Clean
-    99: "LCT024",    # LIFX Clean
+    # HEV ANTIBACTERIAL -> Latest bulb for special features
+    90: "LCA005",    # LIFX Clean
+    99: "LCA005",    # LIFX Clean
     
-    # HIGH-END COLOR BULBS -> Latest generation models
-    1: "LCT024",     # LIFX Original 1000
-    3: "LCT024",     # LIFX Color 650
-    15: "LCT024",    # LIFX Color 1000
-    22: "LCT024",    # LIFX Color 1000
-    27: "LCT024",    # LIFX A19
-    43: "LCT024",    # LIFX A19
-    62: "LCT024",    # LIFX A19
-    91: "LCT024",    # LIFX Color
-    92: "LCT024",    # LIFX Color
-    93: "LCT024",    # LIFX A19 US
-    97: "LCT024",    # LIFX A19
-    100: "LCT024",   # LIFX Filament Clear
-    123: "LCT024",   # LIFX Color US
-    124: "LCT024",   # LIFX Colour Intl
-    129: "LCT024",   # LIFX Color US
-    130: "LCT024",   # LIFX Colour Intl
-    135: "LCT024",   # LIFX GU10 Color US
-    136: "LCT024",   # LIFX GU10 Colour Intl
-    163: "LCT024",   # LIFX A19 US
-    165: "LCT024",   # LIFX A19 Intl
-    169: "LCT024",   # LIFX A21 1600lm US (high lumen)
-    170: "LCT024",   # LIFX A21 1600lm Intl
-    181: "LCT024",   # LIFX Color US
-    182: "LCT024",   # LIFX Colour Intl
+    # HIGH-END COLOR BULBS -> Latest A19 model (LCA005 = v7 with best gamut)
+    1: "LCA005",     # LIFX Original 1000
+    3: "LCA005",     # LIFX Color 650
+    15: "LCA005",    # LIFX Color 1000
+    22: "LCA005",    # LIFX Color 1000
+    27: "LCA005",    # LIFX A19
+    43: "LCA005",    # LIFX A19
+    62: "LCA005",    # LIFX A19
+    91: "LCA005",    # LIFX Color
+    92: "LCA005",    # LIFX Color
+    93: "LCA005",    # LIFX A19 US
+    97: "LCA005",    # LIFX A19
+    100: "LCA005",   # LIFX Filament Clear (use color model for capability)
+    123: "LCA005",   # LIFX Color US
+    124: "LCA005",   # LIFX Colour Intl
+    129: "LCA005",   # LIFX Color US
+    130: "LCA005",   # LIFX Colour Intl
+    135: "LCA005",   # LIFX GU10 Color US (use A19 model for capability)
+    136: "LCA005",   # LIFX GU10 Colour Intl
+    163: "LCA005",   # LIFX A19 US
+    165: "LCA005",   # LIFX A19 Intl
+    169: "LCA005",   # LIFX A21 1600lm US (high lumen)
+    170: "LCA005",   # LIFX A21 1600lm Intl
+    181: "LCA005",   # LIFX Color US
+    182: "LCA005",   # LIFX Colour Intl
     
-    # BR30 BULBS -> Latest BR30 model with entertainment
-    20: "LCT024",    # LIFX Color 1000 BR30
-    28: "LCT024",    # LIFX BR30
-    44: "LCT024",    # LIFX BR30
-    63: "LCT024",    # LIFX BR30
-    94: "LCT024",    # LIFX BR30
-    98: "LCT024",    # LIFX BR30
-    164: "LCT024",   # LIFX BR30 US
-    166: "LCT024",   # LIFX BR30 Intl
+    # BR30 BULBS -> Use best A19 model (no special BR30 in light_types)
+    20: "LCA005",    # LIFX Color 1000 BR30
+    28: "LCA005",    # LIFX BR30
+    44: "LCA005",    # LIFX BR30
+    63: "LCA005",    # LIFX BR30
+    94: "LCA005",    # LIFX BR30
+    98: "LCA005",    # LIFX BR30
+    164: "LCA005",   # LIFX BR30 US
+    166: "LCA005",   # LIFX BR30 Intl
     
-    # DOWNLIGHTS -> Latest downlight with entertainment
-    36: "LCG002",    # LIFX Downlight
-    37: "LCG002",    # LIFX Downlight
-    40: "LCG002",    # LIFX Downlight
-    121: "LCG002",   # LIFX Downlight Intl
-    122: "LCG002",   # LIFX Downlight US
-    167: "LCG002",   # LIFX Downlight
-    168: "LCG002",   # LIFX Downlight
-    178: "LCG002",   # LIFX Downlight US
-    179: "LCG002",   # LIFX Downlight US
-    180: "LCG002",   # LIFX Downlight US
-    223: "LCG002",   # LIFX Downlight US
-    224: "LCG002",   # LIFX Downlight Intl
+    # DOWNLIGHTS -> Use best bulb model (no downlight model in light_types)
+    36: "LCA005",    # LIFX Downlight
+    37: "LCA005",    # LIFX Downlight
+    40: "LCA005",    # LIFX Downlight
+    121: "LCA005",   # LIFX Downlight Intl
+    122: "LCA005",   # LIFX Downlight US
+    167: "LCA005",   # LIFX Downlight
+    168: "LCA005",   # LIFX Downlight
+    178: "LCA005",   # LIFX Downlight US
+    179: "LCA005",   # LIFX Downlight US
+    180: "LCA005",   # LIFX Downlight US
+    223: "LCA005",   # LIFX Downlight US
+    224: "LCA005",   # LIFX Downlight Intl
     
-    # MINI COLOR -> Compact but capable
-    49: "LCT024",    # LIFX Mini Color
-    59: "LCT024",    # LIFX Mini Color
+    # MINI COLOR -> Use best bulb model
+    49: "LCA005",    # LIFX Mini Color
+    59: "LCA005",    # LIFX Mini Color
     
-    # GU10 SPOTS -> Latest GU10 with extended gamut
-    52: "LCT003",    # LIFX GU10
-    53: "LCT003",    # LIFX GU10
+    # GU10 SPOTS -> Use best bulb (no GU10 in light_types)
+    52: "LCA005",    # LIFX GU10
+    53: "LCA005",    # LIFX GU10
     
-    # TUNABLE WHITE (White to Warm) -> Latest tunable models
-    39: "LTW013",    # LIFX Downlight White to Warm
-    50: "LTW013",    # LIFX Mini White to Warm
-    60: "LTW013",    # LIFX Mini White to Warm
-    81: "LTW013",    # LIFX Candle White to Warm
-    96: "LTW013",    # LIFX Candle White to Warm
-    113: "LTW013",   # LIFX Mini WW US
-    114: "LTW013",   # LIFX Mini WW Intl
-    125: "LTW013",   # LIFX White to Warm US
-    126: "LTW013",   # LIFX White to Warm Intl
-    131: "LTW013",   # LIFX White To Warm US
-    132: "LTW013",   # LIFX White To Warm Intl
+    # TUNABLE WHITE (White to Warm) -> LTW001 (only tunable model available)
+    39: "LTW001",    # LIFX Downlight White to Warm
+    50: "LTW001",    # LIFX Mini White to Warm
+    60: "LTW001",    # LIFX Mini White to Warm
+    81: "LTW001",    # LIFX Candle White to Warm
+    96: "LTW001",    # LIFX Candle White to Warm
+    113: "LTW001",   # LIFX Mini WW US
+    114: "LTW001",   # LIFX Mini WW Intl
+    125: "LTW001",   # LIFX White to Warm US
+    126: "LTW001",   # LIFX White to Warm Intl
+    131: "LTW001",   # LIFX White To Warm US
+    132: "LTW001",   # LIFX White To Warm Intl
     
-    # WHITE ONLY -> Basic white bulbs
-    10: "LWB014",    # LIFX White 800 (Low Voltage) - newer model
-    11: "LWB014",    # LIFX White 800 (High Voltage)
-    18: "LWB014",    # LIFX White 900 BR30 (Low Voltage)
-    19: "LWB014",    # LIFX White 900 BR30 (High Voltage)
-    51: "LWB014",    # LIFX Mini White
-    61: "LWB014",    # LIFX Mini White
-    66: "LWB014",    # LIFX Mini White
-    87: "LWB014",    # LIFX Mini White
-    88: "LWB014",    # LIFX Mini White
-    127: "LWB014",   # LIFX White US
-    128: "LWB014",   # LIFX White Intl
-    133: "LWB014",   # LIFX White US
-    134: "LWB014",   # LIFX White Intl
+    # WHITE ONLY -> LWB010 (only white model available)
+    10: "LWB010",    # LIFX White 800 (Low Voltage)
+    11: "LWB010",    # LIFX White 800 (High Voltage)
+    18: "LWB010",    # LIFX White 900 BR30 (Low Voltage)
+    19: "LWB010",    # LIFX White 900 BR30 (High Voltage)
+    51: "LWB010",    # LIFX Mini White
+    61: "LWB010",    # LIFX Mini White
+    66: "LWB010",    # LIFX Mini White
+    87: "LWB010",    # LIFX Mini White
+    88: "LWB010",    # LIFX Mini White
+    127: "LWB010",   # LIFX White US
+    128: "LWB010",   # LIFX White Intl
+    133: "LWB010",   # LIFX White US
+    134: "LWB010",   # LIFX White Intl
     
-    # FILAMENT BULBS -> Vintage style with warm color
-    82: "LWV001",    # LIFX Filament Clear
-    85: "LWV001",    # LIFX Filament Amber
-    101: "LWV001",   # LIFX Filament Amber
+    # FILAMENT BULBS -> Use tunable white for vintage style
+    82: "LTW001",    # LIFX Filament Clear - tunable for warmth
+    85: "LTW001",    # LIFX Filament Amber
+    101: "LTW001",   # LIFX Filament Amber
     
-    # OUTDOOR/SPECIALTY LIGHTS
-    171: "LCT024",   # LIFX Round Spot US
-    173: "LCT024",   # LIFX Round Path US
-    174: "LCT024",   # LIFX Square Path US
-    175: "LCT024",   # LIFX PAR38 US
-    221: "LCT024",   # LIFX Round Spot Intl
-    222: "LCT024",   # LIFX Round Path Intl
-    225: "LCT024",   # LIFX PAR38 INTL
+    # OUTDOOR/SPECIALTY LIGHTS -> Use best bulb model
+    171: "LCA005",   # LIFX Round Spot US
+    173: "LCA005",   # LIFX Round Path US
+    174: "LCA005",   # LIFX Square Path US
+    175: "LCA005",   # LIFX PAR38 US
+    221: "LCA005",   # LIFX Round Spot Intl
+    222: "LCA005",   # LIFX Round Path Intl
+    225: "LCA005",   # LIFX PAR38 INTL
     
-    # NON-LIGHT PRODUCTS (switches, etc) - Map to remote/button
-    70: "ROM001",    # LIFX Switch
-    71: "ROM001",    # LIFX Switch
-    89: "ROM001",    # LIFX Switch
-    115: "ROM001",   # LIFX Switch
-    116: "ROM001",   # LIFX Switch
+    # NON-LIGHT PRODUCTS (switches, etc) - Map to smart plug
+    70: "LOM001",    # LIFX Switch - Use smart plug model
+    71: "LOM001",    # LIFX Switch
+    89: "LOM001",    # LIFX Switch
+    115: "LOM001",   # LIFX Switch
+    116: "LOM001",   # LIFX Switch
 }
 
-# Default model for unknown LIFX products - Use latest generation
-DEFAULT_HUE_MODEL = "LCT024"  # Latest generation color bulb with best capabilities
+# Default model for unknown LIFX products - Use best available color bulb
+DEFAULT_HUE_MODEL = "LCA005"  # Latest A19 v7 with Gamut C and entertainment
 
 # Product capabilities that affect Hue configuration
 LIFX_CAPABILITIES = {
@@ -205,39 +206,40 @@ def get_hue_model_from_lifx(lifx_product_id: int, product_name: str = None) -> s
         return LIFX_TO_HUE_MODEL[lifx_product_id]
     
     # Try to guess based on product name if available
+    # IMPORTANT: Only use model IDs that exist in light_types.py
     if product_name:
         name_lower = product_name.lower()
         
         # Check for specific product types
         if "br30" in name_lower:
-            return "LCT011"  # BR30 bulb
+            return "LCA005"  # Use latest A19 model (no BR30 model exists)
         elif "gu10" in name_lower:
-            return "LCT003"  # GU10 spot
+            return "LCA005"  # Use latest A19 model (no GU10 model exists)
         elif "downlight" in name_lower:
-            return "LCG002"  # Downlight
+            return "LCA005"  # Use latest A19 model (no downlight model exists)
         elif "candle" in name_lower:
-            return "LCT012"  # Candle bulb
+            return "LCA005"  # Use latest A19 model (no candle model exists)
         elif "filament" in name_lower:
-            return "LWV001"  # Filament bulb
+            return "LTW001"  # Tunable white (no filament model exists)
         elif "strip" in name_lower or " z " in name_lower:
-            return "LCL001"  # Light strip
+            return "LST002"  # Regular light strip
         elif "beam" in name_lower:
-            return "915005987201"  # Play gradient strip
+            return "LCX004"  # Gradient strip
         elif "tile" in name_lower:
-            return "440400982841"  # Tile/Panel
+            return "LCX002"  # Use gradient strip (no tile model exists)
         elif "mini" in name_lower:
             if "white to warm" in name_lower:
-                return "LTW012"  # Tunable white
+                return "LTW001"  # Tunable white
             elif "white" in name_lower:
                 return "LWB010"  # White only
             else:
-                return "LCT015"  # Color
+                return "LCA005"  # Latest color bulb
         elif "white to warm" in name_lower:
-            return "LTW012"  # Tunable white
+            return "LTW001"  # Tunable white  
         elif "white" in name_lower:
             return "LWB010"  # White only
         elif "neon" in name_lower:
-            return "LCX002"  # Neon/gradient strip
+            return "915005987201"  # Signe gradient (neon-like)
         elif "string" in name_lower or "holiday" in name_lower:
             return "LST002"  # String lights
     
