@@ -1095,14 +1095,19 @@ def set_light(light: Any, data: Dict) -> None:
         logging.debug(f"LIFX: Device not found for {light.name}")
         return
 
-    # Handle gradient for multizone/matrix devices
-    if "gradient" in data and isinstance(data["gradient"], dict) and "points" in data["gradient"]:
-        try:
-            points = data["gradient"].get("points", [])
-            set_light_gradient(light, points)
-            return
-        except Exception as e:
-            logging.warning(f"LIFX: gradient apply failed for {light.name}: {e}")
+
+# Handle Hue v2 gradient payloads early (works for gradient models & matrix)
+try:
+    grad = data.get("gradient")
+    if isinstance(grad, dict):
+        pts = grad.get("points")
+    else:
+        pts = None
+    if pts:
+        set_light_gradient(light, pts)
+        return
+except Exception as _e:
+    logging.debug(f"LIFX: gradient pre‑handler skipped: {_e}")
     
     # Submit to executor for parallel execution
     executor = _get_parallel_executor()
@@ -1112,6 +1117,16 @@ def set_light(light: Any, data: Dict) -> None:
 
 
 def set_lights_batch(lights: List[Any], data: Dict) -> None:
+
+# Fast‑path: if this is a gradient update, apply per light and return
+try:
+    grad = data.get("gradient") if isinstance(data, dict) else None
+    if isinstance(grad, dict) and grad.get("points"):
+        for light in lights or []:
+            set_light_gradient(light, grad.get("points"))
+        return
+except Exception as _e:
+    logging.debug(f"LIFX: batch gradient guard skipped: {_e}")
     """Set multiple LIFX lights simultaneously in parallel."""
     if not lights:
         return
@@ -1169,47 +1184,114 @@ def set_light_multizone(light: Any, zone_colors: List[Tuple[int, int, int]]) -> 
         logging.warning(f"LIFX: Failed to set multizone for {light.name}: {e}")
 
 
+
 def set_light_gradient(light: Any, gradient_points: List[Dict]) -> None:
-    """Set gradient for LIFX devices that support it.
-    
-    Args:
-        light: Light object
-        gradient_points: List of dicts with 'color' (xy) and optionally 'position' (0.0-1.0)
+    """Apply a Hue v2 gradient to LIFX lights (multizone & matrix/tile).
+    Accepts points as [[x,y], ...] or [{'color':[x,y], 'position': 0..1}, ...].
     """
     device = _get_device(light)
     if not device:
         return
-        
+
+    def _parse_points(points):
+        """Return sorted list of (pos, (x,y)) where pos in [0,1]."""
+        stops = []
+        if not isinstance(points, list) or len(points) == 0:
+            return [(0.0, (0.32, 0.33))]  # neutral white fallback
+        # Normalize shapes
+        for i, p in enumerate(points):
+            pos = None
+            xy = None
+            if isinstance(p, dict):
+                xy = p.get("color") or p.get("xy")
+                pos = p.get("position", None)
+                if pos is None:
+                    pos = p.get("pos", None)
+                if pos is None:
+                    pos = p.get("offset", None)
+            elif isinstance(p, (list, tuple)) and len(p) >= 2:
+                xy = (float(p[0]), float(p[1]))
+            if xy is not None:
+                stops.append([pos, (float(xy[0]), float(xy[1]))])
+        # Assign even spacing if any position missing
+        if any(s[0] is None for s in stops):
+            n = max(1, len(stops))
+            for j, s in enumerate(stops):
+                s[0] = 0.0 if n == 1 else j / float(n - 1)
+        # Clamp & sort
+        for s in stops:
+            s[0] = max(0.0, min(1.0, float(s[0])))
+        stops.sort(key=lambda s: s[0])
+        return [(s[0], s[1]) for s in stops]
+
+    def _lerp_rgb(c0, c1, t):
+        return (
+            int(round(c0[0] + (c1[0] - c0[0]) * t)),
+            int(round(c0[1] + (c1[1] - c0[1]) * t)),
+            int(round(c0[2] + (c1[2] - c0[2]) * t)),
+        )
+
+    def _resample(points_xy, count):
+        """Resample gradient stops into count RGB tuples."""
+        stops = _parse_points(points_xy)
+        # Preconvert to RGB for smoothness
+        rgb_stops = [(pos, convert_xy(xy[0], xy[1], 255)) for pos, xy in stops]
+        if count <= 1:
+            return [rgb_stops[-1][1]]
+        colors = []
+        for i in range(count):
+            t = 0.0 if count == 1 else i / float(count - 1)
+            # Find the two surrounding stops
+            k = 0
+            while k < len(rgb_stops) - 1 and t > rgb_stops[k+1][0]:
+                k += 1
+            if t <= rgb_stops[0][0]:
+                colors.append(rgb_stops[0][1])
+            elif t >= rgb_stops[-1][0]:
+                colors.append(rgb_stops[-1][1])
+            else:
+                t0, c0 = rgb_stops[k]
+                t1, c1 = rgb_stops[k+1]
+                frac = 0.0 if t1 == t0 else (t - t0) / (t1 - t0)
+                colors.append(_lerp_rgb(c0, c1, frac))
+        return colors
+
     try:
-        # Check if device has gradient/multizone capability
-        points_capable = light.protocol_cfg.get("points_capable", 0)
-        
-        if points_capable > 0:
-            # Convert gradient points to zone colors
-            zone_colors = []
-            
-            for i in range(min(points_capable, len(gradient_points))):
-                point = gradient_points[i]
-                if "color" in point:
-                    x, y = point["color"]
-                    r, g, b = convert_xy(x, y, 255)
-                    zone_colors.append((r, g, b))
-                    
-            # Fill remaining zones with last color if needed
-            if zone_colors and len(zone_colors) < points_capable:
-                last_color = zone_colors[-1]
-                while len(zone_colors) < points_capable:
-                    zone_colors.append(last_color)
-                    
-            # Apply to multizone device
-            if zone_colors:
-                set_light_multizone(light, zone_colors)
-        else:
-            # Non-gradient device - just set to first color
-            if gradient_points and "color" in gradient_points[0]:
-                x, y = gradient_points[0]["color"]
-                set_light(light, {"xy": [x, y]})
-                
+        # Prefer explicit gradient point count when present (linear multizone)
+        points_capable = int(light.protocol_cfg.get("points_capable", 0) or 0)
+
+        # Detect matrix/tile
+        is_matrix = False
+        try:
+            feats = device.get_product_features()
+            is_matrix = bool(feats.get("matrix") or feats.get("chain"))
+        except Exception:
+            # Heuristic: TileChain methods imply matrix
+            is_matrix = hasattr(device, "project_matrix") or hasattr(device, "set_tile_colors")
+
+        if points_capable > 0 and not is_matrix:
+            # Linear multizone devices (beams/strips)
+            zone_colors = _resample(gradient_points, points_capable)
+            set_light_multizone(light, zone_colors)
+            return
+
+        # Matrix/tile devices (Candle, Tile, Ceiling, Tubes mapped as matrix)
+        # Determine an appropriate canvas size; send_rgb_zones_rapid will adapt.
+        total_zones = 0
+        try:
+            total_zones = int(light.protocol_cfg.get("total_zones", 0) or 0)
+        except Exception:
+            total_zones = 0
+        if total_zones <= 0:
+            # Try to infer from known dimensions helper
+            try:
+                w, h = _matrix_dims(light)
+                total_zones = max(1, int(w) * int(h))
+            except Exception:
+                total_zones = 64  # sensible default for a single tile
+
+        zone_colors = _resample(gradient_points, total_zones)
+        send_rgb_zones_rapid(light, zone_colors)
     except Exception as e:
         logging.warning(f"LIFX: Failed to set gradient for {light.name}: {e}")
 
