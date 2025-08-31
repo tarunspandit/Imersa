@@ -173,6 +173,9 @@ LIFX_TO_HUE_MODEL = {
     89: "LOM001",    # LIFX Switch
     115: "LOM001",   # LIFX Switch
     116: "LOM001",   # LIFX Switch
+    
+    # Additional fallback for common unknown IDs
+    0: "LCA005",      # Unknown/Default - Use best color bulb
 }
 
 # Default model for unknown LIFX products - Use best available color bulb
@@ -201,6 +204,11 @@ def get_hue_model_from_lifx(lifx_product_id: int, product_name: str = None) -> s
     Returns:
         Hue model ID string
     """
+    # Log unmapped product IDs
+    if lifx_product_id not in LIFX_TO_HUE_MODEL and lifx_product_id != 0:
+        import logging
+        logging.info(f"LIFX: Unmapped product ID {lifx_product_id} with name '{product_name}'")
+    
     # Direct mapping
     if lifx_product_id in LIFX_TO_HUE_MODEL:
         return LIFX_TO_HUE_MODEL[lifx_product_id]
@@ -361,6 +369,11 @@ def identify_lifx_model(device) -> tuple:
         product_name = device.get_product_name()
         features = device.get_product_features()
         
+        # Log unknown product IDs for debugging
+        if product_name == "Unknown" or product_name == "Unknown product":
+            import logging
+            logging.info(f"LIFX: Found unknown product with ID {product_id}, features: {features}")
+        
         # Get Hue model ID
         hue_model = get_hue_model_from_lifx(product_id, product_name)
         
@@ -371,4 +384,6 @@ def identify_lifx_model(device) -> tuple:
         
     except Exception as e:
         # Default fallback
+        import logging
+        logging.debug(f"LIFX: Error identifying device: {e}")
         return DEFAULT_HUE_MODEL, get_lifx_capabilities(0), "Unknown LIFX"

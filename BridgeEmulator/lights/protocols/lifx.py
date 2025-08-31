@@ -690,16 +690,29 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
                     # Identify model and capabilities using proper identification
                     hue_model, capabilities, product_name = identify_lifx_model(device)
                     
+                    # Build protocol_cfg with all necessary fields
+                    protocol_cfg = {
+                        "ip": ip,
+                        "id": mac,
+                        "label": label,
+                        "product_name": product_name
+                    }
+                    
+                    # Add capabilities to protocol_cfg
+                    if capabilities.get("streaming", {}).get("renderer"):
+                        # For gradient/multizone capable devices
+                        protocol_cfg["points_capable"] = capabilities.get("points_capable", 16)
+                    
+                    # Add other capabilities as needed
+                    if capabilities.get("control", {}).get("ct"):
+                        protocol_cfg["ct_min"] = capabilities["control"]["ct"]["min"]
+                        protocol_cfg["ct_max"] = capabilities["control"]["ct"]["max"]
+                    
                     detectedLights.append({
                         "protocol": "lifx",
                         "name": label,
                         "modelid": hue_model,
-                        "protocol_cfg": {
-                            "ip": ip,
-                            "id": mac,
-                            "label": label,
-                            "product_name": product_name
-                        }
+                        "protocol_cfg": protocol_cfg
                     })
                     added += 1
                     
@@ -738,16 +751,29 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
                             # Identify model and capabilities
                             hue_model, capabilities, product_name = identify_lifx_model(device)
                             
+                            # Build protocol_cfg with all necessary fields
+                            protocol_cfg = {
+                                "ip": ip,
+                                "id": mac or ip,
+                                "label": label,
+                                "product_name": product_name
+                            }
+                            
+                            # Add capabilities to protocol_cfg
+                            if capabilities.get("streaming", {}).get("renderer"):
+                                # For gradient/multizone capable devices
+                                protocol_cfg["points_capable"] = capabilities.get("points_capable", 16)
+                            
+                            # Add other capabilities as needed
+                            if capabilities.get("control", {}).get("ct"):
+                                protocol_cfg["ct_min"] = capabilities["control"]["ct"]["min"]
+                                protocol_cfg["ct_max"] = capabilities["control"]["ct"]["max"]
+                            
                             detectedLights.append({
                                 "protocol": "lifx",
                                 "name": label,
                                 "modelid": hue_model,
-                                "protocol_cfg": {
-                                    "ip": ip,
-                                    "id": mac or ip,
-                                    "label": label,
-                                    "product_name": product_name
-                                }
+                                "protocol_cfg": protocol_cfg
                             })
                             added += 1
                             
