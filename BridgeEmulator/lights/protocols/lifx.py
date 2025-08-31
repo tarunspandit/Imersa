@@ -1094,6 +1094,15 @@ def set_light(light: Any, data: Dict) -> None:
     if not device:
         logging.debug(f"LIFX: Device not found for {light.name}")
         return
+
+    # Handle gradient for multizone/matrix devices
+    if "gradient" in data and isinstance(data["gradient"], dict) and "points" in data["gradient"]:
+        try:
+            points = data["gradient"].get("points", [])
+            set_light_gradient(light, points)
+            return
+        except Exception as e:
+            logging.warning(f"LIFX: gradient apply failed for {light.name}: {e}")
     
     # Submit to executor for parallel execution
     executor = _get_parallel_executor()
