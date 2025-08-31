@@ -269,6 +269,11 @@ def get_lifx_capabilities(lifx_product_id: int, features: dict = None) -> dict:
     # Check if product is multizone or matrix
     is_multizone = lifx_product_id in LIFX_CAPABILITIES.get("multizone", [])
     is_matrix = lifx_product_id in LIFX_CAPABILITIES.get("matrix", [])
+# Polychrome devices (e.g., Candle Color) often expose 'matrix' features
+# but are controlled via MultiZone messages in lifxlan. Enable multizone fallback.
+if lifx_product_id in {57, 68, 137, 138, 185, 186, 187, 188}:
+    is_multizone = True
+
     
     capabilities = {
         "certified": True,

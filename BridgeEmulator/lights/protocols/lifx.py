@@ -926,7 +926,14 @@ def set_light_multizone(light: Any, zone_colors: List[Tuple[int, int, int]]) -> 
             hsbk_colors.append([h, s, v, 3500])  # Default kelvin
             
         # Set zone colors
+        # Prefer extended protocol if available (fewer packets, less flicker)
+if hasattr(device, 'extended_set_zone_color'):
+    try:
+        device.extended_set_zone_color(hsbk_colors, index=0, duration=0, rapid=True, apply=1)
+    except Exception as _:
         device.set_zone_colors(hsbk_colors, duration=0, rapid=True)
+else:
+    device.set_zone_colors(hsbk_colors, duration=0, rapid=True)
         logging.debug(f"LIFX: Set {len(zone_colors)} zone colors for {light.name}")
         
     except Exception as e:
@@ -1269,96 +1276,66 @@ def send_rgb_zones_rapid(light: Any, zone_colors: List[Tuple[int, int, int]]) ->
             is_multizone = hasattr(device, 'set_zone_colors')
         
         if is_matrix:
-            # Matrix/Polychrome devices (Candle, Tile, Ceiling)
-            try:
-                # Get matrix dimensions from protocol_cfg or query device
-                matrix_width = light.protocol_cfg.get('matrix_width', 0)
-                matrix_height = light.protocol_cfg.get('matrix_height', 0)
-                
-                # If not stored, try to get from device
-                if matrix_width == 0 or matrix_height == 0:
-                    # Try to get tile info for dimensions
-                    if hasattr(device, 'get_tile_info'):
-                        try:
-                            tile_info = device.get_tile_info()
-                            if tile_info and len(tile_info) > 0:
-                                matrix_width = tile_info[0].width if hasattr(tile_info[0], 'width') else 8
-                                matrix_height = tile_info[0].height if hasattr(tile_info[0], 'height') else 8
-                                # Store for next time
-                                light.protocol_cfg['matrix_width'] = matrix_width
-                                light.protocol_cfg['matrix_height'] = matrix_height
-                        except:
-                            pass
-                    
-                    # If still no dimensions, use defaults based on product
-                    if matrix_width == 0 or matrix_height == 0:
-                        product_id = getattr(device, 'product', None) or device.get_product()
-                        
-                        if product_id in [57, 68, 137, 138, 185, 186, 187, 188, 215, 216]:  # Candle
-                            matrix_width = 5
-                            matrix_height = 6
-                        elif product_id in [176, 177]:  # Ceiling
-                            matrix_width = 8
-                            matrix_height = 7
-                        elif product_id in [201, 202]:  # Ceiling 13x26
-                            matrix_width = 10
-                            matrix_height = 12
-                        elif product_id in [217, 218]:  # Tube
-                            matrix_width = 8
-                            matrix_height = 7
-                        elif product_id in [219, 220]:  # Luna
-                            matrix_width = 8
-                            matrix_height = 8
-                        elif product_id == 55:  # Tile
-                            matrix_width = 8
-                            matrix_height = 8
-                        else:
-                            # Default square matrix
-                            total_zones = len(zone_colors)
-                            matrix_width = int(total_zones ** 0.5)
-                            matrix_height = (total_zones + matrix_width - 1) // matrix_width
-                
-                # Convert linear gradient to 2D matrix
-                matrix_colors = []
-                for y in range(matrix_height):
-                    for x in range(matrix_width):
-                        idx = y * matrix_width + x
-                        if idx < len(zone_colors):
-                            r, g, b = zone_colors[idx]
-                        else:
-                            # Use last color for any remaining zones
-                            r, g, b = zone_colors[-1] if zone_colors else (0, 0, 0)
-                        
-                        h, s, v = _rgb_to_hsv65535(r, g, b)
-                        matrix_colors.append([h, s, max(1, v), 3500])
-                
-                # Send to device using the appropriate method
-                if hasattr(device, 'set_tile_colors'):
-                    # For single tile or non-chain matrix devices
-                    # Set colors starting at (0,0) with appropriate width
-                    device.set_tile_colors(0, matrix_colors[:64], duration=0, 
-                                         tile_count=1, x=0, y=0, width=matrix_width, rapid=True)
-                    logging.debug(f"LIFX: Set {len(matrix_colors)} matrix zones ({matrix_width}x{matrix_height}) for {light.name}")
-                elif hasattr(device, 'set_tilechain_colors'):
-                    # For chained tiles
-                    tiles = []
-                    tile_size = 64  # 8x8 per tile
-                    for i in range(0, len(matrix_colors), tile_size):
-                        tiles.append(matrix_colors[i:i+tile_size])
-                    device.set_tilechain_colors(tiles, duration=0, rapid=True)
-                    logging.debug(f"LIFX: Set {len(tiles)} tiles for {light.name}")
-                else:
-                    # Fallback to single color set
-                    if zone_colors:
-                        avg_r = sum(c[0] for c in zone_colors) // len(zone_colors)
-                        avg_g = sum(c[1] for c in zone_colors) // len(zone_colors) 
-                        avg_b = sum(c[2] for c in zone_colors) // len(zone_colors)
-                        h, s, v = _rgb_to_hsv65535(avg_r, avg_g, avg_b)
-                        device.set_color([h, s, max(1, v), 3500], duration=0, rapid=True)
-            except Exception as e:
-                logging.debug(f"LIFX: Matrix update failed for {light.name}: {e}")
-                
-        elif is_multizone:
+    # Some devices (e.g., LIFX Candle Color) report 'matrix' but are actually MultiZone under the hood.
+    has_tile_methods = hasattr(device, 'set_tile_colors') or hasattr(device, 'set_tilechain_colors')
+    has_multizone = hasattr(device, 'set_zone_colors') or hasattr(device, 'extended_set_zone_color')
+    if not has_tile_methods and has_multizone:
+        # Treat as multizone instead of matrix
+        is_matrix = False
+    else:
+        try:
+            # Matrix/Tile devices (Tile, Ceiling, etc.)
+            # Get matrix dimensions from protocol_cfg or query device
+            matrix_width = light.protocol_cfg.get('matrix_width', 0)
+            matrix_height = light.protocol_cfg.get('matrix_height', 0)
+
+            # If not stored, try to get from device
+            if (matrix_width == 0 or matrix_height == 0) and hasattr(device, 'get_tile_info'):
+                try:
+                    tile_info = device.get_tile_info()
+                    if tile_info and hasattr(tile_info[0], 'width') and hasattr(tile_info[0], 'height'):
+                        matrix_width = int(getattr(tile_info[0], 'width', 8) or 8)
+                        matrix_height = int(getattr(tile_info[0], 'height', 8) or 8)
+                except Exception:
+                    pass
+
+            # Sensible defaults
+            if matrix_width == 0: matrix_width = 8
+            if matrix_height == 0: matrix_height = 8
+
+            # Convert linear zone list into 2D tile order
+            matrix_colors = []
+            for y in range(matrix_height):
+                for x in range(matrix_width):
+                    idx = y * matrix_width + x
+                    if idx < len(zone_colors):
+                        r, g, b = zone_colors[idx]
+                    else:
+                        r, g, b = zone_colors[-1] if zone_colors else (0, 0, 0)
+                    h, s, v = _rgb_to_hsv65535(r, g, b)
+                    matrix_colors.append([h, s, max(1, v), 3500])
+
+            if hasattr(device, 'set_tile_colors'):
+                device.set_tile_colors(0, matrix_colors[:64], duration=0, tile_count=1, x=0, y=0, width=matrix_width, rapid=True)
+                logging.debug(f"LIFX: Set {len(matrix_colors)} matrix zones ({matrix_width}x{matrix_height}) for {light.name}")
+            elif hasattr(device, 'set_tilechain_colors'):
+                tiles = []
+                tile_size = 64
+                for i in range(0, len(matrix_colors), tile_size):
+                    tiles.append(matrix_colors[i:i+tile_size])
+                device.set_tilechain_colors(tiles, duration=0, rapid=True)
+                logging.debug(f"LIFX: Set {len(tiles)} tiles for {light.name}")
+            else:
+                # Final fallback: average to single color
+                if zone_colors:
+                    avg_r = sum(c[0] for c in zone_colors) // len(zone_colors)
+                    avg_g = sum(c[1] for c in zone_colors) // len(zone_colors)
+                    avg_b = sum(c[2] for c in zone_colors) // len(zone_colors)
+                    h, s, v = _rgb_to_hsv65535(avg_r, avg_g, avg_b)
+                    device.set_color([h, s, max(1, v), 3500], duration=0, rapid=True)
+        except Exception as e:
+            logging.debug(f"LIFX: Matrix update failed for {light.name}: {e}")
+elif is_multizone:
             # Multizone strips (LIFX Z, Beam, Neon)
             try:
                 # Get actual zone count from device or protocol_cfg
