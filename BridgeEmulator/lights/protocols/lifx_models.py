@@ -183,7 +183,7 @@ DEFAULT_HUE_MODEL = "LCA005"  # Latest A19 v7 with Gamut C and entertainment
 # Product capabilities that affect Hue configuration
 LIFX_CAPABILITIES = {
     "multizone": [31, 32, 38, 117, 118, 119, 120, 141, 142, 161, 162, 205, 206, 213, 214],  # All multizone products (linear strips)
-    "matrix": [55, 57, 68, 137, 138, 143, 144, 176, 177, 185, 186, 187, 188, 201, 202, 203, 204, 215, 216, 217, 218, 219, 220],  # All matrix/polychrome products
+    "matrix": [55, 57, 68, 137, 138, 143, 144, 176, 177, 185, 186, 187, 188, 201, 202, 203, 204, 215, 216, 217, 218, 219, 220],  # All matrix/polychrome products (includes Tube)
     "infrared": [29, 30, 45, 46, 64, 65, 109, 110, 111, 112],  # Night vision products
     "hev": [90, 99],  # Clean antibacterial light
     "chain": [55],  # Products that can chain together
@@ -285,7 +285,7 @@ def get_lifx_capabilities(lifx_product_id: int, features: dict = None) -> dict:
     
     # Adjust based on features if available
     if features:
-        # Multizone capability
+        # Multizone capability (linear strips only, not matrix)
         if features.get("multizone"):
             capabilities["streaming"]["renderer"] = True
             # Different products have different zone counts
