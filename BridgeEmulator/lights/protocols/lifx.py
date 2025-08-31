@@ -876,8 +876,19 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
     if devices:
         for device in devices:
             try:
+                # Validate device object has required methods
+                if not hasattr(device, 'get_ip_addr') or not hasattr(device, 'get_mac_addr'):
+                    logging.warning(f"LIFX: Skipping invalid device object: {type(device)}")
+                    continue
+                    
                 ip = device.get_ip_addr()
                 mac = device.get_mac_addr()
+                
+                # Skip if we couldn't get basic info
+                if not ip or not mac:
+                    logging.warning(f"LIFX: Skipping device with missing IP or MAC")
+                    continue
+                    
                 label = device.get_label() or f"LIFX {mac[-8:]}"
                 
                 # Check if already in list
@@ -887,6 +898,12 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
                 )
                 
                 if not already_exists:
+                    # Get product ID from device
+                    try:
+                        product_id = device.get_product()
+                    except:
+                        product_id = None
+                    
                     # Identify model and capabilities using proper identification
                     hue_model, capabilities, product_name = identify_lifx_model(device)
                     
@@ -927,7 +944,9 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
                     register_device_for_keepalive(mac, ip)
                     
             except Exception as e:
-                logging.debug(f"LIFX: Error processing device: {e}")
+                logging.error(f"LIFX: Error processing device at {ip}: {e}")
+                import traceback
+                logging.debug(f"LIFX: Traceback: {traceback.format_exc()}")
                 continue
     
     # Also try static IPs if provided
@@ -949,6 +968,12 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
                         )
                         
                         if not already_exists:
+                            # Get product ID from device
+                            try:
+                                product_id = device.get_product()
+                            except:
+                                product_id = None
+                            
                             # Identify model and capabilities
                             hue_model, capabilities, product_name = identify_lifx_model(device)
                             
@@ -1761,36 +1786,59 @@ def update_entertainment_settings(settings: Dict[str, Any]) -> None:
 
 
 def _is_matrix(light: Any) -> bool:
+    """Check if device is a matrix/polychrome device."""
+    from lights.protocols.lifx_constants import MATRIX_PRODUCT_IDS
+    
     cfg = getattr(light, "protocol_cfg", {}) or {}
+    
+    # Check explicit matrix flags
     if cfg.get("matrix_width") or cfg.get("matrix_height"):
         return True
     if cfg.get("features", {}).get("matrix"):
         return True
+    if cfg.get("device_type") == "matrix":
+        return True
+    
+    # Check product ID against known matrix products
     pid = cfg.get("product_id") or cfg.get("pid")
     try:
-        if int(pid) in {55,57,68,137,138,143,144,176,177,185,186,187,188,201,202,217,218,219,220}:
+        if int(pid) in MATRIX_PRODUCT_IDS:
             return True
-    except Exception:
+    except:
         pass
-    zones = cfg.get("zones") or cfg.get("zone_count")
-    return bool(zones == 5)
+    
+    return False
 
 
 def _matrix_dims(light: Any, zone_count: int) -> tuple[int,int]:
     """Get matrix dimensions for a light."""
+    from lights.protocols.lifx_constants import MATRIX_DIMENSIONS
+    
     cfg = getattr(light, "protocol_cfg", {}) or {}
+    
+    # First check if dimensions are cached
     w = int(cfg.get("matrix_width") or 0)
     h = int(cfg.get("matrix_height") or 0)
     if w and h:
         return w, h
-    # Fallback based on known zone counts
-    if zone_count == 26: return 6, 5   # Candle (26 zones)
-    if zone_count == 51: return 5, 11  # Tube (51 zones) 
+    
+    # Check product ID for known dimensions
+    pid = cfg.get("product_id") or cfg.get("pid")
+    try:
+        pid_int = int(pid)
+        if pid_int in MATRIX_DIMENSIONS:
+            return MATRIX_DIMENSIONS[pid_int]
+    except:
+        pass
+    
+    # Fallback based on zone count
+    if zone_count == 26: return 6, 5   # Candle
+    if zone_count == 51: return 5, 11  # Tube
     if zone_count == 64: return 8, 8   # Tile, Luna
     if zone_count == 56: return 8, 7   # Ceiling 15"
     if zone_count == 120: return 10, 12 # Ceiling 26"
     if zone_count == 49: return 7, 7   # 7x7 matrix
-    if zone_count == 5: return 5, 1    # 5-zone strip
-    # Default to linear
+    
+    # Default to linear arrangement for unknown
     return max(1, zone_count), 1
 
