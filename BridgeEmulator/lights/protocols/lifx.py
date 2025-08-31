@@ -1472,20 +1472,57 @@ def send_rgb_zones_rapid(light: Any, zone_colors: List[Tuple[int, int, int]]) ->
                     logging.info(f"LIFX: Matrix dimensions: {matrix_width}x{matrix_height}, total colors: {len(matrix_colors)}")
                 
                 # Send to device using the appropriate method
-                if hasattr(device, 'set_tile_colors'):
-                    # For single tile or non-chain matrix devices
-                    # IMPORTANT: width should be 8 for standard tiles, not matrix_width
-                    # The width parameter tells the API how to interpret the linear color array
+                # Prefer project_matrix for better 2D handling
+                if hasattr(device, 'project_matrix'):
+                    # Convert linear array to 2D matrix for project_matrix
+                    try:
+                        matrix_2d = []
+                        for y in range(matrix_height):
+                            row = []
+                            for x in range(matrix_width):
+                                idx = y * matrix_width + x
+                                if idx < len(matrix_colors):
+                                    row.append(matrix_colors[idx])
+                                else:
+                                    row.append([0, 0, 0, 3500])  # Black padding
+                            matrix_2d.append(row)
+                        
+                        # Use project_matrix for proper 2D projection
+                        device.project_matrix(matrix_2d, duration=0, rapid=True)
+                        logging.info(f"LIFX: Successfully called project_matrix for {light.name} with {matrix_width}x{matrix_height} matrix")
+                    except Exception as e:
+                        logging.error(f"LIFX: project_matrix failed for {light.name}: {e}")
+                        # Try set_tile_colors as fallback
+                        try:
+                            # Pad colors to 64 if needed (8x8 tile)
+                            colors_to_send = matrix_colors[:]
+                            while len(colors_to_send) < 64:
+                                colors_to_send.append([0, 0, 0, 3500])  # Black padding
+                            
+                            device.set_tile_colors(0, colors_to_send[:64], duration=0, 
+                                                 tile_count=1, x=0, y=0, width=8, rapid=True)
+                            logging.info(f"LIFX: Fallback to set_tile_colors for {light.name}")
+                        except Exception as e2:
+                            logging.error(f"LIFX: set_tile_colors also failed: {e2}")
+                            # Last resort: average color
+                            if zone_colors:
+                                avg_r = sum(c[0] for c in zone_colors) // len(zone_colors)
+                                avg_g = sum(c[1] for c in zone_colors) // len(zone_colors)
+                                avg_b = sum(c[2] for c in zone_colors) // len(zone_colors)
+                                h, s, v = _rgb_to_hsv65535(avg_r, avg_g, avg_b)
+                                device.set_color([h, s, max(1, v), 3500], duration=0, rapid=True)
+                                logging.info(f"LIFX: Final fallback to set_color for {light.name}")
+                elif hasattr(device, 'set_tile_colors'):
+                    # For devices without project_matrix
                     try:
                         # Pad colors to 64 if needed (8x8 tile)
                         colors_to_send = matrix_colors[:]
                         while len(colors_to_send) < 64:
                             colors_to_send.append([0, 0, 0, 3500])  # Black padding
                         
-                        # Use width=8 for standard tile format
                         device.set_tile_colors(0, colors_to_send[:64], duration=0, 
                                              tile_count=1, x=0, y=0, width=8, rapid=True)
-                        logging.info(f"LIFX: Successfully called set_tile_colors for {light.name} with {len(colors_to_send[:64])} colors (width=8)")
+                        logging.info(f"LIFX: Called set_tile_colors for {light.name} with {len(colors_to_send[:64])} colors")
                     except Exception as e:
                         logging.error(f"LIFX: set_tile_colors failed for {light.name}: {e}")
                         # Try fallback to simple color
