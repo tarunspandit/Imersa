@@ -540,17 +540,51 @@ def get_lifx_capabilities(lifx_product_id: int, features: Optional[dict] = None)
 
 def identify_lifx_model(device) -> Tuple[str, dict, str]:
     pid, name = -1, "LIFX"
+    
+    # Try get_product() first (the actual lifxlan method)
     try:
-        if hasattr(device, "get_product_id"):
-            pid = int(device.get_product_id())
+        if hasattr(device, "get_product"):
+            pid = int(device.get_product())
     except Exception:
         pass
+    
+    # Fallback to get_product_id if it exists
+    if pid == -1:
+        try:
+            if hasattr(device, "get_product_id"):
+                pid = int(device.get_product_id())
+        except Exception:
+            pass
+    
+    # Get device label
     try:
         if hasattr(device, "get_label"):
             name = device.get_label() or name
     except Exception:
         pass
+    
+    # Get product name if available
+    product_name = name
+    try:
+        if hasattr(device, "get_product_name"):
+            product_name = device.get_product_name() or name
+    except Exception:
+        pass
+    
+    # Log the detected product ID for debugging
+    import logging
+    logging.info(f"LIFX: Device {name} - Product ID detected: {pid}, Product name: {product_name}")
+    
+    # Additional debug logging
+    if pid in MULTIZONE_PIDS:
+        logging.info(f"LIFX: Device {name} - Product ID {pid} is in MULTIZONE_PIDS -> Should be gradient capable")
+    elif pid in MATRIX_PIDS:
+        logging.info(f"LIFX: Device {name} - Product ID {pid} is in MATRIX_PIDS -> Should be gradient capable")
+    else:
+        logging.info(f"LIFX: Device {name} - Product ID {pid} is NOT in gradient sets -> Regular device")
+    
     hue_model = get_hue_model_from_lifx(pid, name)
+    logging.info(f"LIFX: Device {name} - Assigned Hue model: {hue_model}")
     features = {}
     try:
         if hasattr(device, "get_product_features"):
@@ -558,7 +592,17 @@ def identify_lifx_model(device) -> Tuple[str, dict, str]:
     except Exception:
         features = {}
     caps = get_lifx_capabilities(pid, features)
-    return hue_model, caps, name
+    
+    # Add points_capable for gradient devices
+    if pid in MULTIZONE_PIDS or pid in MATRIX_PIDS:
+        zones = _get_device_actual_zones(device) if pid in MULTIZONE_PIDS else 0
+        if pid in MATRIX_PIDS:
+            dims = _get_device_matrix_dimensions(device)
+            if dims:
+                zones = dims[0] * dims[1]
+        caps["points_capable"] = _points_capable_from(pid, {"zones": zones})
+    
+    return hue_model, caps, product_name
 
 
 
