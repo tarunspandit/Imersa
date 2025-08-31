@@ -1156,8 +1156,14 @@ def _apply_smoothing(device_id: str, r: int, g: int, b: int) -> Tuple[int, int, 
     
     return r, g, b
 
-def send_rgb_rapid(light: Any, r: int, g: int, b: int) -> None:
-    """Send RGB color rapidly for entertainment mode with optimizations."""
+def send_rgb_rapid(light: Any, r: int, g: int, b: int, zone_index: int = None) -> None:
+    """Send RGB color rapidly for entertainment mode with optimizations.
+    
+    Args:
+        light: Light object
+        r, g, b: RGB color values (0-255)
+        zone_index: Optional zone index for multizone/matrix devices
+    """
     device = _get_device(light)
     if not device:
         return
@@ -1219,12 +1225,97 @@ def send_rgb_rapid(light: Any, r: int, g: int, b: int) -> None:
         logging.debug(f"LIFX: Rapid send failed for {light.name}: {e}")
 
 
-# Batch processing for multiple lights
+# Batch processing for multiple lights and zones
 _batch_buffer = {
     "updates": {},  # device_id -> (r, g, b) mapping
+    "zones": {},    # device_id -> {zone_index: (r, g, b)} mapping for multizone devices
     "last_flush": 0,
     "batch_interval": 0.016,  # ~60 FPS batch processing
 }
+
+def send_rgb_zones_rapid(light: Any, zone_colors: List[Tuple[int, int, int]]) -> None:
+    """Send RGB colors to multiple zones rapidly for entertainment mode.
+    
+    Args:
+        light: Light object
+        zone_colors: List of (r, g, b) tuples for each zone
+    """
+    device = _get_device(light)
+    if not device:
+        return
+        
+    try:
+        import time
+        current_time = time.time()
+        device_id = str(light.protocol_cfg.get("mac", light.name))
+        
+        # Frame rate limiting
+        last_update = _entertainment_state["last_update"].get(device_id, 0)
+        min_interval = 1.0 / _entertainment_state["frame_limit"]
+        if current_time - last_update < min_interval:
+            if _entertainment_state["active"]:
+                logging.debug(f"LIFX: FPS limit - skipping zone frame")
+            return
+        _entertainment_state["last_update"][device_id] = current_time
+        
+        # Check if device supports multizone/matrix
+        is_matrix = hasattr(device, 'set_tile_colors') or hasattr(device, 'set_tilechain_colors')
+        is_multizone = hasattr(device, 'set_zone_colors')
+        
+        if is_matrix:
+            # Matrix/Polychrome devices (Candle, Tile, Tube, Ceiling)
+            try:
+                # Convert RGB to HSBK for each zone
+                hsbk_colors = []
+                for r, g, b in zone_colors:
+                    h, s, v = _rgb_to_hsv65535(r, g, b)
+                    hsbk_colors.append([h, s, max(1, v), 3500])
+                
+                # For tile devices
+                if hasattr(device, 'set_tilechain_colors'):
+                    # Organize colors into tile format
+                    tiles = []
+                    tile_size = 64  # Default tile size
+                    for i in range(0, len(hsbk_colors), tile_size):
+                        tiles.append(hsbk_colors[i:i+tile_size])
+                    device.set_tilechain_colors(tiles, duration=0, rapid=True)
+                    logging.debug(f"LIFX: Set {len(zone_colors)} matrix zones for {light.name}")
+                elif hasattr(device, 'set_tile_colors'):
+                    # Single tile update
+                    device.set_tile_colors(0, hsbk_colors[:64], duration=0, rapid=True)
+                    logging.debug(f"LIFX: Set tile colors for {light.name}")
+            except Exception as e:
+                logging.debug(f"LIFX: Matrix update failed for {light.name}: {e}")
+                
+        elif is_multizone:
+            # Multizone strips (LIFX Z, Beam, Neon)
+            try:
+                # Convert RGB to HSBK
+                hsbk_colors = []
+                for r, g, b in zone_colors:
+                    # Apply smoothing per zone if enabled
+                    zone_key = f"{device_id}_z{len(hsbk_colors)}"
+                    if _entertainment_state["smoothing_enabled"]:
+                        r, g, b = _apply_smoothing(zone_key, r, g, b)
+                    
+                    h, s, v = _rgb_to_hsv65535(r, g, b)
+                    hsbk_colors.append([h, s, max(1, v), 3500])
+                
+                # Send to device
+                device.set_zone_colors(hsbk_colors, duration=0, rapid=True)
+                logging.debug(f"LIFX: Set {len(zone_colors)} zones for {light.name}")
+            except Exception as e:
+                logging.debug(f"LIFX: Multizone update failed for {light.name}: {e}")
+        else:
+            # Fall back to single color (average)
+            if zone_colors:
+                avg_r = sum(c[0] for c in zone_colors) // len(zone_colors)
+                avg_g = sum(c[1] for c in zone_colors) // len(zone_colors)
+                avg_b = sum(c[2] for c in zone_colors) // len(zone_colors)
+                send_rgb_rapid(light, avg_r, avg_g, avg_b)
+                
+    except Exception as e:
+        logging.debug(f"LIFX: Zone rapid send failed for {light.name}: {e}")
 
 def batch_rgb_update(light: Any, r: int, g: int, b: int) -> None:
     """Queue RGB update for batch processing."""

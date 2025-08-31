@@ -183,8 +183,8 @@ DEFAULT_HUE_MODEL = "LCA005"  # Latest A19 v7 with Gamut C and entertainment
 
 # Product capabilities that affect Hue configuration
 LIFX_CAPABILITIES = {
-    "multizone": [31, 32, 38, 117, 118, 119, 120, 141, 142, 161, 162, 205, 206, 213, 214, 217, 218],  # All multizone products
-    "matrix": [55, 57, 68, 137, 138, 143, 144, 176, 177, 185, 186, 187, 188, 201, 202, 203, 204, 215, 216, 219, 220],  # All matrix products
+    "multizone": [31, 32, 38, 117, 118, 119, 120, 141, 142, 161, 162, 205, 206, 213, 214],  # All multizone products (linear strips)
+    "matrix": [55, 57, 68, 137, 138, 143, 144, 176, 177, 185, 186, 187, 188, 201, 202, 203, 204, 215, 216, 217, 218, 219, 220],  # All matrix/polychrome products
     "infrared": [29, 30, 45, 46, 64, 65, 109, 110, 111, 112],  # Night vision products
     "hev": [90, 99],  # Clean antibacterial light
     "chain": [55],  # Products that can chain together
@@ -296,25 +296,25 @@ def get_lifx_capabilities(lifx_product_id: int, features: dict = None) -> dict:
                 capabilities["points_capable"] = 32  # Neon can have more zones
             elif lifx_product_id in [213, 214]:  # Permanent Outdoor
                 capabilities["points_capable"] = 100  # Many zones for outdoor
-            elif lifx_product_id in [217, 218]:  # LIFX Tube
-                capabilities["points_capable"] = 16
             else:
                 capabilities["points_capable"] = 16  # Default for strips
             
-        # Matrix capability
+        # Matrix capability (Polychrome technology)
         if features.get("matrix"):
             capabilities["streaming"]["renderer"] = True
-            # Different matrix products have different capabilities
+            # Different matrix products have different capabilities - from LIFX documentation
             if lifx_product_id == 55:  # LIFX Tile
                 capabilities["points_capable"] = 64  # 64 LEDs per tile
             elif lifx_product_id in [57, 68, 137, 138, 185, 186, 187, 188, 215, 216]:  # Candle
-                capabilities["points_capable"] = 24  # Candle flame effect zones
+                capabilities["points_capable"] = 26  # 26 zones per Candle (official spec)
             elif lifx_product_id in [143, 144, 203, 204]:  # String lights
                 capabilities["points_capable"] = 50  # Many individual bulbs
             elif lifx_product_id in [176, 177]:  # Ceiling
-                capabilities["points_capable"] = 100  # Large ceiling matrix
+                capabilities["points_capable"] = 56  # 56 zones
             elif lifx_product_id in [201, 202]:  # Ceiling 13x26
-                capabilities["points_capable"] = 338  # 13x26 = 338 zones!
+                capabilities["points_capable"] = 120  # 120 zones (official spec)
+            elif lifx_product_id in [217, 218]:  # LIFX Tube
+                capabilities["points_capable"] = 52  # 52 zones per Tube (official spec)
             elif lifx_product_id in [219, 220]:  # Luna
                 capabilities["points_capable"] = 60  # Round matrix
             else:
