@@ -469,6 +469,36 @@ def _scale_sat_65535_to_254(sat: int) -> int:
     return int(round(sat * 254 / 65535))
 
 
+def _fallback_to_tile_colors(device, matrix_colors, light, zone_colors):
+    """Fallback method using set_tile_colors."""
+    try:
+        # Pad colors to 64 if needed (8x8 tile)
+        colors_to_send = matrix_colors[:]
+        while len(colors_to_send) < 64:
+            colors_to_send.append([0, 0, 0, 3500])  # Black padding
+        
+        device.set_tile_colors(0, colors_to_send[:64], duration=0, 
+                             tile_count=1, x=0, y=0, width=8, rapid=True)
+        logging.debug(f"LIFX: set_tile_colors succeeded for {light.name}")
+    except Exception as e:
+        logging.error(f"LIFX: set_tile_colors failed for {light.name}: {e}")
+        _fallback_to_average_color(device, zone_colors, light)
+
+
+def _fallback_to_average_color(device, zone_colors, light):
+    """Last resort: set average color."""
+    if zone_colors:
+        try:
+            avg_r = sum(c[0] for c in zone_colors) // len(zone_colors)
+            avg_g = sum(c[1] for c in zone_colors) // len(zone_colors)
+            avg_b = sum(c[2] for c in zone_colors) // len(zone_colors)
+            h, s, v = _rgb_to_hsv65535(avg_r, avg_g, avg_b)
+            device.set_color([h, s, max(1, v), 3500], duration=0, rapid=True)
+            logging.debug(f"LIFX: Fallback to average color for {light.name}")
+        except Exception as e:
+            logging.error(f"LIFX: Even average color failed for {light.name}: {e}")
+
+
 def _mirek_to_kelvin(mirek: int) -> int:
     try:
         k = int(1000000 / max(1, int(mirek)))
@@ -1403,52 +1433,56 @@ def send_rgb_zones_rapid(light: Any, zone_colors: List[Tuple[int, int, int]]) ->
             # Matrix/Polychrome devices (Candle, Tile, Ceiling)
             logging.info(f"LIFX: Processing Matrix device {light.name} - device type: {type(device).__name__}")
             try:
-                # Get matrix dimensions from protocol_cfg or query device
+                # Get matrix dimensions using the canvas API (recommended approach)
                 matrix_width = light.protocol_cfg.get('matrix_width', 0)
                 matrix_height = light.protocol_cfg.get('matrix_height', 0)
                 
-                # If not stored, try to get from device
+                # Try to get canvas dimensions from device (most reliable)
                 if matrix_width == 0 or matrix_height == 0:
-                    # Try to get tile info for dimensions
-                    if hasattr(device, 'get_tile_info'):
+                    if hasattr(device, 'get_canvas_dimensions'):
                         try:
-                            tile_info = device.get_tile_info()
-                            if tile_info and len(tile_info) > 0:
-                                matrix_width = tile_info[0].width if hasattr(tile_info[0], 'width') else 8
-                                matrix_height = tile_info[0].height if hasattr(tile_info[0], 'height') else 8
-                                # Store for next time
-                                light.protocol_cfg['matrix_width'] = matrix_width
-                                light.protocol_cfg['matrix_height'] = matrix_height
-                        except:
-                            pass
+                            canvas_x, canvas_y = device.get_canvas_dimensions()
+                            matrix_width = canvas_x
+                            matrix_height = canvas_y
+                            # Store for next time
+                            light.protocol_cfg['matrix_width'] = matrix_width
+                            light.protocol_cfg['matrix_height'] = matrix_height
+                            logging.info(f"LIFX: Got canvas dimensions for {light.name}: {matrix_width}x{matrix_height}")
+                        except Exception as e:
+                            logging.debug(f"LIFX: Could not get canvas dimensions: {e}")
                     
-                    # If still no dimensions, use defaults based on product
+                    # Fallback to tile info if canvas dimensions not available
+                    if matrix_width == 0 or matrix_height == 0:
+                        if hasattr(device, 'get_tile_info'):
+                            try:
+                                tile_info = device.get_tile_info()
+                                if tile_info and len(tile_info) > 0:
+                                    # For single tile devices, use tile dimensions
+                                    matrix_width = tile_info[0].width if hasattr(tile_info[0], 'width') else 8
+                                    matrix_height = tile_info[0].height if hasattr(tile_info[0], 'height') else 8
+                                    # Store for next time
+                                    light.protocol_cfg['matrix_width'] = matrix_width
+                                    light.protocol_cfg['matrix_height'] = matrix_height
+                                    logging.info(f"LIFX: Got tile dimensions for {light.name}: {matrix_width}x{matrix_height}")
+                            except:
+                                pass
+                    
+                    # Last resort: use product-specific defaults
                     if matrix_width == 0 or matrix_height == 0:
                         product_id = getattr(device, 'product', None) or device.get_product()
                         
+                        # These are fallback values only - prefer dynamic detection above
                         if product_id in [57, 68, 137, 138, 185, 186, 187, 188, 215, 216]:  # Candle
                             matrix_width = 6  # 26 zones in 6×5 grid
                             matrix_height = 5
-                        elif product_id in [176, 177]:  # Ceiling
-                            matrix_width = 8
-                            matrix_height = 7
-                        elif product_id in [201, 202]:  # Ceiling 13x26
-                            matrix_width = 10
-                            matrix_height = 12
                         elif product_id in [217, 218]:  # Tube
                             matrix_width = 5  # 51 zones in 11×5 vertical arrangement
                             matrix_height = 11
-                        elif product_id in [219, 220]:  # Luna
-                            matrix_width = 8
-                            matrix_height = 8
-                        elif product_id == 55:  # Tile
-                            matrix_width = 8
-                            matrix_height = 8
                         else:
-                            # Default square matrix
-                            total_zones = len(zone_colors)
-                            matrix_width = int(total_zones ** 0.5)
-                            matrix_height = (total_zones + matrix_width - 1) // matrix_width
+                            # Default to 8x8 for unknown matrix devices
+                            matrix_width = 8
+                            matrix_height = 8
+                        logging.info(f"LIFX: Using fallback dimensions for {light.name}: {matrix_width}x{matrix_height}")
                 
                 # Convert linear gradient to 2D matrix
                 matrix_colors = []
@@ -1471,11 +1505,23 @@ def send_rgb_zones_rapid(light: Any, zone_colors: List[Tuple[int, int, int]]) ->
                     logging.info(f"LIFX: Matrix {light.name} - First 3 HSBK values: {matrix_colors[:3]}")
                     logging.info(f"LIFX: Matrix dimensions: {matrix_width}x{matrix_height}, total colors: {len(matrix_colors)}")
                 
-                # Send to device using the appropriate method
-                # Prefer project_matrix for better 2D handling
-                if hasattr(device, 'project_matrix'):
-                    # Convert linear array to 2D matrix for project_matrix
+                # Send to device using the recommended canvas API approach
+                # PRIMARY METHOD: project_matrix for Matrix devices (as per lifxlan guide)
+                if hasattr(device, 'project_matrix') and hasattr(device, 'get_canvas_dimensions'):
                     try:
+                        # Ensure we have correct canvas dimensions
+                        try:
+                            actual_canvas_x, actual_canvas_y = device.get_canvas_dimensions()
+                            if actual_canvas_x != matrix_width or actual_canvas_y != matrix_height:
+                                logging.info(f"LIFX: Updating canvas dimensions from {matrix_width}x{matrix_height} to {actual_canvas_x}x{actual_canvas_y}")
+                                matrix_width = actual_canvas_x
+                                matrix_height = actual_canvas_y
+                                light.protocol_cfg['matrix_width'] = matrix_width
+                                light.protocol_cfg['matrix_height'] = matrix_height
+                        except:
+                            pass  # Use existing dimensions
+                        
+                        # Convert linear array to 2D matrix for project_matrix
                         matrix_2d = []
                         for y in range(matrix_height):
                             row = []
@@ -1487,70 +1533,41 @@ def send_rgb_zones_rapid(light: Any, zone_colors: List[Tuple[int, int, int]]) ->
                                     row.append([0, 0, 0, 3500])  # Black padding
                             matrix_2d.append(row)
                         
-                        # Use project_matrix for proper 2D projection
+                        # Use project_matrix as recommended by lifxlan API guide
                         device.project_matrix(matrix_2d, duration=0, rapid=True)
-                        logging.info(f"LIFX: Successfully called project_matrix for {light.name} with {matrix_width}x{matrix_height} matrix")
-                    except Exception as e:
-                        logging.error(f"LIFX: project_matrix failed for {light.name}: {e}")
-                        # Try set_tile_colors as fallback
-                        try:
-                            # Pad colors to 64 if needed (8x8 tile)
-                            colors_to_send = matrix_colors[:]
-                            while len(colors_to_send) < 64:
-                                colors_to_send.append([0, 0, 0, 3500])  # Black padding
-                            
-                            device.set_tile_colors(0, colors_to_send[:64], duration=0, 
-                                                 tile_count=1, x=0, y=0, width=8, rapid=True)
-                            logging.info(f"LIFX: Fallback to set_tile_colors for {light.name}")
-                        except Exception as e2:
-                            logging.error(f"LIFX: set_tile_colors also failed: {e2}")
-                            # Last resort: average color
-                            if zone_colors:
-                                avg_r = sum(c[0] for c in zone_colors) // len(zone_colors)
-                                avg_g = sum(c[1] for c in zone_colors) // len(zone_colors)
-                                avg_b = sum(c[2] for c in zone_colors) // len(zone_colors)
-                                h, s, v = _rgb_to_hsv65535(avg_r, avg_g, avg_b)
-                                device.set_color([h, s, max(1, v), 3500], duration=0, rapid=True)
-                                logging.info(f"LIFX: Final fallback to set_color for {light.name}")
-                elif hasattr(device, 'set_tile_colors'):
-                    # For devices without project_matrix
-                    try:
-                        # Pad colors to 64 if needed (8x8 tile)
-                        colors_to_send = matrix_colors[:]
-                        while len(colors_to_send) < 64:
-                            colors_to_send.append([0, 0, 0, 3500])  # Black padding
+                        logging.debug(f"LIFX: project_matrix succeeded for {light.name} ({matrix_width}x{matrix_height})")
                         
-                        device.set_tile_colors(0, colors_to_send[:64], duration=0, 
-                                             tile_count=1, x=0, y=0, width=8, rapid=True)
-                        logging.info(f"LIFX: Called set_tile_colors for {light.name} with {len(colors_to_send[:64])} colors")
                     except Exception as e:
-                        logging.error(f"LIFX: set_tile_colors failed for {light.name}: {e}")
-                        # Try fallback to simple color
-                        if zone_colors:
-                            avg_r = sum(c[0] for c in zone_colors) // len(zone_colors)
-                            avg_g = sum(c[1] for c in zone_colors) // len(zone_colors)
-                            avg_b = sum(c[2] for c in zone_colors) // len(zone_colors)
-                            h, s, v = _rgb_to_hsv65535(avg_r, avg_g, avg_b)
-                            device.set_color([h, s, max(1, v), 3500], duration=0, rapid=True)
-                            logging.info(f"LIFX: Fallback to set_color for {light.name}")
+                        logging.warning(f"LIFX: project_matrix failed for {light.name}: {e}")
+                        # Fallback to lower-level methods
+                        _fallback_to_tile_colors(device, matrix_colors, light, zone_colors)
+                        
+                elif hasattr(device, 'set_tile_colors'):
+                    # For devices without project_matrix (older API versions)
+                    _fallback_to_tile_colors(device, matrix_colors, light, zone_colors)
+                    
                 elif hasattr(device, 'set_tilechain_colors'):
                     # For chained tiles
-                    tiles = []
-                    tile_size = 64  # 8x8 per tile
-                    for i in range(0, len(matrix_colors), tile_size):
-                        tiles.append(matrix_colors[i:i+tile_size])
-                    device.set_tilechain_colors(tiles, duration=0, rapid=True)
-                    logging.debug(f"LIFX: Set {len(tiles)} tiles for {light.name}")
+                    try:
+                        tiles = []
+                        tile_size = 64  # 8x8 per tile
+                        for i in range(0, len(matrix_colors), tile_size):
+                            tile_colors = matrix_colors[i:i+tile_size]
+                            # Pad to 64 if needed
+                            while len(tile_colors) < 64:
+                                tile_colors.append([0, 0, 0, 3500])
+                            tiles.append(tile_colors)
+                        device.set_tilechain_colors(tiles, duration=0, rapid=True)
+                        logging.debug(f"LIFX: set_tilechain_colors succeeded for {light.name} ({len(tiles)} tiles)")
+                    except Exception as e:
+                        logging.error(f"LIFX: set_tilechain_colors failed: {e}")
+                        _fallback_to_average_color(device, zone_colors, light)
                 else:
-                    # Fallback to single color set
-                    if zone_colors:
-                        avg_r = sum(c[0] for c in zone_colors) // len(zone_colors)
-                        avg_g = sum(c[1] for c in zone_colors) // len(zone_colors) 
-                        avg_b = sum(c[2] for c in zone_colors) // len(zone_colors)
-                        h, s, v = _rgb_to_hsv65535(avg_r, avg_g, avg_b)
-                        device.set_color([h, s, max(1, v), 3500], duration=0, rapid=True)
+                    # Last resort for devices without any tile/matrix methods
+                    _fallback_to_average_color(device, zone_colors, light)
+                    
             except Exception as e:
-                logging.debug(f"LIFX: Matrix update failed for {light.name}: {e}")
+                logging.error(f"LIFX: Matrix update failed for {light.name}: {e}")
                 
         elif is_multizone:
             # Multizone strips (LIFX Z, Beam, Neon)
