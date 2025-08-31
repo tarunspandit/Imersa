@@ -1176,9 +1176,11 @@ def set_light_multizone(light: Any, zone_colors: List[Tuple[int, int, int]]) -> 
 
 
 
+
 def set_light_gradient(light: Any, gradient_points: List[Dict]) -> None:
-    """Apply a Hue v2 gradient to LIFX lights (multizone & matrix/tile).
-    Accepts points as [[x,y], ...] or [{'color':[x,y], 'position': 0..1}, ...].
+    """Apply a Hue v2 gradient to LIFX lights.
+    - Linear MultiZone -> set_light_multizone(...)
+    - Matrix/Tile -> lifxlan TileChain.project_matrix() using canvas dims
     """
     device = _get_device(light)
     if not device:
@@ -1188,7 +1190,7 @@ def set_light_gradient(light: Any, gradient_points: List[Dict]) -> None:
         stops = []
         if not isinstance(points, list) or len(points) == 0:
             return [(0.0, (0.32, 0.33))]
-        for i, p in enumerate(points):
+        for p in points:
             pos = None
             xy = None
             if isinstance(p, dict):
@@ -1214,7 +1216,7 @@ def set_light_gradient(light: Any, gradient_points: List[Dict]) -> None:
             int(round(c0[2] + (c1[2] - c0[2]) * t)),
         )
 
-    def _resample(points_xy, count):
+    def _resample_rgb(points_xy, count):
         stops = _parse_points(points_xy)
         rgb_stops = [(pos, convert_xy(xy[0], xy[1], 255)) for pos, xy in stops]
         if count <= 1:
@@ -1222,7 +1224,6 @@ def set_light_gradient(light: Any, gradient_points: List[Dict]) -> None:
         colors = []
         for i in range(count):
             t = 0.0 if count == 1 else i / float(count - 1)
-            # find segment
             k = 0
             while k < len(rgb_stops) - 1 and t > rgb_stops[k+1][0]:
                 k += 1
@@ -1237,36 +1238,50 @@ def set_light_gradient(light: Any, gradient_points: List[Dict]) -> None:
                 colors.append(_lerp_rgb(c0, c1, frac))
         return colors
 
+    def _rgb_to_hsvk(rgb, kelvin=3500):
+        r, g, b = [x / 255.0 for x in rgb]
+        mx = max(r, g, b); mn = min(r, g, b)
+        diff = mx - mn
+        if diff == 0:
+            h = 0.0
+        elif mx == r:
+            h = (60 * ((g - b) / diff) + 360) % 360
+        elif mx == g:
+            h = (60 * ((b - r) / diff) + 120) % 360
+        else:
+            h = (60 * ((r - g) / diff) + 240) % 360
+        s = 0.0 if mx == 0 else diff / mx
+        v = mx
+        H = int(round(h / 360.0 * 65535))
+        S = int(round(s * 65535))
+        V = int(round(v * 65535))
+        K = int(kelvin)
+        return [H, S, V, K]
+
     try:
         points_capable = int(light.protocol_cfg.get("points_capable", 0) or 0)
-        # Detect matrix/tile capability
-        is_matrix = False
-        try:
-            feats = device.get_product_features()
-            is_matrix = bool(getattr(feats, "get", lambda *_: None)("matrix") or getattr(feats, "get", lambda *_: None)("chain"))
-        except Exception:
-            is_matrix = hasattr(device, "project_matrix") or hasattr(device, "set_tile_colors")
+        is_matrix = hasattr(device, "project_matrix") and hasattr(device, "get_canvas_dimensions")
 
         if points_capable > 0 and not is_matrix:
-            zone_colors = _resample(gradient_points, points_capable)
-            set_light_multizone(light, zone_colors)
+            zone_colors_rgb = _resample_rgb(gradient_points, points_capable)
+            set_light_multizone(light, zone_colors_rgb)
             return
 
-        # Matrix/tile devices
-        total_zones = 0
-        try:
-            total_zones = int(light.protocol_cfg.get("total_zones", 0) or 0)
-        except Exception:
-            total_zones = 0
-        if total_zones <= 0:
+        if is_matrix:
+            rows, cols = device.get_canvas_dimensions(False)
+            col_rgbs = _resample_rgb(gradient_points, int(cols))
+            col_hsvks = [_rgb_to_hsvk(c) for c in col_rgbs]
+            hsvk_matrix = [[col_hsvks[x] for x in range(int(cols))] for _ in range(int(rows))]
             try:
-                w, h = _matrix_dims(light)
-                total_zones = max(1, int(w) * int(h))
+                if hasattr(device, "set_tile_effect"):
+                    device.set_tile_effect(0, rapid=True)
             except Exception:
-                total_zones = 64
+                pass
+            device.project_matrix(hsvk_matrix, duration=0, rapid=True)
+            return
 
-        zone_colors = _resample(gradient_points, total_zones)
-        send_rgb_zones_rapid(light, zone_colors)
+        zone_colors_rgb = _resample_rgb(gradient_points, max(1, int(points_capable or 1)))
+        _set_color_rgb(light, zone_colors_rgb[-1])
     except Exception as e:
         logging.warning(f"LIFX: Failed to set gradient for {light.name}: {e}")
 
