@@ -1088,6 +1088,46 @@ def _set_light_worker(device: Any, data: Dict, light_name: str) -> bool:
         logging.warning(f"LIFX: Error setting state for {light_name}: {e}")
         return False
 
+
+def extract_gradient_points(data: Dict) -> Optional[List[Dict]]:
+    "Return a list of points from any Hue v2 gradient payload shape."
+    try:
+        if not isinstance(data, dict):
+            return None
+        # common locations
+        cand = data.get("gradient") or data.get("effects", {}).get("gradient") or data.get("mode", {}).get("gradient")
+        if isinstance(cand, dict):
+            pts = cand.get("points") or cand.get("palette") or cand.get("colors")
+            if isinstance(pts, list) and pts:
+                return pts
+        # sometimes scenes send points at top-level
+        for k in ("points", "palette", "colors"):
+            pts = data.get(k)
+            if isinstance(pts, list) and pts:
+                return pts
+        # deep search (limit)
+        stack = [data]
+        seen = set()
+        while stack:
+            node = stack.pop()
+            nid = id(node)
+            if nid in seen: 
+                continue
+            seen.add(nid)
+            if isinstance(node, dict):
+                for key, val in node.items():
+                    if key in ("points", "palette", "colors") and isinstance(val, list) and val:
+                        return val
+                    if isinstance(val, (dict, list)):
+                        stack.append(val)
+            elif isinstance(node, list):
+                for v in node:
+                    if isinstance(v, (dict, list)):
+                        stack.append(v)
+        return None
+    except Exception:
+        return None
+
 def set_light(light: Any, data: Dict) -> None:
     """Set LIFX light state with parallel execution."""
     device = _get_device(light)
@@ -1194,12 +1234,24 @@ def set_light_gradient(light: Any, gradient_points: List[Dict]) -> None:
             pos = None
             xy = None
             if isinstance(p, dict):
-                xy = p.get("color") or p.get("xy")
+                c = p.get("color")
+                if isinstance(c, dict):
+                    xy = c.get("xy") or c.get("xy_color") or c.get("xy_color_space") or c.get("xy_color_value")
+                elif isinstance(c, (list, tuple)) and len(c) >= 2:
+                    xy = (float(c[0]), float(c[1]))
+                if xy is None:
+                    xy = p.get("xy") or p.get("xy_color") or p.get("rgb")
                 pos = p.get("position", p.get("pos", p.get("offset", None)))
             elif isinstance(p, (list, tuple)) and len(p) >= 2:
                 xy = (float(p[0]), float(p[1]))
-            if xy is not None:
-                stops.append([pos, (float(xy[0]), float(xy[1]))])
+            if xy is not None and isinstance(xy, (list, tuple)) and len(xy) >= 2:
+                try:
+                    x0 = float(xy[0]); y0 = float(xy[1])
+                    stops.append([pos, (x0, y0)])
+                except Exception:
+                    continue
+        if not stops:
+            return [(0.0, (0.32, 0.33))]
         if any(s[0] is None for s in stops):
             n = max(1, len(stops))
             for j, s in enumerate(stops):
