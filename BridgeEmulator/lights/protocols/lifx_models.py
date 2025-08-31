@@ -548,7 +548,7 @@ def identify_lifx_model(device) -> Tuple[str, dict, str]:
             name = device.get_label() or name
     except Exception:
         pass
-    hue_model = get_hue_model_from_lifx(pid, name)
+    hue_model = get_hue_model_from_lifx(pid, name, features)
     features = {}
     try:
         if hasattr(device, "get_product_features"):
@@ -558,3 +558,18 @@ def identify_lifx_model(device) -> Tuple[str, dict, str]:
     caps = get_lifx_capabilities(pid, features)
     return hue_model, caps, name
 
+
+
+def _points_capable_from(lifx_product_id: int, features: Optional[dict]) -> int:
+    features = features or {}
+    try:
+        zones = int(features.get("zones") or features.get("zone_count") or 0)
+    except Exception:
+        zones = 0
+    if lifx_product_id in MATRIX_PIDS or features.get("matrix"):
+        if zones >= 64 and zones % 64 == 0:
+            return 64
+        return 5 if zones <= 0 else max(5, zones)
+    if lifx_product_id in MULTIZONE_PIDS or features.get("multizone"):
+        return 16 if zones <= 0 else max(8, min(32, zones))
+    return 1

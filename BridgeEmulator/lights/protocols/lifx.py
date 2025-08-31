@@ -534,6 +534,35 @@ def _scan_subnet_for_lifx(subnet: str = "192.168.1") -> List[Any]:
     return devices
 
 
+
+def _ensure_points_capable(light: Any, zone_count: int, matrix: bool) -> int:
+    """Best-effort points_capable so the UI exposes gradient multi-color controls."""
+    try:
+        cfg = getattr(light, "protocol_cfg", {}) or {}
+    except Exception:
+        cfg = {}
+    try:
+        pc = int(cfg.get("points_capable") or 0)
+    except Exception:
+        pc = 0
+    if pc > 0:
+        return pc
+    if matrix:
+        if zone_count >= 64 and zone_count % 64 == 0:
+            pc = 64
+        elif zone_count >= 5:
+            pc = 5
+        else:
+            pc = 5
+    else:
+        pc = 16 if zone_count <= 0 else max(8, min(32, zone_count))
+    try:
+        cfg["points_capable"] = pc
+        light.protocol_cfg = cfg
+    except Exception:
+        pass
+    return pc
+
 def initialize_lifx():
     """Initialize LIFX module and start keep-alive for existing devices."""
     logging.info("LIFX: Initializing module")
