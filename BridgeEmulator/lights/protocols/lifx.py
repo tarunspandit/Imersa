@@ -1276,127 +1276,67 @@ def send_rgb_zones_rapid(light: Any, zone_colors: List[Tuple[int, int, int]]) ->
             is_multizone = hasattr(device, 'set_zone_colors')
         
         if is_matrix:
-            # Some devices (e.g., LIFX Candle Color) report 'matrix' but are actually MultiZone under the hood.
+            # Matrix/Tile devices (Tile, Ceiling, Candle, Tube)
+            # Stay on matrix path; do not demote to multizone even if tile methods are missing.
             has_tile_methods = hasattr(device, 'set_tile_colors') or hasattr(device, 'set_tilechain_colors')
-            has_multizone = hasattr(device, 'set_zone_colors') or hasattr(device, 'extended_set_zone_color')
-            if not has_tile_methods and has_multizone:
-                # Stay in matrix path; do NOT demote to multizone
-                pass
-            else:
-        try:
-            # Matrix/Tile devices (Tile, Ceiling, etc.)
-            # Get matrix dimensions from protocol_cfg or query device
+            # Try to determine matrix width/height from config or device; fallback heuristics
             matrix_width = light.protocol_cfg.get('matrix_width', 0)
             matrix_height = light.protocol_cfg.get('matrix_height', 0)
-
-            # If not stored, try to get from device
-            if (matrix_width == 0 or matrix_height == 0) and hasattr(device, 'get_tile_info'):
-                try:
-                    tile_info = device.get_tile_info()
-                    if tile_info and hasattr(tile_info[0], 'width') and hasattr(tile_info[0], 'height'):
-                        matrix_width = int(getattr(tile_info[0], 'width', 8) or 8)
-                        matrix_height = int(getattr(tile_info[0], 'height', 8) or 8)
-                except Exception:
-                    pass
-
-            # Sensible defaults
-            if matrix_width == 0: matrix_width = 8
-            if matrix_height == 0: matrix_height = 8
-
-            # Convert linear zone list into 2D tile order
+            try:
+                if (matrix_width == 0 or matrix_height == 0) and hasattr(device, 'get_tile_info'):
+                    ti = device.get_tile_info()
+                    if ti and isinstance(ti, (list, tuple)):
+                        for entry in ti:
+                            if isinstance(entry, (list, tuple)) and len(entry) >= 4:
+                                if not matrix_width:
+                                    matrix_width = int(entry[2] or 0)
+                                if not matrix_height:
+                                    matrix_height = int(entry[3] or 0)
+            except Exception:
+                pass
+            # Heuristics based on number of zones provided
+            zc = len(zone_colors) if isinstance(zone_colors, (list, tuple)) else 0
+            if (matrix_width == 0 or matrix_height == 0):
+                if zc == 5:
+                    matrix_width, matrix_height = 5, 1  # Candle 5×1
+                elif zc == 64:
+                    matrix_width, matrix_height = 8, 8  # Tile 8×8
+                elif zc == 49:
+                    matrix_width, matrix_height = 7, 7
+                elif zc > 0:
+                    matrix_width, matrix_height = zc, 1
+            # Prepare HSBK list for matrix write
             matrix_colors = []
-            for y in range(matrix_height):
-                for x in range(matrix_width):
-                    idx = y * matrix_width + x
-                    if idx < len(zone_colors):
-                        r, g, b = zone_colors[idx]
-                    else:
-                        r, g, b = zone_colors[-1] if zone_colors else (0, 0, 0)
-                    h, s, v = _rgb_to_hsv65535(r, g, b)
-                    matrix_colors.append([h, s, max(1, v), 3500])
-
-            if hasattr(device, 'set_tile_colors'):
-                device.set_tile_colors(0, matrix_colors[:64], duration=0, tile_count=1, x=0, y=0, width=matrix_width, rapid=True)
-                logging.debug(f"LIFX: Set {len(matrix_colors)} matrix zones ({matrix_width}x{matrix_height}) for {light.name}")
-            elif hasattr(device, 'set_tilechain_colors'):
-                tiles = []
-                tile_size = 64
-                for i in range(0, len(matrix_colors), tile_size):
-                    tiles.append(matrix_colors[i:i+tile_size])
-                device.set_tilechain_colors(tiles, duration=0, rapid=True)
-                logging.debug(f"LIFX: Set {len(tiles)} tiles for {light.name}")
-            else:
-                # Final fallback: average to single color
-                if zone_colors:
-                    avg_r = sum(c[0] for c in zone_colors) // len(zone_colors)
-                    avg_g = sum(c[1] for c in zone_colors) // len(zone_colors)
-                    avg_b = sum(c[2] for c in zone_colors) // len(zone_colors)
+            for (r, g, b) in zone_colors[:matrix_width*matrix_height]:
+                h, s, v = _rgb_to_hsv65535(r, g, b)
+                matrix_colors.append([h, s, max(1, v), 3500])
+            # Try tile APIs
+            try:
+                if has_tile_methods and hasattr(device, 'set_tile_colors'):
+                    device.set_tile_colors(0, matrix_colors, duration=0, tile_count=1, x=0, y=0, width=matrix_width, rapid=True)
+                elif has_tile_methods and hasattr(device, 'set_tilechain_colors'):
+                    tiles = []
+                    for i in range(0, len(matrix_colors), 64):
+                        tiles.append(matrix_colors[i:i+64])
+                    device.set_tilechain_colors(tiles, duration=0, rapid=True)
+                else:
+                    # Last resort: average color so we don't scramble mapping via multizone
+                    avg_r = sum(c[0] for c in zone_colors)//zc if zc else 0
+                    avg_g = sum(c[1] for c in zone_colors)//zc if zc else 0
+                    avg_b = sum(c[2] for c in zone_colors)//zc if zc else 0
                     h, s, v = _rgb_to_hsv65535(avg_r, avg_g, avg_b)
                     device.set_color([h, s, max(1, v), 3500], duration=0, rapid=True)
-        except Exception as e:
-            logging.debug(f"LIFX: Matrix update failed for {light.name}: {e}")
-elif is_multizone:
-            # Multizone strips (LIFX Z, Beam, Neon)
-            try:
-                # Get actual zone count from device or protocol_cfg
-                actual_zones = light.protocol_cfg.get('points_capable', 0)
-                
-                # If not stored, query device
-                if actual_zones == 0:
-                    try:
-                        from lifxlan.msgtypes import MultiZoneGetColorZones, MultiZoneStateZone, MultiZoneStateMultiZone
-                        response = device.req_with_resp(
-                            MultiZoneGetColorZones,
-                            [MultiZoneStateZone, MultiZoneStateMultiZone],
-                            {"start_index": 0, "end_index": 255}
-                        )
-                        if hasattr(response, 'count'):
-                            actual_zones = response.count
-                            # Store for next time
-                            light.protocol_cfg['points_capable'] = actual_zones
-                    except:
-                        actual_zones = len(zone_colors)  # Use provided length as fallback
-                
-                # Ensure we have the right number of zones
-                if actual_zones > 0 and len(zone_colors) != actual_zones:
-                    # Interpolate or truncate to match actual zone count
-                    if len(zone_colors) < actual_zones:
-                        # Interpolate to fill all zones
-                        new_colors = []
-                        for i in range(actual_zones):
-                            pos = i * len(zone_colors) / actual_zones
-                            idx = int(pos)
-                            if idx < len(zone_colors) - 1:
-                                frac = pos - idx
-                                r1, g1, b1 = zone_colors[idx]
-                                r2, g2, b2 = zone_colors[idx + 1]
-                                r = int(r1 + (r2 - r1) * frac)
-                                g = int(g1 + (g2 - g1) * frac)
-                                b = int(b1 + (b2 - b1) * frac)
-                                new_colors.append((r, g, b))
-                            else:
-                                new_colors.append(zone_colors[-1])
-                        zone_colors = new_colors
-                    else:
-                        # Truncate to actual zone count
-                        zone_colors = zone_colors[:actual_zones]
-                
-                # Convert RGB to HSBK
-                hsbk_colors = []
-                for r, g, b in zone_colors:
-                    # Apply smoothing per zone if enabled
-                    zone_key = f"{device_id}_z{len(hsbk_colors)}"
-                    if _entertainment_state["smoothing_enabled"]:
-                        r, g, b = _apply_smoothing(zone_key, r, g, b)
-                    
-                    h, s, v = _rgb_to_hsv65535(r, g, b)
-                    hsbk_colors.append([h, s, max(1, v), 3500])
-                
-                # Send to device
-                device.set_zone_colors(hsbk_colors, duration=0, rapid=True)
-                logging.debug(f"LIFX: Set {len(zone_colors)} zones for {light.name}")
-            except Exception as e:
-                logging.debug(f"LIFX: Multizone update failed for {light.name}: {e}")
+            except Exception:
+                # On failure, still ensure we send something sane
+                try:
+                    avg_r = sum(c[0] for c in zone_colors)//zc if zc else 0
+                    avg_g = sum(c[1] for c in zone_colors)//zc if zc else 0
+                    avg_b = sum(c[2] for c in zone_colors)//zc if zc else 0
+                    h, s, v = _rgb_to_hsv65535(avg_r, avg_g, avg_b)
+                    device.set_color([h, s, max(1, v), 3500], duration=0, rapid=True)
+                except Exception:
+                    pass
+            return
         else:
             # Fall back to single color (average)
             if zone_colors:
