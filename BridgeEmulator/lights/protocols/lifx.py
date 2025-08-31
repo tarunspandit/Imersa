@@ -39,6 +39,22 @@ import logManager
 
 from functions.colors import convert_xy, convert_rgb_xy, hsv_to_rgb
 
+# Import LIFX model identification
+try:
+    from lights.protocols.lifx_models import identify_lifx_model, get_hue_model_from_lifx, get_lifx_capabilities
+    LIFX_MODELS_AVAILABLE = True
+except ImportError:
+    LIFX_MODELS_AVAILABLE = False
+    # Fallback if module not available
+    def identify_lifx_model(device):
+        try:
+            if hasattr(device, 'supports_color') and device.supports_color():
+                return "LCT015", {}, "LIFX Color"
+            else:
+                return "LWB010", {}, "LIFX White"
+        except:
+            return "LCT015", {}, "LIFX"
+
 logging = logManager.logger.get_logger(__name__)
 
 try:
@@ -616,18 +632,22 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
                         )
                         
                         if not already_exists:
+                            # Identify model and capabilities
+                            hue_model, capabilities, product_name = identify_lifx_model(device)
+                            
                             detectedLights.append({
                                 "protocol": "lifx",
                                 "name": label,
-                                "modelid": "LCT015",
+                                "modelid": hue_model,
                                 "protocol_cfg": {
                                     "ip": ip,
                                     "id": mac or ip,
-                                    "label": label
+                                    "label": label,
+                                    "product_name": product_name
                                 }
                             })
                             added += 1
-                            logging.info(f"LIFX: Added {label} at {ip}")
+                            logging.info(f"LIFX: Added {product_name} ({label}) at {ip} as Hue model {hue_model}")
                     except Exception as e:
                         logging.debug(f"LIFX: Error getting device info for {ip}: {e}")
             except Exception as e:
@@ -667,23 +687,23 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
                 )
                 
                 if not already_exists:
-                    # Determine model based on capabilities
-                    if device.supports_color():
-                        modelid = "LCT015"  # Color bulb
-                    else:
-                        modelid = "LWB010"  # White bulb
+                    # Identify model and capabilities using proper identification
+                    hue_model, capabilities, product_name = identify_lifx_model(device)
                     
                     detectedLights.append({
                         "protocol": "lifx",
                         "name": label,
-                        "modelid": modelid,
+                        "modelid": hue_model,
                         "protocol_cfg": {
                             "ip": ip,
                             "id": mac,
-                            "label": label
+                            "label": label,
+                            "product_name": product_name
                         }
                     })
                     added += 1
+                    
+                    logging.info(f"LIFX: Detected {product_name} ({mac}) as Hue model {hue_model}")
                     
                     # Cache the device
                     _device_cache.put(mac, device)
@@ -715,17 +735,23 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
                         )
                         
                         if not already_exists:
+                            # Identify model and capabilities
+                            hue_model, capabilities, product_name = identify_lifx_model(device)
+                            
                             detectedLights.append({
                                 "protocol": "lifx",
                                 "name": label,
-                                "modelid": "LCT015",
+                                "modelid": hue_model,
                                 "protocol_cfg": {
                                     "ip": ip,
                                     "id": mac or ip,
-                                    "label": label
+                                    "label": label,
+                                    "product_name": product_name
                                 }
                             })
                             added += 1
+                            
+                            logging.info(f"LIFX: Added {product_name} ({label}) at {ip} as Hue model {hue_model}")
                             
                             # Register for keep-alive
                             if mac:
@@ -842,6 +868,90 @@ def set_lights_batch(lights: List[Any], data: Dict) -> None:
         logging.debug(f"LIFX: Submitted {len(futures)} parallel light updates")
 
 
+def set_light_multizone(light: Any, zone_colors: List[Tuple[int, int, int]]) -> None:
+    """Set colors for different zones on multizone LIFX devices (strips, beams).
+    
+    Args:
+        light: Light object
+        zone_colors: List of RGB tuples, one per zone
+    """
+    device = _get_device(light)
+    if not device:
+        logging.debug(f"LIFX: Device not found for {light.name}")
+        return
+        
+    try:
+        # Check if device supports multizone
+        if not hasattr(device, 'set_zone_colors'):
+            logging.debug(f"LIFX: Device {light.name} does not support multizone")
+            # Fall back to setting single color (average of zones)
+            if zone_colors:
+                avg_r = sum(c[0] for c in zone_colors) // len(zone_colors)
+                avg_g = sum(c[1] for c in zone_colors) // len(zone_colors)
+                avg_b = sum(c[2] for c in zone_colors) // len(zone_colors)
+                h, s, v = _rgb_to_hsv65535(avg_r, avg_g, avg_b)
+                device.set_color([h, s, v, 3500], duration=0, rapid=True)
+            return
+            
+        # Convert RGB colors to HSBK for each zone
+        hsbk_colors = []
+        for r, g, b in zone_colors:
+            h, s, v = _rgb_to_hsv65535(r, g, b)
+            hsbk_colors.append([h, s, v, 3500])  # Default kelvin
+            
+        # Set zone colors
+        device.set_zone_colors(hsbk_colors, duration=0, rapid=True)
+        logging.debug(f"LIFX: Set {len(zone_colors)} zone colors for {light.name}")
+        
+    except Exception as e:
+        logging.warning(f"LIFX: Failed to set multizone for {light.name}: {e}")
+
+
+def set_light_gradient(light: Any, gradient_points: List[Dict]) -> None:
+    """Set gradient for LIFX devices that support it.
+    
+    Args:
+        light: Light object
+        gradient_points: List of dicts with 'color' (xy) and optionally 'position' (0.0-1.0)
+    """
+    device = _get_device(light)
+    if not device:
+        return
+        
+    try:
+        # Check if device has gradient/multizone capability
+        points_capable = light.protocol_cfg.get("points_capable", 0)
+        
+        if points_capable > 0:
+            # Convert gradient points to zone colors
+            zone_colors = []
+            
+            for i in range(min(points_capable, len(gradient_points))):
+                point = gradient_points[i]
+                if "color" in point:
+                    x, y = point["color"]
+                    r, g, b = convert_xy(x, y, 255)
+                    zone_colors.append((r, g, b))
+                    
+            # Fill remaining zones with last color if needed
+            if zone_colors and len(zone_colors) < points_capable:
+                last_color = zone_colors[-1]
+                while len(zone_colors) < points_capable:
+                    zone_colors.append(last_color)
+                    
+            # Apply to multizone device
+            if zone_colors:
+                set_light_multizone(light, zone_colors)
+        else:
+            # Non-gradient device - just set to first color
+            if gradient_points and "color" in gradient_points[0]:
+                x, y = gradient_points[0]["color"]
+                set_light(light, {"xy": [x, y]})
+                
+    except Exception as e:
+        logging.warning(f"LIFX: Failed to set gradient for {light.name}: {e}")
+
+
 def _get_state_worker(device: Any, light_name: str) -> Dict:
     """Worker function to get a single light's state."""
     try:
@@ -868,6 +978,43 @@ def _get_state_worker(device: Any, light_name: str) -> Dict:
     except Exception as e:
         logging.debug(f"LIFX: Error getting state for {light_name}: {e}")
         return {"reachable": False}
+
+def get_device_info(light: Any) -> Dict:
+    """Get detailed device information including model and capabilities.
+    
+    Args:
+        light: Light object
+        
+    Returns:
+        Dict with device info including model, features, capabilities
+    """
+    device = _get_device(light)
+    if not device:
+        return {"error": "Device not found"}
+        
+    try:
+        info = {
+            "ip": device.get_ip_addr(),
+            "mac": device.get_mac_addr(),
+            "label": device.get_label(),
+            "vendor": device.get_vendor(),
+            "product_id": device.get_product(),
+            "product_name": device.get_product_name(),
+            "version": device.get_version(),
+            "features": device.get_product_features()
+        }
+        
+        # Get Hue model mapping
+        hue_model, capabilities, _ = identify_lifx_model(device)
+        info["hue_model"] = hue_model
+        info["capabilities"] = capabilities
+        
+        return info
+        
+    except Exception as e:
+        logging.error(f"LIFX: Failed to get device info: {e}")
+        return {"error": str(e)}
+
 
 def get_light_state(light: Any) -> Dict:
     """Get current LIFX light state with parallel execution."""
