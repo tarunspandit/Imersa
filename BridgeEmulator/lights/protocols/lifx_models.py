@@ -1,11 +1,13 @@
+"""
+LIFX Model Identification and Mapping
+Maps LIFX product IDs to appropriate Philips Hue model IDs and capabilities
+"""
+
 # LIFX Product capabilities from lifxlan library
 MULTIZONE_PIDS = {31, 32, 38, 117, 118, 119, 120, 141, 142, 143, 144, 161, 162, 203, 204, 205, 206, 213, 214}
 MATRIX_PIDS = {55, 57, 68, 137, 138, 176, 177, 185, 186, 187, 188, 201, 202, 215, 216, 217, 218, 219, 220}
 EXTENDED_MZ_PIDS = {38, 119, 120}  # LIFX Beam supports extended multizone
 GRADIENT_MODEL = 'LCX004'
-LIFX Model Identification and Mapping
-Maps LIFX product IDs to appropriate Philips Hue model IDs and capabilities
-"""
 
 from typing import Dict, Any, Optional, Tuple
 
