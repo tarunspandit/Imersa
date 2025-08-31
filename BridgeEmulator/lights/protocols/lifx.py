@@ -927,13 +927,13 @@ def set_light_multizone(light: Any, zone_colors: List[Tuple[int, int, int]]) -> 
             
         # Set zone colors
         # Prefer extended protocol if available (fewer packets, less flicker)
-if hasattr(device, 'extended_set_zone_color'):
-    try:
-        device.extended_set_zone_color(hsbk_colors, index=0, duration=0, rapid=True, apply=1)
-    except Exception as _:
-        device.set_zone_colors(hsbk_colors, duration=0, rapid=True)
-else:
-    device.set_zone_colors(hsbk_colors, duration=0, rapid=True)
+        if hasattr(device, 'extended_set_zone_color'):
+            try:
+                device.extended_set_zone_color(hsbk_colors, index=0, duration=0, rapid=True, apply=1)
+            except Exception as _:
+                device.set_zone_colors(hsbk_colors, duration=0, rapid=True)
+        else:
+            device.set_zone_colors(hsbk_colors, duration=0, rapid=True)
         logging.debug(f"LIFX: Set {len(zone_colors)} zone colors for {light.name}")
         
     except Exception as e:
@@ -1279,9 +1279,9 @@ def send_rgb_zones_rapid(light: Any, zone_colors: List[Tuple[int, int, int]]) ->
     # Some devices (e.g., LIFX Candle Color) report 'matrix' but are actually MultiZone under the hood.
     has_tile_methods = hasattr(device, 'set_tile_colors') or hasattr(device, 'set_tilechain_colors')
     has_multizone = hasattr(device, 'set_zone_colors') or hasattr(device, 'extended_set_zone_color')
-    if not has_tile_methods and is_matrix:
-        # Stay matrix; do not re-route to multizone for Candle/Tile/Ceiling
-        pass
+    if not has_tile_methods and has_multizone:
+        # Treat as multizone instead of matrix
+        is_matrix = False
     else:
         try:
             # Matrix/Tile devices (Tile, Ceiling, etc.)
@@ -1290,18 +1290,6 @@ def send_rgb_zones_rapid(light: Any, zone_colors: List[Tuple[int, int, int]]) ->
             matrix_height = light.protocol_cfg.get('matrix_height', 0)
 
             # If not stored, try to get from device
-
-            # Candle Color heuristic: if exactly 5 zones, assume 5x1
-            if (matrix_width == 0 or matrix_height == 0):
-                try:
-                    zones = len(zone_colors) if isinstance(zone_colors, (list, tuple)) else 0
-                except Exception:
-                    zones = 0
-                if zones == 5:
-                    matrix_width, matrix_height = 5, 1
-                elif zones in (64, 49):
-                    matrix_width, matrix_height = (8,8) if zones == 64 else (7,7)
-    
             if (matrix_width == 0 or matrix_height == 0) and hasattr(device, 'get_tile_info'):
                 try:
                     tile_info = device.get_tile_info()
@@ -1327,14 +1315,6 @@ def send_rgb_zones_rapid(light: Any, zone_colors: List[Tuple[int, int, int]]) ->
                     h, s, v = _rgb_to_hsv65535(r, g, b)
                     matrix_colors.append([h, s, max(1, v), 3500])
 
-            
-            # Final guard for dimensions
-            if matrix_width == 0 or matrix_height == 0:
-                z = len(zone_colors)
-                if z == 5:
-                    matrix_width, matrix_height = 5, 1
-                else:
-                    matrix_width, matrix_height = z, 1
             if hasattr(device, 'set_tile_colors'):
                 device.set_tile_colors(0, matrix_colors[:64], duration=0, tile_count=1, x=0, y=0, width=matrix_width, rapid=True)
                 logging.debug(f"LIFX: Set {len(matrix_colors)} matrix zones ({matrix_width}x{matrix_height}) for {light.name}")
