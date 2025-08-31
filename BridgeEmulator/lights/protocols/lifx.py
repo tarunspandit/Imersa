@@ -470,16 +470,55 @@ def _scale_sat_65535_to_254(sat: int) -> int:
 
 
 def _fallback_to_tile_colors(device, matrix_colors, light, zone_colors):
-    """Fallback method using set_tile_colors."""
+    """Fallback method using set_tile_colors with correct color count."""
     try:
-        # Pad colors to 64 if needed (8x8 tile)
-        colors_to_send = matrix_colors[:]
-        while len(colors_to_send) < 64:
+        # Get the actual number of zones for this device
+        cfg = getattr(light, 'protocol_cfg', {})
+        total_zones = cfg.get('total_zones', 0)
+        
+        # If we don't know total zones, try to get from device
+        if total_zones == 0:
+            if hasattr(device, 'get_tile_count'):
+                try:
+                    tile_count = device.get_tile_count()
+                    # Each tile is 8x8 = 64 zones
+                    total_zones = tile_count * 64
+                except:
+                    total_zones = 64  # Default to single tile
+            else:
+                total_zones = len(matrix_colors) if matrix_colors else 64
+        
+        # Only send the actual number of colors needed
+        colors_to_send = matrix_colors[:total_zones]
+        
+        # Pad only to the actual zone count if needed
+        while len(colors_to_send) < total_zones:
             colors_to_send.append([0, 0, 0, 3500])  # Black padding
         
-        device.set_tile_colors(0, colors_to_send[:64], duration=0, 
-                             tile_count=1, x=0, y=0, width=8, rapid=True)
-        logging.debug(f"LIFX: set_tile_colors succeeded for {light.name}")
+        # For devices with multiple tiles, send colors for each tile
+        if hasattr(device, 'get_tile_count'):
+            try:
+                tile_count = device.get_tile_count()
+                for tile_idx in range(tile_count):
+                    start = tile_idx * 64
+                    end = start + 64
+                    tile_colors = colors_to_send[start:end]
+                    # Pad this tile to 64 if needed
+                    while len(tile_colors) < 64:
+                        tile_colors.append([0, 0, 0, 3500])
+                    device.set_tile_colors(tile_idx, tile_colors, duration=0, 
+                                         tile_count=1, x=0, y=0, width=8, rapid=True)
+                logging.debug(f"LIFX: set_tile_colors succeeded for {light.name} ({tile_count} tiles, {total_zones} zones)")
+            except Exception as e:
+                # Fallback to single tile
+                device.set_tile_colors(0, colors_to_send[:64], duration=0, 
+                                     tile_count=1, x=0, y=0, width=8, rapid=True)
+                logging.debug(f"LIFX: set_tile_colors (single) succeeded for {light.name}")
+        else:
+            # Single tile device
+            device.set_tile_colors(0, colors_to_send[:64], duration=0, 
+                                 tile_count=1, x=0, y=0, width=8, rapid=True)
+            logging.debug(f"LIFX: set_tile_colors succeeded for {light.name} ({len(colors_to_send)} colors)")
     except Exception as e:
         logging.error(f"LIFX: set_tile_colors failed for {light.name}: {e}")
         _fallback_to_average_color(device, zone_colors, light)
@@ -856,7 +895,8 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
                         "ip": ip,
                         "id": mac,
                         "label": label,
-                        "product_name": product_name
+                        "product_name": product_name,
+                        "product_id": product_id  # Store product ID for device type detection
                     }
                     
                     # Add capabilities to protocol_cfg
@@ -917,7 +957,8 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
                                 "ip": ip,
                                 "id": mac or ip,
                                 "label": label,
-                                "product_name": product_name
+                                "product_name": product_name,
+                                "product_id": product_id  # Store product ID for device type detection
                             }
                             
                             # Add capabilities to protocol_cfg
@@ -1426,7 +1467,7 @@ def send_rgb_zones_rapid(light: Any, zone_colors: List[Tuple[int, int, int]]) ->
             is_multizone = features.get('multizone', False)
         except:
             # Fallback to method detection
-            is_matrix = hasattr(device, 'set_tile_colors') or hasattr(device, 'set_tilechain_colors')
+            is_matrix = hasattr(device, 'set_tile_colors') or hasattr(device, 'project_matrix')
             is_multizone = hasattr(device, 'set_zone_colors')
         
         if is_matrix:
@@ -1546,22 +1587,9 @@ def send_rgb_zones_rapid(light: Any, zone_colors: List[Tuple[int, int, int]]) ->
                     # For devices without project_matrix (older API versions)
                     _fallback_to_tile_colors(device, matrix_colors, light, zone_colors)
                     
-                elif hasattr(device, 'set_tilechain_colors'):
-                    # For chained tiles
-                    try:
-                        tiles = []
-                        tile_size = 64  # 8x8 per tile
-                        for i in range(0, len(matrix_colors), tile_size):
-                            tile_colors = matrix_colors[i:i+tile_size]
-                            # Pad to 64 if needed
-                            while len(tile_colors) < 64:
-                                tile_colors.append([0, 0, 0, 3500])
-                            tiles.append(tile_colors)
-                        device.set_tilechain_colors(tiles, duration=0, rapid=True)
-                        logging.debug(f"LIFX: set_tilechain_colors succeeded for {light.name} ({len(tiles)} tiles)")
-                    except Exception as e:
-                        logging.error(f"LIFX: set_tilechain_colors failed: {e}")
-                        _fallback_to_average_color(device, zone_colors, light)
+                elif hasattr(device, 'set_tile_colors'):
+                    # For devices without project_matrix, use set_tile_colors
+                    _fallback_to_tile_colors(device, matrix_colors, light, zone_colors)
                 else:
                     # Last resort for devices without any tile/matrix methods
                     _fallback_to_average_color(device, zone_colors, light)
@@ -1727,41 +1755,8 @@ def update_entertainment_settings(settings: Dict[str, Any]) -> None:
     
     logging.info(f"LIFX: Updated entertainment settings from config")
 
-def set_light_multizone(light: Any, zone_colors: List[Tuple[int, int, int]]) -> None:
-    device = _get_device(light)
-    if not device:
-        return
-    hsbks = []
-    for (r, g, b) in zone_colors:
-        h, s, v = _rgb_to_hsv65535(r, g, b)
-        hsbks.append([h, s, max(1, v), 3500])
-    # Prefer Extended MultiZone if available
-    try:
-        if hasattr(device, 'extended_set_zone_color'):
-            try:
-                device.extended_set_zone_color(0, hsbks, duration=0, rapid=True, apply=True)
-            except TypeError:
-                device.extended_set_zone_color(hsbks, index=0, duration=0, rapid=True, apply=True)
-            return
-    except Exception as e:
-        logging.debug(f'extended_set_zone_color failed: {e}')
-    # Legacy MultiZone
-    try:
-        if hasattr(device, 'set_zone_colors'):
-            try:
-                device.set_zone_colors(0, hsbks, duration=0, rapid=True, apply=True)
-            except TypeError:
-                device.set_zone_colors(hsbks, duration=0, rapid=True)
-            return
-    except Exception as e:
-        logging.debug(f'set_zone_colors failed: {e}')
-    # Fallback
-    if hsbks:
-        h, s, v, k = hsbks[0]
-        try:
-            device.set_color([h, s, v, k], duration=0, rapid=True)
-        except Exception:
-            pass
+# DUPLICATE FUNCTION - This is defined earlier at line 1058
+# Removing duplicate to fix the code structure
 
 
 
@@ -1782,42 +1777,20 @@ def _is_matrix(light: Any) -> bool:
 
 
 def _matrix_dims(light: Any, zone_count: int) -> tuple[int,int]:
+    """Get matrix dimensions for a light."""
     cfg = getattr(light, "protocol_cfg", {}) or {}
     w = int(cfg.get("matrix_width") or 0)
     h = int(cfg.get("matrix_height") or 0)
     if w and h:
         return w, h
-    if zone_count == 5: return 5, 1
-    if zone_count == 64: return 8, 8
-    if zone_count == 49: return 7, 7
+    # Fallback based on known zone counts
+    if zone_count == 26: return 6, 5   # Candle (26 zones)
+    if zone_count == 51: return 5, 11  # Tube (51 zones) 
+    if zone_count == 64: return 8, 8   # Tile, Luna
+    if zone_count == 56: return 8, 7   # Ceiling 15"
+    if zone_count == 120: return 10, 12 # Ceiling 26"
+    if zone_count == 49: return 7, 7   # 7x7 matrix
+    if zone_count == 5: return 5, 1    # 5-zone strip
+    # Default to linear
     return max(1, zone_count), 1
-
-    device = _get_device(light)
-    if not device or not zone_colors:
-        return
-    if _is_matrix(light):
-        try:
-            total = len(zone_colors)
-            w, h = _matrix_dims(light, total)
-            need = w*h
-            cols = zone_colors[:need] + [(0,0,0)]*(max(0, need-total))
-            hsbks = [[*_rgb_to_hsv65535(r,g,b), 3500] for (r,g,b) in cols]
-            if hasattr(device, "set_tile_colors"):
-                device.set_tile_colors(0, hsbks, duration=0, tile_count=1, x=0, y=0, width=w, rapid=True)
-                return
-            if hasattr(device, "set_tilechain_colors"):
-                tiles = [hsbks[i:i+64] for i in range(0, len(hsbks), 64)]
-                device.set_tilechain_colors(tiles, duration=0, rapid=True)
-                return
-            # Last resort: average color, avoid multizone mis-mapping
-            r = sum(c[0] for c in cols)//len(cols)
-            g = sum(c[1] for c in cols)//len(cols)
-            b = sum(c[2] for c in cols)//len(cols)
-            h_, s_, v_ = _rgb_to_hsv65535(r, g, b)
-            device.set_color([h_, s_, max(1, v_), 3500], duration=0, rapid=True)
-        except Exception as e:
-            logging.debug(f"LIFX matrix path failed: {e}")
-        return
-    # Linear multizone path
-    set_light_multizone(light, zone_colors)
 
