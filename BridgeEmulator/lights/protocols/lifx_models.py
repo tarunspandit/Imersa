@@ -3,6 +3,8 @@ LIFX Model Identification and Mapping
 Maps LIFX product IDs to appropriate Philips Hue model IDs and capabilities
 """
 
+from typing import Dict, Any, Optional, Tuple
+
 # Mapping from LIFX product IDs to Hue model IDs
 # MAXIMIZING CAPABILITIES - Using the most capable Hue models regardless of form factor
 # Priority: Gradient/Entertainment > Latest Gen > Color Range > Form Factor
@@ -264,11 +266,14 @@ def get_lifx_capabilities(lifx_product_id: int, features: dict = None) -> dict:
     Returns:
         Dictionary of capabilities
     """
+    # Check if product is multizone or matrix
+    is_multizone = lifx_product_id in LIFX_CAPABILITIES.get("multizone", [])
+    is_matrix = lifx_product_id in LIFX_CAPABILITIES.get("matrix", [])
+    
     capabilities = {
         "certified": True,
         "streaming": {
-            "renderer": lifx_product_id in LIFX_CAPABILITIES.get("multizone", []) or 
-                       lifx_product_id in LIFX_CAPABILITIES.get("matrix", []),
+            "renderer": is_multizone or is_matrix,
             "proxy": False
         },
         "control": {
@@ -283,41 +288,47 @@ def get_lifx_capabilities(lifx_product_id: int, features: dict = None) -> dict:
         }
     }
     
-    # Adjust based on features if available
+    # Set points_capable based on product ID (hardcoded defaults)
+    if is_multizone:
+        # Multizone products (linear strips)
+        if lifx_product_id in [38, 119, 120]:  # LIFX Beam
+            capabilities["points_capable"] = 10
+        elif lifx_product_id in [141, 142, 161, 162, 205, 206]:  # Neon products
+            capabilities["points_capable"] = 32  # Neon can have more zones
+        elif lifx_product_id in [213, 214]:  # Permanent Outdoor
+            capabilities["points_capable"] = 100  # Many zones for outdoor
+        else:
+            capabilities["points_capable"] = 16  # Default for strips
+    
+    elif is_matrix:
+        # Matrix products (Polychrome technology)
+        if lifx_product_id == 55:  # LIFX Tile
+            capabilities["points_capable"] = 64  # 64 LEDs per tile
+        elif lifx_product_id in [57, 68, 137, 138, 185, 186, 187, 188, 215, 216]:  # Candle
+            capabilities["points_capable"] = 26  # 26 zones per Candle (official spec)
+        elif lifx_product_id in [143, 144, 203, 204]:  # String lights
+            capabilities["points_capable"] = 50  # Many individual bulbs
+        elif lifx_product_id in [176, 177]:  # Ceiling
+            capabilities["points_capable"] = 56  # 56 zones
+        elif lifx_product_id in [201, 202]:  # Ceiling 13x26
+            capabilities["points_capable"] = 120  # 120 zones (official spec)
+        elif lifx_product_id in [217, 218]:  # LIFX Tube
+            capabilities["points_capable"] = 52  # 52 zones per Tube (official spec)
+        elif lifx_product_id in [219, 220]:  # Luna
+            capabilities["points_capable"] = 60  # Round matrix
+        else:
+            capabilities["points_capable"] = 64  # Default for matrix
+    
+    # Override with features if available (but don't remove capabilities)
     if features:
-        # Multizone capability (linear strips only, not matrix)
-        if features.get("multizone"):
+        # Only enhance capabilities, don't remove them
+        if features.get("multizone") and not capabilities.get("points_capable"):
             capabilities["streaming"]["renderer"] = True
-            # Different products have different zone counts
-            if lifx_product_id in [38, 119, 120]:  # LIFX Beam
-                capabilities["points_capable"] = 10
-            elif lifx_product_id in [141, 142, 161, 162, 205, 206]:  # Neon products
-                capabilities["points_capable"] = 32  # Neon can have more zones
-            elif lifx_product_id in [213, 214]:  # Permanent Outdoor
-                capabilities["points_capable"] = 100  # Many zones for outdoor
-            else:
-                capabilities["points_capable"] = 16  # Default for strips
+            capabilities["points_capable"] = 16  # Default if not already set
             
-        # Matrix capability (Polychrome technology)
-        if features.get("matrix"):
+        if features.get("matrix") and not capabilities.get("points_capable"):
             capabilities["streaming"]["renderer"] = True
-            # Different matrix products have different capabilities - from LIFX documentation
-            if lifx_product_id == 55:  # LIFX Tile
-                capabilities["points_capable"] = 64  # 64 LEDs per tile
-            elif lifx_product_id in [57, 68, 137, 138, 185, 186, 187, 188, 215, 216]:  # Candle
-                capabilities["points_capable"] = 26  # 26 zones per Candle (official spec)
-            elif lifx_product_id in [143, 144, 203, 204]:  # String lights
-                capabilities["points_capable"] = 50  # Many individual bulbs
-            elif lifx_product_id in [176, 177]:  # Ceiling
-                capabilities["points_capable"] = 56  # 56 zones
-            elif lifx_product_id in [201, 202]:  # Ceiling 13x26
-                capabilities["points_capable"] = 120  # 120 zones (official spec)
-            elif lifx_product_id in [217, 218]:  # LIFX Tube
-                capabilities["points_capable"] = 52  # 52 zones per Tube (official spec)
-            elif lifx_product_id in [219, 220]:  # Luna
-                capabilities["points_capable"] = 60  # Round matrix
-            else:
-                capabilities["points_capable"] = 64  # Default for matrix
+            capabilities["points_capable"] = 64  # Default if not already set
             
         # Temperature range
         if features.get("temperature"):
@@ -379,6 +390,18 @@ def identify_lifx_model(device) -> tuple:
         # Get capabilities
         capabilities = get_lifx_capabilities(product_id, features)
         
+        # Query actual device zone/tile count for accurate capabilities
+        if capabilities.get("points_capable", 0) > 0:
+            actual_zones = _get_device_actual_zones(device)
+            if actual_zones > 0:
+                capabilities["points_capable"] = actual_zones
+            
+            # Get matrix dimensions for tile devices
+            matrix_dims = _get_device_matrix_dimensions(device)
+            if matrix_dims:
+                capabilities["matrix_width"] = matrix_dims[0]
+                capabilities["matrix_height"] = matrix_dims[1]
+        
         return hue_model, capabilities, product_name
         
     except Exception as e:
@@ -386,3 +409,102 @@ def identify_lifx_model(device) -> tuple:
         import logging
         logging.debug(f"LIFX: Error identifying device: {e}")
         return DEFAULT_HUE_MODEL, get_lifx_capabilities(0), "Unknown LIFX"
+
+def _get_device_actual_zones(device) -> int:
+    """Query actual zone count from LIFX device.
+    
+    Args:
+        device: LIFX device object
+        
+    Returns:
+        int: Actual number of zones from device, or 0 if unable to query
+    """
+    try:
+        # For MultiZone devices (strips, beams, etc)
+        if hasattr(device, 'get_color_zones'):
+            try:
+                # Import the message types we need
+                from lifxlan.msgtypes import MultiZoneGetColorZones, MultiZoneStateZone, MultiZoneStateMultiZone
+                
+                # Query zones from device
+                response = device.req_with_resp(
+                    MultiZoneGetColorZones, 
+                    [MultiZoneStateZone, MultiZoneStateMultiZone], 
+                    {"start_index": 0, "end_index": 255}
+                )
+                
+                if hasattr(response, 'count'):
+                    import logging
+                    logging.debug(f"LIFX: Device {device.get_label()} has {response.count} zones")
+                    return response.count
+            except Exception as e:
+                import logging
+                logging.debug(f"LIFX: Unable to query zones from multizone device: {e}")
+        
+        # For TileChain devices (tiles, candles, etc)
+        if hasattr(device, 'get_tile_count'):
+            try:
+                tile_count = device.get_tile_count()
+                # Each tile typically has 64 zones (8x8)
+                total_zones = tile_count * 64
+                import logging
+                logging.debug(f"LIFX: Device {device.get_label()} has {tile_count} tiles = {total_zones} zones")
+                return total_zones
+            except Exception as e:
+                import logging
+                logging.debug(f"LIFX: Unable to query tiles from tile device: {e}")
+        
+        return 0
+    except:
+        return 0
+
+def _get_device_matrix_dimensions(device) -> Optional[Tuple[int, int]]:
+    """Get matrix dimensions for tile/matrix devices.
+    
+    Args:
+        device: LIFX device object
+        
+    Returns:
+        Optional[Tuple[int, int]]: (width, height) or None if not a matrix device
+    """
+    try:
+        # For TileChain devices
+        if hasattr(device, 'get_tile_info'):
+            try:
+                tile_info = device.get_tile_info()
+                if tile_info and len(tile_info) > 0:
+                    # Get dimensions from first tile
+                    first_tile = tile_info[0]
+                    width = first_tile.width if hasattr(first_tile, 'width') else 8
+                    height = first_tile.height if hasattr(first_tile, 'height') else 8
+                    
+                    import logging
+                    logging.debug(f"LIFX: Device {device.get_label()} has matrix dimensions {width}x{height}")
+                    return (width, height)
+            except Exception as e:
+                import logging
+                logging.debug(f"LIFX: Unable to query tile info: {e}")
+        
+        # For known matrix products, return default dimensions
+        try:
+            product_id = device.get_product()
+            
+            # Known matrix dimensions  
+            if product_id in [57, 68, 137, 138, 185, 186, 187, 188, 215, 216]:  # Candle
+                return (5, 6)
+            elif product_id in [176, 177]:  # Ceiling
+                return (8, 7)
+            elif product_id in [201, 202]:  # Ceiling 13x26
+                return (10, 12)
+            elif product_id in [217, 218]:  # Tube
+                return (8, 7)
+            elif product_id in [219, 220]:  # Luna
+                return (8, 8)
+            elif product_id == 55:  # Tile
+                return (8, 8)
+        except:
+            pass
+        
+        return None
+    except:
+        return None

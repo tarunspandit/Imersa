@@ -699,9 +699,9 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
                     }
                     
                     # Add capabilities to protocol_cfg
-                    if capabilities.get("streaming", {}).get("renderer"):
+                    if capabilities.get("points_capable", 0) > 0:
                         # For gradient/multizone capable devices
-                        protocol_cfg["points_capable"] = capabilities.get("points_capable", 16)
+                        protocol_cfg["points_capable"] = capabilities["points_capable"]
                     
                     # Add other capabilities as needed
                     if capabilities.get("control", {}).get("ct"):
@@ -760,9 +760,9 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
                             }
                             
                             # Add capabilities to protocol_cfg
-                            if capabilities.get("streaming", {}).get("renderer"):
+                            if capabilities.get("points_capable", 0) > 0:
                                 # For gradient/multizone capable devices
-                                protocol_cfg["points_capable"] = capabilities.get("points_capable", 16)
+                                protocol_cfg["points_capable"] = capabilities["points_capable"]
                             
                             # Add other capabilities as needed
                             if capabilities.get("control", {}).get("ct"):
@@ -1271,43 +1271,52 @@ def send_rgb_zones_rapid(light: Any, zone_colors: List[Tuple[int, int, int]]) ->
         if is_matrix:
             # Matrix/Polychrome devices (Candle, Tile, Ceiling)
             try:
-                # Get matrix dimensions if available
-                product_id = getattr(device, 'product', None) or device.get_product()
+                # Get matrix dimensions from protocol_cfg or query device
+                matrix_width = light.protocol_cfg.get('matrix_width', 0)
+                matrix_height = light.protocol_cfg.get('matrix_height', 0)
                 
-                # Map zones to 2D matrix based on product type
-                if product_id in [57, 68, 137, 138, 185, 186, 187, 188, 215, 216]:  # Candle
-                    # Candle has 26 zones in a flame-like pattern
-                    matrix_width = 5
-                    matrix_height = 6
-                elif product_id in [176, 177]:  # Ceiling
-                    # Ceiling has 56 zones in a grid
-                    matrix_width = 8
-                    matrix_height = 7
-                elif product_id in [201, 202]:  # Ceiling 13x26
-                    # Large ceiling has 120 zones
-                    matrix_width = 10
-                    matrix_height = 12
-                elif product_id in [217, 218]:  # Tube
-                    # Tube has 52 zones in a cylindrical matrix
-                    matrix_width = 8
-                    matrix_height = 7
-                elif product_id in [219, 220]:  # Luna
-                    # Luna round matrix
-                    matrix_width = 8
-                    matrix_height = 8
-                elif product_id == 55:  # Tile
-                    # Tile is 8x8 per tile
-                    matrix_width = 8
-                    matrix_height = 8
-                elif product_id in [143, 144, 203, 204]:  # String lights
-                    # String lights have many individual bulbs
-                    matrix_width = 10
-                    matrix_height = 5
-                else:
-                    # Default square matrix
-                    total_zones = len(zone_colors)
-                    matrix_width = int(total_zones ** 0.5)
-                    matrix_height = (total_zones + matrix_width - 1) // matrix_width
+                # If not stored, try to get from device
+                if matrix_width == 0 or matrix_height == 0:
+                    # Try to get tile info for dimensions
+                    if hasattr(device, 'get_tile_info'):
+                        try:
+                            tile_info = device.get_tile_info()
+                            if tile_info and len(tile_info) > 0:
+                                matrix_width = tile_info[0].width if hasattr(tile_info[0], 'width') else 8
+                                matrix_height = tile_info[0].height if hasattr(tile_info[0], 'height') else 8
+                                # Store for next time
+                                light.protocol_cfg['matrix_width'] = matrix_width
+                                light.protocol_cfg['matrix_height'] = matrix_height
+                        except:
+                            pass
+                    
+                    # If still no dimensions, use defaults based on product
+                    if matrix_width == 0 or matrix_height == 0:
+                        product_id = getattr(device, 'product', None) or device.get_product()
+                        
+                        if product_id in [57, 68, 137, 138, 185, 186, 187, 188, 215, 216]:  # Candle
+                            matrix_width = 5
+                            matrix_height = 6
+                        elif product_id in [176, 177]:  # Ceiling
+                            matrix_width = 8
+                            matrix_height = 7
+                        elif product_id in [201, 202]:  # Ceiling 13x26
+                            matrix_width = 10
+                            matrix_height = 12
+                        elif product_id in [217, 218]:  # Tube
+                            matrix_width = 8
+                            matrix_height = 7
+                        elif product_id in [219, 220]:  # Luna
+                            matrix_width = 8
+                            matrix_height = 8
+                        elif product_id == 55:  # Tile
+                            matrix_width = 8
+                            matrix_height = 8
+                        else:
+                            # Default square matrix
+                            total_zones = len(zone_colors)
+                            matrix_width = int(total_zones ** 0.5)
+                            matrix_height = (total_zones + matrix_width - 1) // matrix_width
                 
                 # Convert linear gradient to 2D matrix
                 matrix_colors = []
@@ -1352,6 +1361,49 @@ def send_rgb_zones_rapid(light: Any, zone_colors: List[Tuple[int, int, int]]) ->
         elif is_multizone:
             # Multizone strips (LIFX Z, Beam, Neon)
             try:
+                # Get actual zone count from device or protocol_cfg
+                actual_zones = light.protocol_cfg.get('points_capable', 0)
+                
+                # If not stored, query device
+                if actual_zones == 0:
+                    try:
+                        from lifxlan.msgtypes import MultiZoneGetColorZones, MultiZoneStateZone, MultiZoneStateMultiZone
+                        response = device.req_with_resp(
+                            MultiZoneGetColorZones,
+                            [MultiZoneStateZone, MultiZoneStateMultiZone],
+                            {"start_index": 0, "end_index": 255}
+                        )
+                        if hasattr(response, 'count'):
+                            actual_zones = response.count
+                            # Store for next time
+                            light.protocol_cfg['points_capable'] = actual_zones
+                    except:
+                        actual_zones = len(zone_colors)  # Use provided length as fallback
+                
+                # Ensure we have the right number of zones
+                if actual_zones > 0 and len(zone_colors) != actual_zones:
+                    # Interpolate or truncate to match actual zone count
+                    if len(zone_colors) < actual_zones:
+                        # Interpolate to fill all zones
+                        new_colors = []
+                        for i in range(actual_zones):
+                            pos = i * len(zone_colors) / actual_zones
+                            idx = int(pos)
+                            if idx < len(zone_colors) - 1:
+                                frac = pos - idx
+                                r1, g1, b1 = zone_colors[idx]
+                                r2, g2, b2 = zone_colors[idx + 1]
+                                r = int(r1 + (r2 - r1) * frac)
+                                g = int(g1 + (g2 - g1) * frac)
+                                b = int(b1 + (b2 - b1) * frac)
+                                new_colors.append((r, g, b))
+                            else:
+                                new_colors.append(zone_colors[-1])
+                        zone_colors = new_colors
+                    else:
+                        # Truncate to actual zone count
+                        zone_colors = zone_colors[:actual_zones]
+                
                 # Convert RGB to HSBK
                 hsbk_colors = []
                 for r, g, b in zone_colors:
