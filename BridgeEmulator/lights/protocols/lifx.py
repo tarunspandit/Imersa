@@ -32,10 +32,12 @@ import socket
 from typing import Any, Dict, List, Optional, Tuple
 from collections import defaultdict
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
 
 import logManager
 
-from functions.colors import convert_xy
+from functions.colors import convert_xy, convert_rgb_xy, hsv_to_rgb
 
 logging = logManager.logger.get_logger(__name__)
 
@@ -209,6 +211,19 @@ class LifxDeviceCache:
 # Global cache instance
 _device_cache = LifxDeviceCache()
 
+# Global executor for parallel operations
+_parallel_executor = None
+_executor_lock = Lock()
+
+def _get_parallel_executor() -> ThreadPoolExecutor:
+    """Get or create the thread pool executor for parallel operations."""
+    global _parallel_executor
+    if _parallel_executor is None:
+        with _executor_lock:
+            if _parallel_executor is None:
+                _parallel_executor = ThreadPoolExecutor(max_workers=20)
+    return _parallel_executor
+
 # Keep-alive tracking
 _keepalive_state = {
     "thread": None,
@@ -217,6 +232,26 @@ _keepalive_state = {
     "last_ping": {},  # device_id -> last ping time
     "active_devices": set(),  # Set of device IDs that need keep-alive
 }
+
+def _send_keepalive_packet(ip: str) -> bool:
+    """Send a raw UDP GetService packet to keep device alive."""
+    try:
+        import socket
+        from lifxlan.msgtypes import GetService
+        
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(0.5)
+        
+        # Send GetService directly to IP (same as discovery)
+        msg = GetService("00:00:00:00:00:00", 12345, 0, {}, False, True)
+        sock.sendto(msg.packed_message, (ip, 56700))
+        
+        # We don't need to wait for response - just send the packet
+        sock.close()
+        return True
+    except Exception as e:
+        logging.debug(f"Keep-alive packet failed: {e}")
+        return False
 
 def _keepalive_worker():
     """Background thread that sends periodic keep-alive packets to LIFX devices."""
@@ -228,30 +263,48 @@ def _keepalive_worker():
             devices_to_ping = []
             
             # Check which devices need a keep-alive
-            with _device_cache._lock:
-                for device_id in list(_keepalive_state["active_devices"]):
-                    last_ping = _keepalive_state["last_ping"].get(device_id, datetime.min)
-                    if (current_time - last_ping).total_seconds() >= _keepalive_state["interval"]:
-                        # Get device from cache
-                        cached = _device_cache._cache.get(device_id)
-                        if cached and cached[0]:
-                            devices_to_ping.append((device_id, cached[0]))
+            for device_id in list(_keepalive_state["active_devices"]):
+                last_ping = _keepalive_state["last_ping"].get(device_id, datetime.min)
+                if (current_time - last_ping).total_seconds() >= _keepalive_state["interval"]:
+                    # Device ID could be MAC or IP
+                    # Try to get IP from cache or use it directly if it's an IP
+                    ip = None
+                    if "." in device_id:  # It's an IP
+                        ip = device_id
+                    else:  # It's a MAC, try to find IP from cache
+                        with _device_cache._lock:
+                            cached = _device_cache._cache.get(device_id)
+                            if cached and cached[0]:
+                                try:
+                                    ip = cached[0].ip_addr
+                                except:
+                                    ip = getattr(cached[0], 'ip', None)
+                    
+                    if ip:
+                        devices_to_ping.append((device_id, ip))
             
             # Log if we have devices to ping
             if devices_to_ping:
                 logging.info(f"LIFX: Sending keep-alive to {len(devices_to_ping)} device(s)")
             
-            # Send keep-alive packets (outside lock to avoid blocking)
-            for device_id, device in devices_to_ping:
+            # Send keep-alive packets in parallel using global executor
+            executor = _get_parallel_executor()
+            futures = {}
+            for device_id, ip in devices_to_ping:
+                future = executor.submit(_send_keepalive_packet, ip)
+                futures[future] = (device_id, ip)
+            
+            # Check results as they complete
+            for future in as_completed(futures, timeout=2):
+                device_id, ip = futures[future]
                 try:
-                    # Use GetPower as lightweight keep-alive - it's fast and doesn't change state
-                    device.get_power()
-                    _keepalive_state["last_ping"][device_id] = current_time
-                    logging.info(f"LIFX: Keep-alive sent successfully to {device_id}")
-                except Exception as e:
-                    logging.warning(f"LIFX: Keep-alive failed for {device_id}: {e}")
-                    # Remove from active set if device is unreachable
-                    _keepalive_state["active_devices"].discard(device_id)
+                    if future.result():
+                        _keepalive_state["last_ping"][device_id] = current_time
+                        logging.debug(f"LIFX: Keep-alive sent to {ip} ({device_id})")
+                    else:
+                        logging.warning(f"LIFX: Keep-alive failed for {ip} ({device_id})")
+                except:
+                    pass
             
             # Sleep for a bit before next check
             time.sleep(5)  # Check every 5 seconds, but only ping based on interval
@@ -284,10 +337,26 @@ def stop_keepalive():
         _keepalive_state["thread"] = None
     logging.info("LIFX: Keep-alive mechanism stopped")
 
-def register_device_for_keepalive(device_id: str):
-    """Register a device to receive keep-alive packets."""
-    _keepalive_state["active_devices"].add(device_id)
-    _keepalive_state["last_ping"][device_id] = datetime.now()
+def register_device_for_keepalive(device_id: str, ip: str = None):
+    """Register a device to receive keep-alive packets.
+    
+    Args:
+        device_id: MAC address or IP of device
+        ip: Optional IP address if device_id is MAC
+    """
+    # If we have an IP, use it as the primary identifier
+    if ip:
+        _keepalive_state["active_devices"].add(ip)
+        _keepalive_state["last_ping"][ip] = datetime.now()
+        logging.debug(f"LIFX: Registered {ip} for keep-alive")
+    else:
+        _keepalive_state["active_devices"].add(device_id)
+        _keepalive_state["last_ping"][device_id] = datetime.now()
+        logging.debug(f"LIFX: Registered {device_id} for keep-alive")
+    
+    # Start the keep-alive thread if not running
+    if not _keepalive_state["running"]:
+        start_keepalive()
     
     # Start keep-alive thread if not running
     if not _keepalive_state["running"]:
@@ -362,11 +431,13 @@ def _get_device(light) -> Optional[Any]:
     device = _device_cache.discover_device(mac, ip)
     
     # Register for keep-alive if we got a device
-    if device and mac:
-        register_device_for_keepalive(mac)
-    elif device and ip:
-        # Use IP as identifier if no MAC
-        register_device_for_keepalive(ip)
+    if device:
+        if ip:
+            register_device_for_keepalive(mac or ip, ip)
+        elif mac:
+            # Try to get IP from device
+            device_ip = getattr(device, 'ip_addr', None) or getattr(device, 'ip', None)
+            register_device_for_keepalive(mac, device_ip)
     
     return device
 
@@ -479,11 +550,12 @@ def initialize_lifx():
                     protocol_cfg = getattr(light_obj, "protocol_cfg", {})
                 
                 if protocol == "lifx":
-                    device_id = protocol_cfg.get("id") or protocol_cfg.get("mac") or protocol_cfg.get("ip")
-                    if device_id:
-                        register_device_for_keepalive(device_id)
+                    device_id = protocol_cfg.get("id") or protocol_cfg.get("mac")
+                    device_ip = protocol_cfg.get("ip")
+                    if device_id or device_ip:
+                        register_device_for_keepalive(device_id or device_ip, device_ip)
                         lifx_count += 1
-                        logging.debug(f"LIFX: Registered device {device_id} for keep-alive")
+                        logging.debug(f"LIFX: Registered device {device_ip or device_id} for keep-alive")
             
             if lifx_count > 0:
                 logging.info(f"LIFX: Registered {lifx_count} existing device(s) for keep-alive")
@@ -617,8 +689,8 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
                     _device_cache.put(mac, device)
                     _device_cache.put(ip, device)
                     
-                    # Register for keep-alive
-                    register_device_for_keepalive(mac)
+                    # Register for keep-alive with IP
+                    register_device_for_keepalive(mac, ip)
                     
             except Exception as e:
                 logging.debug(f"LIFX: Error processing device: {e}")
@@ -672,13 +744,8 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
         start_keepalive()
 
 
-def set_light(light: Any, data: Dict) -> None:
-    """Set LIFX light state."""
-    device = _get_device(light)
-    if not device:
-        logging.debug(f"LIFX: Device not found for {light.name}")
-        return
-    
+def _set_light_worker(device: Any, data: Dict, light_name: str) -> bool:
+    """Worker function to set a single light's state."""
     try:
         # Extract transition time
         duration_ms = 0
@@ -737,20 +804,49 @@ def set_light(light: Any, data: Dict) -> None:
                 duration=duration_ms,
                 rapid=(duration_ms == 0)
             )
-            
+        return True
     except Exception as e:
-        logging.warning(f"LIFX: Error setting state for {light.name}: {e}")
+        logging.warning(f"LIFX: Error setting state for {light_name}: {e}")
+        return False
 
-
-def get_light_state(light: Any) -> Dict:
-    """Get current LIFX light state."""
+def set_light(light: Any, data: Dict) -> None:
+    """Set LIFX light state with parallel execution."""
     device = _get_device(light)
     if not device:
-        return {"on": False, "reachable": False}
+        logging.debug(f"LIFX: Device not found for {light.name}")
+        return
     
-    state = {"reachable": True}
+    # Submit to executor for parallel execution
+    executor = _get_parallel_executor()
+    future = executor.submit(_set_light_worker, device, data, light.name)
+    # Don't wait - fire and forget for maximum speed
+    # The future will complete in the background
+
+
+def set_lights_batch(lights: List[Any], data: Dict) -> None:
+    """Set multiple LIFX lights simultaneously in parallel."""
+    if not lights:
+        return
     
+    executor = _get_parallel_executor()
+    futures = []
+    
+    for light in lights:
+        device = _get_device(light)
+        if device:
+            future = executor.submit(_set_light_worker, device, data, light.name)
+            futures.append(future)
+    
+    # Don't wait - let them all execute in parallel
+    if futures:
+        logging.debug(f"LIFX: Submitted {len(futures)} parallel light updates")
+
+
+def _get_state_worker(device: Any, light_name: str) -> Dict:
+    """Worker function to get a single light's state."""
     try:
+        state = {"reachable": True}
+        
         # Get power state
         power = device.get_power()
         state["on"] = bool(power and int(power) > 0)
@@ -767,12 +863,28 @@ def get_light_state(light: Any) -> Dict:
             state["colormode"] = "ct"
         else:
             state["colormode"] = "hs"
-            
+        
+        return state
     except Exception as e:
-        logging.debug(f"LIFX: Error getting state for {light.name}: {e}")
-        state["reachable"] = False
+        logging.debug(f"LIFX: Error getting state for {light_name}: {e}")
+        return {"reachable": False}
+
+def get_light_state(light: Any) -> Dict:
+    """Get current LIFX light state with parallel execution."""
+    device = _get_device(light)
+    if not device:
+        return {"on": False, "reachable": False}
     
-    return state
+    # Submit to executor and wait for result
+    executor = _get_parallel_executor()
+    future = executor.submit(_get_state_worker, device, light.name)
+    
+    try:
+        # Wait for result with timeout
+        return future.result(timeout=2.0)
+    except Exception as e:
+        logging.debug(f"LIFX: Timeout or error getting state: {e}")
+        return {"reachable": False}
 
 
 # Entertainment mode state tracking
