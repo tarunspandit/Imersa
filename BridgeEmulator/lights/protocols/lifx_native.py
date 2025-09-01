@@ -355,7 +355,6 @@ class LifxDevice:
             82,      # LIFX Lightstrip
             90, 91, 92, 93, 94,  # Various strips/flex
             145,     # LIFX String (can be multizone)
-            217,     # LIFX Tube (multizone capable)
         ]
         return self.product_id in multizone_products
     
@@ -369,6 +368,7 @@ class LifxDevice:
             137, 138, 139,  # LIFX Candle variants
             145,     # LIFX String (also matrix-like)
             201,     # LIFX Capsule (matrix display)
+            217,     # LIFX Tube (matrix capable)
         ]
         return self.product_id in matrix_products
     
@@ -1123,12 +1123,12 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
     for device in devices:
         # Map to Hue model based on capabilities
         if device.is_matrix:
-            # Matrix devices (Tile, Candle, Ceiling) should use gradient model
+            # Matrix devices (Tile, Candle, Ceiling, Tube) should use gradient model
             modelid = "LCX004"  # Hue Go gradient capable
             points_capable = 5  # Support gradient effects
         elif device.is_multizone:
-            # Multizone devices should use gradient strip model
-            modelid = "LCX003"  # Hue Gradient Lightstrip
+            # Multizone devices should also use gradient model
+            modelid = "LCX004"  # Hue Go gradient capable
             points_capable = min(device.zone_count, 16)  # Map zones to gradient points
         else:
             # Standard bulbs
