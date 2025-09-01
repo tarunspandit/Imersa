@@ -243,6 +243,16 @@ class LIFXProtocol:
         except Exception as e:
             logging.debug(f"Failed to parse LIFX packet: {e}")
             return None
+    
+    def cleanup(self):
+        """Cleanup protocol resources"""
+        self.running = False
+        if self.socket:
+            try:
+                self.socket.close()
+            except:
+                pass
+            self.socket = None
 
 
 def discover(detectedLights, device_ips=None):
@@ -434,7 +444,9 @@ def _get_multizone_info(protocol: LIFXProtocol, ip: str, mac: bytes) -> Dict:
         # Also try regular multizone
         packet = protocol._build_header(MSG_GET_COLOR_ZONES, target=mac)
         payload = struct.pack('<BB', 0, 255)  # Get all zones
-        full_packet = packet[:32] + struct.pack('<H', len(packet) + len(payload)) + packet[34:] + payload
+        # Update packet size
+        total_size = LIFX_HEADER_SIZE + len(payload)
+        full_packet = struct.pack('<H', total_size) + packet[2:] + payload
         protocol._send_packet(full_packet, ip)
         
         start_time = time.time()
@@ -598,7 +610,9 @@ def _set_power(protocol: LIFXProtocol, ip: str, mac: bytes, on: bool):
         
         packet = protocol._build_header(MSG_SET_LIGHT_POWER, target=mac, ack_required=False)
         payload = struct.pack('<HI', power_level, duration)
-        full_packet = packet[:32] + struct.pack('<H', len(packet) + len(payload)) + packet[34:] + payload
+        # Update packet size properly
+        total_size = LIFX_HEADER_SIZE + len(payload)
+        full_packet = struct.pack('<H', total_size) + packet[2:] + payload
         
         protocol._send_packet(full_packet, ip)
         
@@ -645,7 +659,9 @@ def _set_color(protocol: LIFXProtocol, ip: str, mac: bytes, light, data):
             hue, saturation, brightness, kelvin,
             duration
         )
-        full_packet = packet[:32] + struct.pack('<H', len(packet) + len(payload)) + packet[34:] + payload
+        # Update packet size properly
+        total_size = LIFX_HEADER_SIZE + len(payload)
+        full_packet = struct.pack('<H', total_size) + packet[2:] + payload
         
         protocol._send_packet(full_packet, ip)
         
@@ -696,7 +712,9 @@ def _set_multizone(protocol: LIFXProtocol, ip: str, mac: bytes, zones: List[Tupl
             payload += struct.pack('<HHHHI', *zones[start_idx], 100)  # Duration 100ms
             payload += struct.pack('<B', apply)
             
-            full_packet = packet[:32] + struct.pack('<H', len(packet) + len(payload)) + packet[34:] + payload
+            # Update packet size properly
+            total_size = LIFX_HEADER_SIZE + len(payload)
+            full_packet = struct.pack('<H', total_size) + packet[2:] + payload
             protocol._send_packet(full_packet, ip)
             
     except Exception as e:
@@ -727,7 +745,9 @@ def _set_extended_multizone(protocol: LIFXProtocol, ip: str, mac: bytes, zones: 
             for hue, sat, bri, kelvin in chunk:
                 payload += struct.pack('<HHHH', hue, sat, bri, kelvin)
                 
-            full_packet = packet[:32] + struct.pack('<H', len(packet) + len(payload)) + packet[34:] + payload
+            # Update packet size properly
+            total_size = LIFX_HEADER_SIZE + len(payload)
+            full_packet = struct.pack('<H', total_size) + packet[2:] + payload
             protocol._send_packet(full_packet, ip)
             
     except Exception as e:
@@ -901,7 +921,9 @@ def _send_rapid_color(protocol: LIFXProtocol, ip: str, mac: bytes, color: Tuple[
         
         # Use socket pool for performance
         sock = protocol._get_socket_for_device(ip)
-        full_packet = packet[:32] + struct.pack('<H', len(packet) + len(payload)) + packet[34:] + payload
+        # Update packet size properly
+        total_size = LIFX_HEADER_SIZE + len(payload)
+        full_packet = struct.pack('<H', total_size) + packet[2:] + payload
         sock.sendto(full_packet, (ip, LIFX_PORT))
         
     except Exception as e:
@@ -982,10 +1004,10 @@ def _hsb_to_rgb(hue: int, sat: int, bri: int) -> Tuple[int, int, int]:
     """Convert LIFX HSB (0-65535) to RGB (0-255)"""
     h = (hue / 65535) * 360
     s = sat / 65535
-    b = bri / 65535
+    v = bri / 65535  # Use 'v' for value/brightness to avoid shadowing
     
     if s == 0:
-        r = g = b = int(b * 255)
+        r = g = b = int(v * 255)
     else:
         def hue_to_rgb(p, q, t):
             if t < 0: t += 1
@@ -995,17 +1017,17 @@ def _hsb_to_rgb(hue: int, sat: int, bri: int) -> Tuple[int, int, int]:
             if t < 2/3: return p + (q - p) * (2/3 - t) * 6
             return p
             
-        q = b * (1 + s) if b < 0.5 else b + s - b * s
-        p = 2 * b - q
+        q = v * (1 + s) if v < 0.5 else v + s - v * s
+        p = 2 * v - q
         h_norm = h / 360
         
-        r = hue_to_rgb(p, q, h_norm + 1/3)
-        g = hue_to_rgb(p, q, h_norm)
-        b = hue_to_rgb(p, q, h_norm - 1/3)
+        r_val = hue_to_rgb(p, q, h_norm + 1/3)
+        g_val = hue_to_rgb(p, q, h_norm)
+        b_val = hue_to_rgb(p, q, h_norm - 1/3)
         
-        r = int(r * 255)
-        g = int(g * 255)
-        b = int(b * 255)
+        r = int(r_val * 255)
+        g = int(g_val * 255)
+        b = int(b_val * 255)
         
     return (r, g, b)
 
@@ -1031,15 +1053,3 @@ def cleanup():
     DeviceCache.clear()
 
 
-class LIFXProtocol:
-    """Extended methods for protocol class"""
-    
-    def cleanup(self):
-        """Cleanup protocol resources"""
-        self.running = False
-        if self.socket:
-            try:
-                self.socket.close()
-            except:
-                pass
-            self.socket = None
