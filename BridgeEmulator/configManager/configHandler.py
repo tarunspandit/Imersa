@@ -190,11 +190,17 @@ class Config:
                     if data["type"] == "Entertainment":
                         self.yaml_config["groups"][group] = EntertainmentConfiguration.EntertainmentConfiguration(data)
                         for light in data["lights"]:
-                            self.yaml_config["groups"][group].add_light(self.yaml_config["lights"][light])
+                            if light in self.yaml_config["lights"]:
+                                self.yaml_config["groups"][group].add_light(self.yaml_config["lights"][light])
+                            else:
+                                logging.warning(f"Entertainment group '{group}' references non-existent light '{light}', skipping")
                         if "locations" in data:
                             for light, location in data["locations"].items():
-                                lightObj = self.yaml_config["lights"][light]
-                                self.yaml_config["groups"][group].locations[lightObj] = location
+                                if light in self.yaml_config["lights"]:
+                                    lightObj = self.yaml_config["lights"][light]
+                                    self.yaml_config["groups"][group].locations[lightObj] = location
+                                else:
+                                    logging.warning(f"Entertainment group '{group}' locations references non-existent light '{light}', skipping")
                     else:
                         if "owner" in data and isinstance(data["owner"], dict):
                             data["owner"] = self.yaml_config["apiUsers"][list(self.yaml_config["apiUsers"])[0]]
