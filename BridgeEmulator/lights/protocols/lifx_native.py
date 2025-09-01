@@ -348,18 +348,29 @@ class LifxDevice:
     @property
     def is_multizone(self) -> bool:
         """Check if device supports multizone"""
-        return self.product_id in [
-            ProductID.LIFX_Z, ProductID.LIFX_Z_2, 
-            ProductID.LIFX_BEAM, ProductID.LIFX_NEON
+        multizone_products = [
+            31, 32,  # LIFX Z, LIFX Z 2
+            38,      # LIFX Beam
+            81,      # LIFX Neon
+            82,      # LIFX Lightstrip
+            90, 91, 92, 93, 94,  # Various strips/flex
+            145,     # LIFX String (can be multizone)
+            217,     # LIFX Tube (multizone capable)
         ]
+        return self.product_id in multizone_products
     
     @property
     def is_matrix(self) -> bool:
         """Check if device is matrix/tile"""
-        return self.product_id in [
-            ProductID.LIFX_TILE, ProductID.LIFX_CANDLE, ProductID.LIFX_CANDLE_2,
-            ProductID.LIFX_CEILING, ProductID.LIFX_CEILING_2, ProductID.LIFX_STRING
+        matrix_products = [
+            55,      # LIFX Tile
+            57, 68,  # LIFX Candle, Candle 2
+            99, 100, # LIFX Ceiling, Ceiling 2
+            137, 138, 139,  # LIFX Candle variants
+            145,     # LIFX String (also matrix-like)
+            201,     # LIFX Capsule (matrix display)
         ]
+        return self.product_id in matrix_products
     
     @property
     def zone_count(self) -> int:
