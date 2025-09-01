@@ -28,6 +28,7 @@ BridgeEmulator/flaskUI/templates/index.html
 
 ha_core_zha
 
+
 # Claude Flow generated files
 .claude/settings.local.json
 .mcp.json
@@ -35,7 +36,6 @@ claude-flow.config.json
 .swarm/
 .hive-mind/
 memory/claude-flow-data.json
-memory
 memory/sessions/*
 !memory/sessions/README.md
 memory/agents/*
@@ -43,18 +43,13 @@ memory/agents/*
 coordination/memory_bank/*
 coordination/subtasks/*
 coordination/orchestration/*
-
+*.db
 *.db-journal
 *.db-wal
 *.sqlite
 *.sqlite-journal
 *.sqlite-wal
 claude-flow
-.claude-flow*
-.claude*
-claude.md
-.roo*
 claude-flow.bat
 claude-flow.ps1
 hive-mind-prompt-*.txt
-ImersaLights
