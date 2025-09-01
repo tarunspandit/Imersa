@@ -182,3 +182,39 @@ archetype = {"tableshade":"table_shade",
     "huefloodlightcamera":"hue_floodlight_camera",
     "twilight":"twilight"
     }
+
+## LIFX Bulb (Color 1000)
+lightTypes["LIFX_COLOR"] = {"v1_static": {"type": "Extended color light", "manufacturername": "LIFX", "swversion": "3.70.0"}}
+lightTypes["LIFX_COLOR"]["v1_static"]["swupdate"] = {"state": "noupdates","lastinstall": "2023-01-01T00:00:00"}
+lightTypes["LIFX_COLOR"]["v1_static"]["capabilities"] = {"certified": True,"control": {"colorgamut": [[0.735,0.265],[0.115,0.826],[0.157,0.018]],"colorgamuttype": "C","ct": {"max": 500,"min": 111},"maxlumen": 1100,"mindimlevel": 1000},"streaming": {"proxy": False,"renderer": True}}
+lightTypes["LIFX_COLOR"]["device"] = {"certified": True,"manufacturer_name": "LIFX","product_archetype": "sultan_bulb","product_name": "LIFX Color","software_version": "3.70.0"}
+lightTypes["LIFX_COLOR"]["state"] = {"on": False, "bri": 254, "hue": 0, "sat": 0, "xy": [0.0, 0.0], "ct": 250, "alert": "none", "mode": "homeautomation", "effect": "none", "colormode": "ct", "reachable": True}
+lightTypes["LIFX_COLOR"]["config"] = {"archetype": "sultanbulb", "function": "mixed", "direction": "omnidirectional","startup":{"mode":"safety","configured": True}}
+lightTypes["LIFX_COLOR"]["dynamics"] = {"speed": 0, "speed_valid": False, "status": "none", "status_values": ["none", "dynamic_palette"]}
+
+## LIFX Z Strip (Multizone)
+lightTypes["LIFX_Z"] = {"v1_static": {"type": "Extended color light", "manufacturername": "LIFX", "productname": "LIFX Z","swversion": "2.80.0"}}
+lightTypes["LIFX_Z"]["v1_static"]["swupdate"] = {"state": "noupdates","lastinstall": "2023-01-01T00:00:00"}
+lightTypes["LIFX_Z"]["v1_static"]["capabilities"] = {"certified": True,"control": {"mindimlevel": 40,"maxlumen": 1400,"colorgamuttype": "C","colorgamut": [[0.735,0.265],[0.115,0.826],[0.157,0.018]],"ct": {"min": 111,"max": 500}},"streaming": {"renderer": True,"proxy": True}}
+lightTypes["LIFX_Z"]["device"] = {"certified": True, "manufacturer_name": "LIFX", "product_archetype": "hue_lightstrip", "product_name": "LIFX Z", "software_version": "2.80.0"}
+lightTypes["LIFX_Z"]["state"] = {"on": False, "bri": 254, "hue": 0, "sat": 0, "xy": [0.0, 0.0], "ct": 250, "alert": "none", "mode": "homeautomation", "effect": "none", "colormode": "ct", "reachable": True, "gradient": {"points": []}}
+lightTypes["LIFX_Z"]["config"] = {"archetype": "huelightstrip", "function": "mixed", "direction": "omnidirectional", "startup": {"mode": "safety", "configured": False}}
+lightTypes["LIFX_Z"]["dynamics"] = {"speed": 0, "speed_valid": False, "status": "none", "status_values": ["none", "dynamic_palette"]}
+
+## LIFX Beam (Extended Multizone)
+lightTypes["LIFX_BEAM"] = {"v1_static": {"type": "Extended color light", "manufacturername": "LIFX", "productname": "LIFX Beam","swversion": "3.70.0"}}
+lightTypes["LIFX_BEAM"]["v1_static"]["swupdate"] = {"state": "noupdates","lastinstall": "2023-01-01T00:00:00"}
+lightTypes["LIFX_BEAM"]["v1_static"]["capabilities"] = {"certified": True,"control": {"mindimlevel": 100,"maxlumen": 200,"colorgamuttype": "C","colorgamut": [[0.735,0.265],[0.115,0.826],[0.157,0.018]],"ct": {"min": 111,"max": 500}},"streaming": {"renderer": True,"proxy": True}}
+lightTypes["LIFX_BEAM"]["device"] = {"certified": True,"manufacturer_name": "LIFX","model_id": "LIFX_BEAM","product_archetype": "hue_lightstrip","product_name": "LIFX Beam","software_version": "3.70.0"}
+lightTypes["LIFX_BEAM"]["state"] = {"on": False, "bri": 254,"hue": 0,"sat": 0,"effect": "none","xy": [0.0,0.0],"ct": 250,"alert": "select","colormode": "ct","mode": "homeautomation","reachable": True, "gradient": {"points": []}}
+lightTypes["LIFX_BEAM"]["config"] = {"archetype": "huelightstrip","function": "decorative","direction": "omnidirectional","startup": {"mode": "safety","configured": False}}
+lightTypes["LIFX_BEAM"]["dynamics"] = {"speed": 0, "speed_valid": False, "status": "none", "status_values": ["none", "dynamic_palette"]}
+
+## LIFX Tile (Matrix)
+lightTypes["LIFX_TILE"] = {"v1_static": {"type": "Extended color light", "manufacturername": "LIFX", "productname": "LIFX Tile","swversion": "3.70.0"}}
+lightTypes["LIFX_TILE"]["v1_static"]["swupdate"] = {"state": "noupdates","lastinstall": "2023-01-01T00:00:00"}
+lightTypes["LIFX_TILE"]["v1_static"]["capabilities"] = {"certified": True,"control": {"mindimlevel": 100,"maxlumen": 700,"colorgamuttype": "C","colorgamut": [[0.735,0.265],[0.115,0.826],[0.157,0.018]],"ct": {"min": 111,"max": 500}},"streaming": {"renderer": True,"proxy": True}}
+lightTypes["LIFX_TILE"]["device"] = {"certified": True,"manufacturer_name": "LIFX","model_id": "LIFX_TILE","product_archetype": "hue_play","product_name": "LIFX Tile","software_version": "3.70.0"}
+lightTypes["LIFX_TILE"]["state"] = {"on": False, "bri": 254,"hue": 0,"sat": 0,"effect": "none","xy": [0.0,0.0],"ct": 250,"alert": "select","colormode": "ct","mode": "homeautomation","reachable": True}
+lightTypes["LIFX_TILE"]["config"] = {"archetype": "hueplay","function": "decorative","direction": "omnidirectional","startup": {"mode": "safety","configured": False}}
+lightTypes["LIFX_TILE"]["dynamics"] = {"speed": 0, "speed_valid": False, "status": "none", "status_values": ["none", "dynamic_palette"]}
