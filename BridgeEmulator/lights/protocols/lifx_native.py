@@ -559,33 +559,100 @@ class LifxProtocol:
         return None
     
     def discover_subnet(self, subnet: str = "192.168.1.0/24") -> List[LifxDevice]:
-        """Scan subnet for LIFX devices"""
+        """Scan subnet for LIFX devices with optimized unicast discovery"""
         devices = []
         network = ipaddress.ip_network(subnet, strict=False)
         
-        # Parallel scanning with limited batch size
-        futures = []
-        batch_size = 50
-        hosts = list(network.hosts())
+        # Use a smaller socket timeout for faster scanning
+        original_timeout = self.sock.gettimeout()
+        self.sock.settimeout(0.2)  # 200ms timeout for subnet scanning
         
-        for i in range(0, len(hosts), batch_size):
-            batch = hosts[i:i+batch_size]
-            batch_futures = []
+        try:
+            # Parallel scanning with optimized batch size
+            batch_size = 30  # Smaller batches for better timeout handling
+            hosts = list(network.hosts())
+            total_hosts = len(hosts)
             
-            for ip in batch:
-                future = self.executor.submit(self.discover_unicast, str(ip))
-                batch_futures.append(future)
+            logging.debug(f"LIFX Native: Scanning {total_hosts} hosts in subnet {subnet}")
             
-            # Process batch with timeout
-            for future in as_completed(batch_futures, timeout=2):
-                try:
-                    device = future.result(timeout=0.5)
-                    if device:
-                        devices.append(device)
-                except:
-                    pass
+            # Process in batches to avoid overwhelming the network
+            for i in range(0, total_hosts, batch_size):
+                batch = hosts[i:i+batch_size]
+                batch_futures = []
+                
+                # Submit batch of discovery tasks
+                for ip in batch:
+                    future = self.executor.submit(self._discover_unicast_quick, str(ip))
+                    batch_futures.append((str(ip), future))
+                
+                # Collect results from batch with short timeout
+                for ip, future in batch_futures:
+                    try:
+                        device = future.result(timeout=0.3)
+                        if device:
+                            devices.append(device)
+                            logging.debug(f"LIFX Native: Found device at {ip}")
+                    except Exception:
+                        # Silently skip non-LIFX IPs
+                        pass
+                
+                # Small delay between batches to avoid network flooding
+                if i + batch_size < total_hosts:
+                    time.sleep(0.05)
+        
+        finally:
+            # Restore original timeout
+            self.sock.settimeout(original_timeout)
         
         return devices
+    
+    def _discover_unicast_quick(self, ip: str) -> Optional[LifxDevice]:
+        """Quick unicast discovery for subnet scanning"""
+        # Create a temporary socket for this specific IP
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(0.2)  # Very short timeout for quick scanning
+        
+        try:
+            # Create GetService packet
+            header = self._create_header(
+                MessageType.GET_SERVICE,
+                tagged=True,
+                res_required=True
+            )
+            packet = LifxPacket(header=header)
+            data = packet.pack()
+            
+            # Send to specific IP
+            sock.sendto(data, (ip, LIFX_PORT))
+            
+            # Wait for response
+            response_data, addr = sock.recvfrom(1024)
+            response_packet = LifxPacket.unpack(response_data)
+            
+            if response_packet.header.type == MessageType.STATE_SERVICE:
+                # Parse StateService
+                service, port_num = struct.unpack('<BI', response_packet.payload[:5])
+                
+                # Extract MAC
+                mac = ':'.join(f'{b:02x}' for b in response_packet.header.target[:6])
+                
+                device = LifxDevice(
+                    mac=mac,
+                    ip=ip,
+                    port=port_num
+                )
+                
+                # Don't get additional info during subnet scan (too slow)
+                # That will be done later if needed
+                
+                return device
+        
+        except (socket.timeout, socket.error):
+            return None
+        finally:
+            sock.close()
+        
+        return None
     
     def _get_device_info(self, device: LifxDevice) -> None:
         """Get detailed device information"""
@@ -1021,6 +1088,16 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
                 logging.debug(f"LIFX Native: No device at {ip}: {e}")
     
     logging.info(f"LIFX Native: Total devices discovered: {len(devices)}")
+    
+    # Get device details for all discovered devices
+    logging.info("LIFX Native: Getting device details...")
+    for device in devices:
+        try:
+            protocol._get_device_info(device)
+            with protocol.device_lock:
+                protocol.devices[device.mac] = device
+        except Exception as e:
+            logging.debug(f"LIFX Native: Failed to get details for {device.mac}: {e}")
     
     # Add discovered devices to list
     for device in devices:
