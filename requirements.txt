@@ -18,3 +18,4 @@ python-kasa==0.4.1
 bleak
 rgbxy
 lifxlan
+numpy>=1.19.0

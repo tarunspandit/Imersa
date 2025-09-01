@@ -14,7 +14,8 @@ setup(name='lifxlan',
       packages=['lifxlan'],
       install_requires=[
         "bitstring",
-        "ifaddr"
+        "ifaddr",
+        "numpy>=1.19.0"
       ],
       zip_safe=False,
       # See https://pypi.python.org/pypi?%3Aaction=list_classifiers
