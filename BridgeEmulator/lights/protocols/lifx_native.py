@@ -755,14 +755,23 @@ class LifxProtocol:
     
     def set_color_rgb(self, device: LifxDevice, r: int, g: int, b: int, 
                       duration: int = 0) -> bool:
-        """Set device color from RGB values"""
-        # Convert RGB to HSV
-        h, s, v = colorsys.rgb_to_hsv(r/255, g/255, b/255)
+        """Set device color from RGB values - properly handles brightness"""
+        # Clamp RGB values
+        r = max(0, min(255, r))
+        g = max(0, min(255, g))
+        b = max(0, min(255, b))
         
-        # Convert to LIFX scale
-        hue = int(h * 65535)
+        # Convert RGB to HSV
+        h, s, v = colorsys.rgb_to_hsv(r/255.0, g/255.0, b/255.0)
+        
+        # Convert to LIFX scale (0-65535)
+        hue = int(h * 65535) % 65536
         saturation = int(s * 65535)
         brightness = int(v * 65535)
+        
+        # For very low brightness, ensure device doesn't turn off
+        if brightness > 0 and brightness < 655:  # Less than 1%
+            brightness = 655  # Set to minimum visible
         
         return self.set_color(device, hue, saturation, brightness, 3500, duration)
     
@@ -1103,13 +1112,16 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
     for device in devices:
         # Map to Hue model based on capabilities
         if device.is_matrix:
-            modelid = "LST004"  # Hue Lightstrip Plus (gradient capable)
-            points_capable = 64
+            # Matrix devices (Tile, Candle, Ceiling) should use gradient model
+            modelid = "LCX004"  # Hue Go gradient capable
+            points_capable = 5  # Support gradient effects
         elif device.is_multizone:
-            modelid = "LST002"  # Hue Lightstrip
-            points_capable = device.zone_count
+            # Multizone devices should use gradient strip model
+            modelid = "LCX003"  # Hue Gradient Lightstrip
+            points_capable = min(device.zone_count, 16)  # Map zones to gradient points
         else:
-            modelid = "LCT015"  # Hue Go
+            # Standard bulbs
+            modelid = "LCT015"  # Hue Go standard
             points_capable = 0
         
         light_config = {
@@ -1154,34 +1166,53 @@ def set_light(light: Any, data: Dict) -> None:
     if "on" in data:
         protocol.set_power(device, data["on"], data.get("transitiontime", 0) * 100)
     
-    # Handle color
+    # Get brightness value (MUST be applied to all color modes)
+    brightness = data.get("bri", 254)  # Default to max if not specified
+    
+    # For gradient-capable devices with gradient model, use gradient function
+    if light.modelid in ["LCX001", "LCX002", "LCX003", "LCX004", "LST002", "LST004"] and "gradient" in data:
+        # Handle gradient for capable devices
+        gradient_points = data.get("gradient", {}).get("points", [])
+        if gradient_points:
+            set_light_gradient(light, gradient_points)
+            return
+    
+    # Handle color modes
     if "xy" in data:
-        # Convert XY to RGB
+        # Convert XY to RGB WITH BRIGHTNESS APPLIED
         from functions.colors import convert_xy
         x, y = data["xy"]
-        r, g, b = convert_xy(x, y, 255)
+        # Apply brightness to the color conversion
+        r, g, b = convert_xy(x, y, brightness)
         protocol.set_color_rgb(device, r, g, b, data.get("transitiontime", 0) * 100)
     elif "ct" in data:
-        # Color temperature mode
+        # Color temperature mode WITH BRIGHTNESS
         kelvin = int(1000000 / data["ct"])
         kelvin = max(1500, min(9000, kelvin))
         
-        # Get current brightness
-        bri = data.get("bri", device.color[2] >> 8) if device.color else 128
-        brightness = int(bri * 257)
+        # Convert brightness from Hue scale (0-254) to LIFX scale (0-65535)
+        brightness_lifx = int(brightness * 257)
         
-        protocol.set_color(device, 0, 0, brightness, kelvin, data.get("transitiontime", 0) * 100)
+        # Set white light with proper brightness
+        protocol.set_color(device, 0, 0, brightness_lifx, kelvin, data.get("transitiontime", 0) * 100)
     elif "hue" in data or "sat" in data or "bri" in data:
-        # Get current color
+        # Get current color or defaults
         h, s, b, k = device.color if device.color else (0, 0, 32768, 3500)
         
+        # Update values that were provided
         if "hue" in data:
             h = data["hue"]
         if "sat" in data:
             s = int(data["sat"] * 257)
         if "bri" in data:
+            # CRITICAL: Convert brightness properly
             b = int(data["bri"] * 257)
         
+        protocol.set_color(device, h, s, b, k, data.get("transitiontime", 0) * 100)
+    elif "bri" in data:
+        # Brightness-only change - keep current color but update brightness
+        h, s, _, k = device.color if device.color else (0, 0, 32768, 3500)
+        b = int(data["bri"] * 257)
         protocol.set_color(device, h, s, b, k, data.get("transitiontime", 0) * 100)
 
 def set_light_multizone(light: Any, zone_colors: List[Tuple[int, int, int]]) -> None:
@@ -1196,7 +1227,7 @@ def set_light_multizone(light: Any, zone_colors: List[Tuple[int, int, int]]) -> 
         protocol.set_zone_colors_rgb(device, zone_colors)
 
 def set_light_gradient(light: Any, gradient_points: List[Dict]) -> None:
-    """Set gradient for bridge integration"""
+    """Set gradient for bridge integration - properly handles brightness"""
     protocol = get_protocol()
     
     # Get device
@@ -1206,36 +1237,65 @@ def set_light_gradient(light: Any, gradient_points: List[Dict]) -> None:
     if not device:
         return
     
-    # Parse gradient points
+    # Parse gradient points WITH BRIGHTNESS
     from functions.colors import convert_xy
     colors = []
     
+    # Extract brightness from gradient data or use default
+    brightness = 254  # Default brightness
+    if gradient_points and isinstance(gradient_points[0], dict):
+        # Check if brightness is in the gradient data
+        if "color" in gradient_points[0]:
+            brightness = gradient_points[0].get("color", {}).get("bri", 254)
+    
     for point in gradient_points:
-        if "color" in point and "xy" in point["color"]:
-            x, y = point["color"]["xy"]
-            r, g, b = convert_xy(x, y, 255)
+        if isinstance(point, dict) and "color" in point:
+            color_data = point["color"]
+            if "xy" in color_data:
+                x, y = color_data["xy"]
+                # Apply brightness to gradient colors
+                point_bri = color_data.get("bri", brightness)
+                r, g, b = convert_xy(x, y, point_bri)
+                colors.append((r, g, b))
+        elif isinstance(point, dict) and "xy" in point:
+            x, y = point["xy"]
+            r, g, b = convert_xy(x, y, brightness)
             colors.append((r, g, b))
     
+    if not colors:
+        return  # No valid colors to set
+    
     if device.is_multizone:
-        # Resample to match zone count
+        # Resample gradient to match zone count
         zone_count = device.zone_count
         resampled = []
-        for i in range(zone_count):
-            pos = i / (zone_count - 1) if zone_count > 1 else 0
-            # Find surrounding colors
-            idx = int(pos * (len(colors) - 1))
-            if idx < len(colors) - 1:
-                frac = (pos * (len(colors) - 1)) - idx
-                r1, g1, b1 = colors[idx]
-                r2, g2, b2 = colors[idx + 1]
-                r = int(r1 + (r2 - r1) * frac)
-                g = int(g1 + (g2 - g1) * frac)
-                b = int(b1 + (b2 - b1) * frac)
-                resampled.append((r, g, b))
-            else:
-                resampled.append(colors[-1])
         
+        if len(colors) == 1:
+            # Single color - apply to all zones
+            resampled = [colors[0]] * zone_count
+        else:
+            # Interpolate gradient across zones
+            for i in range(zone_count):
+                pos = i / (zone_count - 1) if zone_count > 1 else 0
+                # Calculate position in gradient
+                gradient_pos = pos * (len(colors) - 1)
+                idx = int(gradient_pos)
+                
+                if idx < len(colors) - 1:
+                    # Interpolate between two colors
+                    frac = gradient_pos - idx
+                    r1, g1, b1 = colors[idx]
+                    r2, g2, b2 = colors[idx + 1]
+                    r = int(r1 + (r2 - r1) * frac)
+                    g = int(g1 + (g2 - g1) * frac)
+                    b = int(b1 + (b2 - b1) * frac)
+                    resampled.append((r, g, b))
+                else:
+                    resampled.append(colors[-1])
+        
+        # Send to multizone device
         protocol.set_zone_colors_rgb(device, resampled)
+        
     elif device.is_matrix:
         # Create gradient across matrix
         width, height = device.matrix_dimensions
@@ -1244,34 +1304,40 @@ def set_light_gradient(light: Any, gradient_points: List[Dict]) -> None:
         for y in range(height):
             row = []
             for x in range(width):
-                # Use horizontal gradient
-                pos = x / (width - 1) if width > 1 else 0
-                idx = int(pos * (len(colors) - 1))
+                # Create diagonal gradient for more interesting effect
+                # You can change this to horizontal (x/width) or vertical (y/height)
+                pos = (x + y) / (width + height - 2) if (width + height) > 2 else 0
+                
+                # Map position to gradient
+                gradient_pos = pos * (len(colors) - 1)
+                idx = int(gradient_pos)
                 
                 if idx < len(colors) - 1:
-                    frac = (pos * (len(colors) - 1)) - idx
+                    # Interpolate between colors
+                    frac = gradient_pos - idx
                     r1, g1, b1 = colors[idx]
                     r2, g2, b2 = colors[idx + 1]
                     r = int(r1 + (r2 - r1) * frac)
                     g = int(g1 + (g2 - g1) * frac)  
                     b = int(b1 + (b2 - b1) * frac)
                 else:
-                    r, g, b = colors[-1]
+                    r, g, b = colors[-1] if colors else (0, 0, 0)
                 
-                # Convert to HSBK
+                # Convert RGB to HSBK for LIFX
                 h, s, v = colorsys.rgb_to_hsv(r/255, g/255, b/255)
                 row.append((int(h * 65535), int(s * 65535), int(v * 65535), 3500))
             
             matrix.append(row)
         
+        # Send matrix colors
         protocol.set_matrix_colors(device, matrix)
+        
     else:
-        # Single color - use average
+        # Standard bulb - use first color or average
         if colors:
-            avg_r = sum(c[0] for c in colors) // len(colors)
-            avg_g = sum(c[1] for c in colors) // len(colors)
-            avg_b = sum(c[2] for c in colors) // len(colors)
-            protocol.set_color_rgb(device, avg_r, avg_g, avg_b)
+            # Use first color for standard bulbs
+            r, g, b = colors[0]
+            protocol.set_color_rgb(device, r, g, b)
 
 def get_light_state(light: Any) -> Dict:
     """Get light state for bridge integration"""
