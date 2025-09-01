@@ -498,3 +498,285 @@ def get_protocol() -> LIFXProtocol:
     if protocol is None:
         protocol = init_lifx_protocol()
     return protocol
+
+# Bridge interface functions
+def set_light(light_data: Dict, rgb: Optional[List] = None, xy: Optional[List] = None, 
+              ct: Optional[int] = None, bri: Optional[int] = None, transitiontime: Optional[int] = None):
+    """Set light state - Bridge interface"""
+    try:
+        protocol = get_protocol()
+        ip = light_data.get('ip', light_data.get('protocol_cfg', {}).get('ip'))
+        
+        if not ip:
+            logger.error("No IP address found for LIFX device")
+            return False
+        
+        # Calculate color values
+        hue = 0
+        saturation = 0
+        brightness = bri if bri is not None else 100
+        kelvin = 2700
+        
+        if rgb:
+            # Convert RGB to HSB
+            r, g, b = rgb
+            h, s, v = _rgb_to_hsb(r, g, b)
+            hue = h
+            saturation = s
+            brightness = v
+        elif xy:
+            # Convert XY to HSB
+            x, y = xy
+            r, g, b = _xy_to_rgb(x, y, brightness)
+            h, s, v = _rgb_to_hsb(r, g, b)
+            hue = h
+            saturation = s
+        elif ct:
+            # Color temperature mode
+            kelvin = _mirek_to_kelvin(ct)
+            saturation = 0  # White mode
+        
+        # Calculate transition time in milliseconds
+        duration = transitiontime * 100 if transitiontime else 0
+        
+        # Handle gradient/zones if present
+        gradient = light_data.get('gradient')
+        if gradient and gradient.get('points'):
+            # Device has gradient capability
+            gradient_engine = protocol.gradient_engine
+            zones = []
+            
+            for point in gradient['points']:
+                color = point.get('color', {})
+                if 'xy' in color:
+                    x, y = color['xy']
+                    r, g, b = _xy_to_rgb(x, y, brightness)
+                    h, s, v = _rgb_to_hsb(r, g, b)
+                    zones.append((h, s, v, kelvin))
+                elif 'r' in color:
+                    r = int(color['r'] * 255)
+                    g = int(color['g'] * 255)
+                    b = int(color['b'] * 255)
+                    h, s, v = _rgb_to_hsb(r, g, b)
+                    zones.append((h, s, v, kelvin))
+            
+            return protocol.set_zones(ip, zones, duration=duration)
+        else:
+            # Single color
+            return protocol.set_color(ip, hue, saturation, brightness, kelvin, duration)
+            
+    except Exception as e:
+        logger.error(f"Error setting LIFX light: {e}")
+        return False
+
+def get_light_state(light_data: Dict) -> Dict:
+    """Get light state - Bridge interface"""
+    try:
+        ip = light_data.get('ip', light_data.get('protocol_cfg', {}).get('ip'))
+        
+        if not ip:
+            logger.error("No IP address found for LIFX device")
+            return {}
+        
+        protocol = get_protocol()
+        
+        # Check cache first
+        if ip in protocol.device_cache:
+            device = protocol.device_cache[ip]
+            
+            # Convert cached state to bridge format
+            state = {
+                "on": device.power,
+                "bri": int(device.brightness * 2.54),  # Convert to 0-254
+                "hue": int(device.hue * 182.04),  # Convert to 0-65535
+                "sat": int(device.saturation * 2.54),  # Convert to 0-254
+                "ct": _kelvin_to_mirek(device.kelvin),
+                "xy": _hsb_to_xy(device.hue, device.saturation, device.brightness),
+                "colormode": "hs" if device.saturation > 0 else "ct",
+                "reachable": True
+            }
+            
+            # Add gradient if zones present
+            if device.zones:
+                gradient_points = []
+                for i, zone in enumerate(device.zones):
+                    h, s, b, k = zone
+                    gradient_points.append({
+                        "color": {
+                            "xy": _hsb_to_xy(h, s, b)
+                        }
+                    })
+                state["gradient"] = {"points": gradient_points}
+            
+            return state
+        
+        # If not in cache, query device
+        return _query_device_state(ip)
+        
+    except Exception as e:
+        logger.error(f"Error getting LIFX light state: {e}")
+        return {
+            "on": False,
+            "reachable": False
+        }
+
+def discover(bridge_config: Dict):
+    """Discover LIFX devices - Bridge interface"""
+    try:
+        protocol = get_protocol()
+        devices = protocol.discover_devices(timeout=3.0)
+        
+        discovered_lights = []
+        for device_info in devices:
+            light = {
+                "protocol": "lifx",
+                "name": f"LIFX {device_info['mac'][-8:]}",
+                "modelid": "LIFX Color 1000",
+                "manufacturername": "LIFX",
+                "uniqueid": device_info['mac'].replace(':', ''),
+                "id_v1": device_info['mac'].replace(':', '')[-6:],
+                "ip": device_info['ip'],
+                "mac": device_info['mac'],
+                "protocol_cfg": {
+                    "ip": device_info['ip'],
+                    "mac": device_info['mac']
+                }
+            }
+            discovered_lights.append(light)
+        
+        return discovered_lights
+        
+    except Exception as e:
+        logger.error(f"Error discovering LIFX devices: {e}")
+        return []
+
+# Helper functions
+def _rgb_to_hsb(r: int, g: int, b: int) -> Tuple[int, int, int]:
+    """Convert RGB (0-255) to HSB (0-360, 0-100, 0-100)"""
+    r, g, b = r / 255.0, g / 255.0, b / 255.0
+    max_val = max(r, g, b)
+    min_val = min(r, g, b)
+    diff = max_val - min_val
+    
+    # Brightness
+    v = int(max_val * 100)
+    
+    if max_val == 0:
+        return 0, 0, 0
+    
+    # Saturation
+    s = int((diff / max_val) * 100) if max_val > 0 else 0
+    
+    # Hue
+    if diff == 0:
+        h = 0
+    elif max_val == r:
+        h = ((g - b) / diff) % 6
+    elif max_val == g:
+        h = (b - r) / diff + 2
+    else:
+        h = (r - g) / diff + 4
+    
+    h = int(h * 60)
+    if h < 0:
+        h += 360
+    
+    return h, s, v
+
+def _hsb_to_xy(h: int, s: int, b: int) -> List[float]:
+    """Convert HSB to XY color space"""
+    # Convert HSB to RGB first
+    h = h / 360.0
+    s = s / 100.0
+    b = b / 100.0
+    
+    if s == 0:
+        r = g = b = b
+    else:
+        def hue_to_rgb(p, q, t):
+            if t < 0: t += 1
+            if t > 1: t -= 1
+            if t < 1/6: return p + (q - p) * 6 * t
+            if t < 1/2: return q
+            if t < 2/3: return p + (q - p) * (2/3 - t) * 6
+            return p
+        
+        q = b * (1 + s) if b < 0.5 else b + s - b * s
+        p = 2 * b - q
+        
+        r = hue_to_rgb(p, q, h + 1/3)
+        g = hue_to_rgb(p, q, h)
+        b = hue_to_rgb(p, q, h - 1/3)
+    
+    # Convert RGB to XY
+    return _rgb_to_xy(r, g, b)
+
+def _rgb_to_xy(r: float, g: float, b: float) -> List[float]:
+    """Convert RGB to XY color space"""
+    # Apply gamma correction
+    r = ((r + 0.055) / 1.055) ** 2.4 if r > 0.04045 else r / 12.92
+    g = ((g + 0.055) / 1.055) ** 2.4 if g > 0.04045 else g / 12.92
+    b = ((b + 0.055) / 1.055) ** 2.4 if b > 0.04045 else b / 12.92
+    
+    # Convert to XYZ
+    X = r * 0.4124564 + g * 0.3575761 + b * 0.1804375
+    Y = r * 0.2126729 + g * 0.7151522 + b * 0.0721750
+    Z = r * 0.0193339 + g * 0.1191920 + b * 0.9503041
+    
+    # Convert to xy
+    total = X + Y + Z
+    if total == 0:
+        return [0.3127, 0.3290]  # Default white
+    
+    x = X / total
+    y = Y / total
+    
+    return [x, y]
+
+def _xy_to_rgb(x: float, y: float, bri: int) -> Tuple[int, int, int]:
+    """Convert XY (+brightness) to RGB"""
+    # Convert xy to XYZ
+    z = 1.0 - x - y
+    Y = bri / 100.0
+    X = (Y / y) * x if y != 0 else 0
+    Z = (Y / y) * z if y != 0 else 0
+    
+    # Convert XYZ to RGB
+    r = X * 1.656492 - Y * 0.354851 - Z * 0.255038
+    g = -X * 0.707196 + Y * 1.655397 + Z * 0.036152
+    b = X * 0.051713 - Y * 0.121364 + Z * 1.011530
+    
+    # Apply reverse gamma correction
+    r = 1.055 * (r ** (1/2.4)) - 0.055 if r > 0.0031308 else 12.92 * r
+    g = 1.055 * (g ** (1/2.4)) - 0.055 if g > 0.0031308 else 12.92 * g
+    b = 1.055 * (b ** (1/2.4)) - 0.055 if b > 0.0031308 else 12.92 * b
+    
+    # Clamp and convert to 0-255
+    r = max(0, min(255, int(r * 255)))
+    g = max(0, min(255, int(g * 255)))
+    b = max(0, min(255, int(b * 255)))
+    
+    return r, g, b
+
+def _mirek_to_kelvin(mirek: int) -> int:
+    """Convert mirek to kelvin"""
+    return int(1000000 / mirek)
+
+def _kelvin_to_mirek(kelvin: int) -> int:
+    """Convert kelvin to mirek"""
+    return int(1000000 / kelvin)
+
+def _query_device_state(ip: str) -> Dict:
+    """Query device for current state"""
+    # This would normally send a GetState message to the device
+    # For now, return a default state
+    return {
+        "on": True,
+        "bri": 254,
+        "hue": 0,
+        "sat": 0,
+        "ct": 370,
+        "xy": [0.3127, 0.3290],
+        "colormode": "ct",
+        "reachable": True
+    }
