@@ -959,26 +959,68 @@ def discover(detectedLights: List[Dict], opts: Optional[Dict] = None) -> None:
     """Discover LIFX devices for bridge integration"""
     protocol = get_protocol()
     
-    # Get subnet from options or use default
-    subnet = "192.168.1.0/24"
+    # Get host IP from config to determine subnet
+    try:
+        import configManager
+        host_ip = configManager.runtimeConfig.arg.get("HOST_IP", "192.168.1.1")
+    except:
+        host_ip = "192.168.1.1"
+    
+    # Calculate subnet from host IP (assuming /24)
+    ip_parts = host_ip.split('.')
+    if len(ip_parts) == 4:
+        subnet = f"{ip_parts[0]}.{ip_parts[1]}.{ip_parts[2]}.0/24"
+    else:
+        subnet = "192.168.1.0/24"
+    
+    # Override with options if provided
     if opts and "subnet" in opts:
         subnet = opts["subnet"]
     
-    # Try different discovery methods
+    logging.info(f"LIFX Native: Discovering devices on subnet {subnet} (host IP: {host_ip})")
+    
+    # Collect all devices found
     devices = []
+    seen_macs = set()
     
-    # Try broadcast first
+    # Always do subnet-wide unicast discovery for LIFX (most reliable)
     try:
-        devices.extend(protocol.discover_broadcast(timeout=3))
-    except:
-        pass
+        logging.info("LIFX Native: Starting subnet-wide unicast discovery...")
+        subnet_devices = protocol.discover_subnet(subnet)
+        for device in subnet_devices:
+            if device.mac not in seen_macs:
+                devices.append(device)
+                seen_macs.add(device.mac)
+        logging.info(f"LIFX Native: Found {len(subnet_devices)} devices via subnet scan")
+    except Exception as e:
+        logging.error(f"LIFX Native: Subnet discovery failed: {e}")
     
-    # Try subnet scan if broadcast didn't find much
-    if len(devices) < 3:
-        try:
-            devices.extend(protocol.discover_subnet(subnet))
-        except:
-            pass
+    # Also try broadcast as backup (some networks block unicast scanning)
+    try:
+        logging.info("LIFX Native: Trying broadcast discovery as backup...")
+        broadcast_devices = protocol.discover_broadcast(timeout=2)
+        for device in broadcast_devices:
+            if device.mac not in seen_macs:
+                devices.append(device)
+                seen_macs.add(device.mac)
+        logging.info(f"LIFX Native: Found {len(broadcast_devices)} additional devices via broadcast")
+    except Exception as e:
+        logging.debug(f"LIFX Native: Broadcast discovery failed: {e}")
+    
+    # Try static IPs if provided
+    if opts and "static_ips" in opts:
+        logging.info(f"LIFX Native: Checking static IPs: {opts['static_ips']}")
+        for ip in opts["static_ips"]:
+            try:
+                device = protocol.discover_unicast(ip)
+                if device and device.mac not in seen_macs:
+                    devices.append(device)
+                    seen_macs.add(device.mac)
+                    logging.info(f"LIFX Native: Found device at static IP {ip}")
+            except Exception as e:
+                logging.debug(f"LIFX Native: No device at {ip}: {e}")
+    
+    logging.info(f"LIFX Native: Total devices discovered: {len(devices)}")
     
     # Add discovered devices to list
     for device in devices:
