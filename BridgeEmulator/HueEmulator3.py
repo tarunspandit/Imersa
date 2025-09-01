@@ -113,12 +113,12 @@ def main():
 
     Thread(target=daylightSensor, args=[bridgeConfig["config"]["timezone"], bridgeConfig["sensors"]["1"]]).start()
     
-    # Initialize LIFX with keep-alive for existing devices
+    # Initialize LIFX Native protocol with keep-alive for existing devices
     try:
-        from lights.protocols import lifx
-        lifx.initialize_lifx()
+        from lights.protocols import lifx_native
+        lifx_native.initialize_lifx()
     except Exception as e:
-        logging.debug(f"LIFX initialization error: {e}")
+        logging.debug(f"LIFX Native initialization error: {e}")
     
     ### start services
     if bridgeConfig["config"]["deconz"]["enabled"]:

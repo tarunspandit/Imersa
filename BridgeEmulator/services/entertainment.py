@@ -8,7 +8,9 @@ from functions.colors import convert_rgb_xy, convert_xy
 import paho.mqtt.publish as publish
 import time
 from concurrent.futures import ThreadPoolExecutor
-from lights.protocols import lifx as lifx_protocol
+from lights.protocols import lifx_native as lifx_protocol
+# Using lifx_native for all LIFX functionality
+lifx_native_protocol = lifx_protocol
 from collections import deque
 
 logging = logManager.logger.get_logger(__name__)
@@ -167,6 +169,12 @@ def entertainmentService(group, user, mirror_port=None):
         lifx_protocol.start_entertainment_mode()
     except Exception as e:
         logging.debug(f"Could not start LIFX entertainment mode: {e}")
+    
+    # Start LIFX Native entertainment mode
+    try:
+        lifx_native_protocol.start_entertainment_mode()
+    except Exception as e:
+        logging.debug(f"Could not start LIFX Native entertainment mode: {e}")
 
     lights_v2 = []
     lights_v1 = {}
@@ -668,8 +676,8 @@ def entertainmentService(group, user, mirror_port=None):
                                         _yeelight_last_send[ip] = now
 
 
-                            # LIFX (lifxlan rapid UDP updates with zone support)
-                            elif proto == "lifx":
+                            # LIFX (native LAN protocol with zone support)
+                            elif proto == "lifx" or proto == "lifx_native":
                                 # Respect runtime integration toggle
                                 try:
                                     lifx_rt = bridgeConfig.get("temp", {}).get("integrations", {}).get("lifx", {})
@@ -855,8 +863,8 @@ def entertainmentService(group, user, mirror_port=None):
                                         c.command("set_rgb", [(r * 65536) + (g * 256) + b, "smooth", smooth_ms])
                                         _yeelight_last_send[ip] = now
 
-                            # LIFX (lifxlan rapid UDP updates with zone support)
-                            elif proto == "lifx":
+                            # LIFX (native LAN protocol with zone support)
+                            elif proto == "lifx" or proto == "lifx_native":
                                 # Respect runtime integration toggle
                                 try:
                                     lifx_rt = bridgeConfig.get("temp", {}).get("integrations", {}).get("lifx", {})
@@ -1164,12 +1172,18 @@ def entertainmentService(group, user, mirror_port=None):
                                         zone_colors = [color] * points_capable
                                     
                                     # Send zones to device
-                                    lifx_protocol.send_rgb_zones_rapid(light, zone_colors)
+                                    if light.protocol == "lifx":
+                                        lifx_protocol.send_rgb_zones_rapid(light, zone_colors)
+                                    else:  # lifx_native
+                                        lifx_native_protocol.send_rgb_zones_rapid(light, zone_colors)
                                     
                                 elif zones:
                                     # Non-gradient device with single color
                                     r, g, b = zones.get(0, [0, 0, 0])
-                                    lifx_protocol.send_rgb_rapid(light, r, g, b)
+                                    if light.protocol == "lifx":
+                                        lifx_protocol.send_rgb_rapid(light, r, g, b)
+                                    else:  # lifx_native
+                                        lifx_native_protocol.send_rgb_rapid(light, r, g, b)
                                     
                                 _lifx_last_send[key] = now_ts
                                 
@@ -1275,6 +1289,12 @@ def entertainmentService(group, user, mirror_port=None):
         lifx_protocol.stop_entertainment_mode()
     except Exception as e:
         logging.debug(f"Could not stop LIFX entertainment mode: {e}")
+    
+    # Stop LIFX Native entertainment mode
+    try:
+        lifx_native_protocol.stop_entertainment_mode()
+    except Exception as e:
+        logging.debug(f"Could not stop LIFX Native entertainment mode: {e}")
     
     for light in group.lights:
         bridgeConfig["lights"][light().id_v1].state["mode"] = "homeautomation"

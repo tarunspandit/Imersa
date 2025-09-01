@@ -5,7 +5,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple, Union, Generator
-from lights.protocols import tpkasa, wled, mqtt, hyperion, yeelight, hue, deconz, native_multi, tasmota, shelly, esphome, tradfri, elgato, govee, lifx
+from lights.protocols import tpkasa, wled, mqtt, hyperion, yeelight, hue, deconz, native_multi, tasmota, shelly, esphome, tradfri, elgato, govee, lifx_native
 from services import homeAssistantWS
 from HueObjects import Light, StreamEvent
 from functions.core import nextFreeId
@@ -168,7 +168,7 @@ def manualAddLight(ip: str, protocol: str, config: Dict = {}) -> None:
                     logging.info(f"Manual add auto library fallback failed for {ip}: {ee}")
             # Try LIFX as alternative for manual auto add
             try:
-                from lights.protocols import lifx as lifx_protocol
+                lifx_protocol = lifx_native
                 if lifx_protocol.LifxLAN is not None:
                     dev = lifx_protocol._unicast_discover_by_ip(ip)
                     if dev:
@@ -238,7 +238,7 @@ def manualAddLight(ip: str, protocol: str, config: Dict = {}) -> None:
         # LIFX enrichment
         if protocol == "lifx":
             try:
-                from lights.protocols import lifx as lifx_protocol
+                lifx_protocol = lifx_native
                 if lifx_protocol.LifxLAN is None:
                     logging.info(f"Manual add proceeding without lifxlan for {ip}")
                 else:
