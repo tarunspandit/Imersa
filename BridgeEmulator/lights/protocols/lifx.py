@@ -662,6 +662,10 @@ class LifxProtocol:
         
         # Convert transition time from deciseconds to milliseconds
         duration_ms = transition_time * 100 if transition_time else 0
+        
+        # Get current brightness for gradient (Hue gradient points don't include brightness)
+        current_state = device.last_state or device.get_state()
+        device_brightness = current_state.get('bri', 254) if current_state else 254
             
         if device.capabilities['type'] == 'multizone':
             # Map gradient to zones
