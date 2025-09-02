@@ -20,5 +20,6 @@ services:
       - '1900:1900/udp'
       - '2100:2100/udp'
       - '1982:1982/udp'
+      - '56700:56700/udp'
     # Alternatively, you can activate host mode by uncommenting the line below and removing all ports and the env vars above
     # network_mode: "host"

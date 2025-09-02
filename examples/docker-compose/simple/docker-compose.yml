@@ -7,6 +7,13 @@ services:
       - ./diyHue:/opt/hue-emulator/config
     restart: always
     privileged: true
+    ports:
+      - '80:80'
+      - '443:443'
+      - '1900:1900/udp'
+      - '2100:2100/udp'
+      - '1982:1982/udp'
+      - '56700:56700/udp'
     environment:
       - DEBUG=false
       - MAC=dc:a6:32:xx:xx:xx # Hue app will not pair if MAC and IP variable are not set correctly. Must be the mac of the host main interface
