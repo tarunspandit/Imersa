@@ -1065,9 +1065,9 @@ class LifxProtocol:
         tile_height = tile_info.get('height', 8)
         total_pixels = len(colors)
         
-        # Use actual tile width for Set64 message
-        # This tells the device how to interpret the 64-color grid
-        width_param = tile_width
+        # Use actual tile width for Set64 message, capped at 8
+        # SetTileState64 can only handle 8-wide grids, wider devices need multiple messages
+        width_param = min(tile_width, 8)
         
         logging.debug(f"LIFX: Sending colors to {device.label} tile {tile_index}: "
                      f"{tile_width}x{tile_height}={total_pixels} pixels, "
