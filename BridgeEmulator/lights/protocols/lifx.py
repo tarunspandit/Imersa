@@ -262,6 +262,11 @@ class LifxDevice:
                             # Bytes 17: height (uint8) - number of zones per column
                             # Bytes 18-54: Device info and reserved
                             
+                            # Extract accelerometer data for orientation
+                            accel_x = struct.unpack('<h', payload[offset:offset + 2])[0] if offset + 2 <= len(payload) else 0
+                            accel_y = struct.unpack('<h', payload[offset + 2:offset + 4])[0] if offset + 4 <= len(payload) else 0
+                            accel_z = struct.unpack('<h', payload[offset + 4:offset + 6])[0] if offset + 6 <= len(payload) else 0
+                            
                             # Extract width and height at correct offsets within tile
                             width = payload[offset + 16]
                             height = payload[offset + 17]
@@ -274,12 +279,16 @@ class LifxDevice:
                             user_x = struct.unpack('<f', payload[offset + 8:offset + 12])[0] if offset + 12 <= len(payload) else 0
                             user_y = struct.unpack('<f', payload[offset + 12:offset + 16])[0] if offset + 16 <= len(payload) else 0
                             
+                            # Determine orientation from accelerometer
+                            orientation = self._get_tile_orientation(accel_x, accel_y, accel_z)
+                            
                             tiles.append({
                                 'index': i,
                                 'width': width,
                                 'height': height,
                                 'x': user_x,
-                                'y': user_y
+                                'y': user_y,
+                                'orientation': orientation
                             })
                             offset += 55
                             
@@ -670,7 +679,7 @@ class LifxProtocol:
         if device.capabilities['type'] == 'multizone':
             # Map gradient to zones
             zone_count = device.capabilities.get('zone_count', 16)
-            colors = self._interpolate_gradient(points, zone_count)
+            colors = self._interpolate_gradient(points, zone_count, device_brightness)
             
             if device.capabilities.get('supports_extended', False):
                 # Use SetExtendedColorZones for efficiency
@@ -702,10 +711,17 @@ class LifxProtocol:
                 # Map gradient to this tile based on its position
                 tile_colors = self._map_gradient_to_tile(points, width, height, 
                                                          tile_x, tile_y, 
-                                                         gradient_width, gradient_height)
+                                                         gradient_width, gradient_height,
+                                                         device_brightness)
+                
+                # Reorient colors based on tile orientation
+                orientation = tile.get('orientation', 'RightSideUp')
+                if orientation != 'RightSideUp':
+                    tile_colors = self._reorient_tile_colors(tile_colors, width, height, orientation)
+                
                 self._send_tile_state(device, tile['index'], tile_colors, duration_ms)
     
-    def _interpolate_gradient(self, points: List[Dict], count: int) -> List[Tuple[int, int, int, int]]:
+    def _interpolate_gradient(self, points: List[Dict], count: int, brightness: int = 254) -> List[Tuple[int, int, int, int]]:
         """Interpolate gradient points to specific number of colors"""
         if not points:
             return [(0, 0, 65535, DEFAULT_KELVIN)] * count
@@ -742,13 +758,13 @@ class LifxProtocol:
                 }
             
             # Convert to HSBK
-            rgb = convert_xy(xy['x'], xy['y'], 255)
-            h, s, v = self._rgb_to_hsv(rgb[0], rgb[1], rgb[2])
+            rgb = convert_xy(xy['x'], xy['y'], brightness)
+            h, s, _ = self._rgb_to_hsv(rgb[0], rgb[1], rgb[2])
             
             colors.append((
                 int(h * 65535),         # Hue
                 int(s * 65535),         # Saturation
-                int(v * 65535),         # Brightness
+                int((brightness / 254) * 65535),  # Use provided brightness
                 DEFAULT_KELVIN          # Kelvin
             ))
             
@@ -756,7 +772,8 @@ class LifxProtocol:
     
     def _map_gradient_to_tile(self, points: List[Dict], tile_width: int, tile_height: int,
                               tile_x: float, tile_y: float, 
-                              total_width: float, total_height: float) -> List[Tuple[int, int, int, int]]:
+                              total_width: float, total_height: float,
+                              brightness: int = 254) -> List[Tuple[int, int, int, int]]:
         """Map gradient points to a tile based on its position in the overall arrangement"""
         if not points:
             return [(0, 0, 0, DEFAULT_KELVIN)] * (tile_width * tile_height)
@@ -816,17 +833,77 @@ class LifxProtocol:
                     }
                 
                 # Convert to HSBK
-                rgb = convert_xy(xy['x'], xy['y'], 255)
-                h, s, v = self._rgb_to_hsv(rgb[0], rgb[1], rgb[2])
+                rgb = convert_xy(xy['x'], xy['y'], brightness)
+                h, s, _ = self._rgb_to_hsv(rgb[0], rgb[1], rgb[2])
                 
                 colors.append((
                     int(h * 65535),         # Hue
                     int(s * 65535),         # Saturation
-                    int(v * 65535),         # Brightness
+                    int((brightness / 254) * 65535),  # Use provided brightness
                     DEFAULT_KELVIN          # Kelvin
                 ))
         
         return colors
+    
+    def _get_tile_orientation(self, accel_x: int, accel_y: int, accel_z: int) -> str:
+        """Determine tile orientation from accelerometer data"""
+        # If accelerometer returns (-1, -1, -1), assume right side up
+        if accel_x == -1 and accel_y == -1 and accel_z == -1:
+            return "RightSideUp"
+        
+        # Find axis with largest magnitude
+        abs_x = abs(accel_x)
+        abs_y = abs(accel_y)
+        abs_z = abs(accel_z)
+        
+        if abs_x >= abs_y and abs_x >= abs_z:
+            # X-axis has largest magnitude
+            return "RotatedRight" if accel_x > 0 else "RotatedLeft"
+        elif abs_z >= abs_x and abs_z >= abs_y:
+            # Z-axis has largest magnitude
+            return "FaceDown" if accel_z > 0 else "FaceUp"
+        else:
+            # Y-axis has largest magnitude
+            return "UpsideDown" if accel_y > 0 else "RightSideUp"
+    
+    def _reorient_tile_colors(self, colors: List[Tuple[int, int, int, int]], 
+                             width: int, height: int, orientation: str) -> List[Tuple[int, int, int, int]]:
+        """Reorient color array based on tile orientation"""
+        if orientation == "RightSideUp":
+            # No change needed
+            return colors
+        
+        # Convert to 2D array for easier manipulation
+        grid = []
+        for y in range(height):
+            row = []
+            for x in range(width):
+                row.append(colors[y * width + x])
+            grid.append(row)
+        
+        # Apply rotation based on orientation
+        if orientation == "UpsideDown":
+            # Rotate 180 degrees
+            grid = [row[::-1] for row in grid[::-1]]
+        elif orientation == "RotatedLeft":
+            # Rotate 90 degrees counter-clockwise
+            grid = [[grid[y][x] for y in range(height)] for x in range(width-1, -1, -1)]
+        elif orientation == "RotatedRight":
+            # Rotate 90 degrees clockwise
+            grid = [[grid[y][x] for y in range(height-1, -1, -1)] for x in range(width)]
+        elif orientation == "FaceUp":
+            # Mirror horizontally
+            grid = [row[::-1] for row in grid]
+        elif orientation == "FaceDown":
+            # Mirror vertically
+            grid = grid[::-1]
+        
+        # Flatten back to list
+        reoriented = []
+        for row in grid:
+            reoriented.extend(row)
+        
+        return reoriented
     
     def _send_extended_zones(self, device: LifxDevice, colors: List[Tuple[int, int, int, int]]) -> None:
         """Send SetExtendedColorZones message for efficient multizone updates"""
