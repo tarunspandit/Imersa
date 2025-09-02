@@ -293,120 +293,84 @@ def discover(detectedLights, opts=None):
             
         discovery_packet = protocol._build_header(MSG_GET_SERVICE, tagged=True)
         
-        # Get IPs from bridge IP_RANGE configuration
-        all_ips = set()
-        
-        # Get subnet from bridge configuration
+        # Get IPs to scan from bridge configuration
         bridgeConfig = configManager.bridgeConfig.yaml_config
         rangeConfig = bridgeConfig["config"]["IP_RANGE"]
         HOST_IP = configManager.runtimeConfig.arg["HOST_IP"]
         
-        # Generate IPs in the configured subnet
-        ip_range_start = rangeConfig["IP_RANGE_START"]
-        ip_range_end = rangeConfig["IP_RANGE_END"]
-        sub_ip_range_start = rangeConfig["SUB_IP_RANGE_START"]
-        sub_ip_range_end = rangeConfig["SUB_IP_RANGE_END"]
-        
+        # Build subnet IPs
         host_parts = HOST_IP.split('.')
+        all_ips = []
         
-        # Generate all IPs in the range (limit to prevent scanning too many IPs)
-        max_ips = 254  # Limit to one /24 subnet worth of IPs
-        ip_count = 0
-        
-        for sub_addr in range(sub_ip_range_start, sub_ip_range_end + 1):
-            for addr in range(ip_range_start, ip_range_end + 1):
-                ip = f"{host_parts[0]}.{host_parts[1]}.{sub_addr}.{addr}"
-                if ip != HOST_IP:  # Skip our own IP
-                    all_ips.add(ip)
-                    ip_count += 1
-                    if ip_count >= max_ips:
-                        break
-            if ip_count >= max_ips:
+        # Generate IPs in configured range
+        for sub in range(rangeConfig["SUB_IP_RANGE_START"], rangeConfig["SUB_IP_RANGE_END"] + 1):
+            for addr in range(rangeConfig["IP_RANGE_START"], rangeConfig["IP_RANGE_END"] + 1):
+                ip = f"{host_parts[0]}.{host_parts[1]}.{sub}.{addr}"
+                if ip != HOST_IP:
+                    all_ips.append(ip)
+                if len(all_ips) >= 254:  # Limit scan
+                    break
+            if len(all_ips) >= 254:
                 break
         
         # Add static IPs if configured
         if static_ips:
-            logging.info(f"Adding {len(static_ips)} static IP(s)")
             for ip in static_ips:
-                if ':' in ip:  # Handle IP:port format
+                if ':' in ip:
                     ip = ip.split(':')[0]
-                all_ips.add(ip)
+                if ip not in all_ips:
+                    all_ips.append(ip)
         
-        logging.info(f"Scanning {len(all_ips)} IP addresses in subnet {host_parts[0]}.{host_parts[1]}.{sub_ip_range_start}-{sub_ip_range_end}.{ip_range_start}-{ip_range_end} for LIFX devices")
+        logging.info(f"Scanning {len(all_ips)} IPs for LIFX devices")
         
-        # Send unicast discovery to all IPs in subnet
-        if all_ips:
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-            
-            def send_discovery_to_ip(ip_str):
-                """Send discovery packet to a single IP"""
-                try:
-                    # Create a separate socket for this thread
-                    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                    sock.settimeout(0.1)
-                    sock.sendto(discovery_packet, (ip_str, LIFX_PORT))
-                    sock.close()
-                    return ip_str, True
-                except Exception as e:
-                    return ip_str, False
-            
-            # Send discovery packets in parallel with rate limiting
-            max_workers = 20  # Limit concurrent threads
-            sent_count = 0
-            
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                # Submit tasks in batches to control rate
-                batch_size = 100
-                ip_list = list(all_ips)
-                
-                for i in range(0, len(ip_list), batch_size):
-                    batch = ip_list[i:i+batch_size]
-                    futures = [executor.submit(send_discovery_to_ip, ip) for ip in batch]
-                    
-                    # Wait for batch to complete
-                    for future in as_completed(futures):
-                        ip, success = future.result()
-                        if success:
-                            sent_count += 1
-                    
-                    # Small delay between batches to avoid network flooding
-                    if i + batch_size < len(ip_list):
-                        time.sleep(0.1)
-            
-            logging.info(f"Successfully sent discovery packets to {sent_count} addresses")
+        # Send discovery to each IP
+        for ip in all_ips:
+            try:
+                # Create a new socket for each IP to ensure clean state
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.settimeout(0.1)
+                sock.sendto(discovery_packet, (ip, LIFX_PORT))
+                sock.close()
+            except:
+                pass
         
-        # Also try broadcast as fallback (might work in some environments)
+        # Also send broadcast for good measure
         try:
             protocol._send_packet(discovery_packet)
-            logging.debug("Also sent broadcast discovery packet")
+            logging.debug("Sent broadcast discovery packet")
         except Exception as e:
-            logging.debug(f"Broadcast failed (expected in container): {e}")
+            logging.debug(f"Broadcast failed (expected in containers): {e}")
         
         # Listen for responses
-        discovery_timeout = 3  # 3 seconds should be enough for local network
+        discovery_timeout = 5  # Give more time for responses
         start_time = time.time()
         responses = {}
-        protocol.socket.settimeout(0.05)  # Very short timeout for non-blocking receive
+        protocol.socket.settimeout(0.5)  # Increase timeout for better reception
         
         logging.info(f"Listening for LIFX device responses for {discovery_timeout} seconds...")
+        received_count = 0
         
         while time.time() - start_time < discovery_timeout:
             try:
                 data, addr = protocol.socket.recvfrom(1024)
+                received_count += 1
+                logging.debug(f"Received packet #{received_count} from {addr[0]}, size: {len(data)} bytes")
                 parsed = protocol._parse_packet(data)
                 
-                if parsed and parsed['type'] == MSG_STATE_SERVICE:
-                    mac = parsed['target']
-                    if mac not in responses:
-                        logging.debug(f"Got STATE_SERVICE response from {addr[0]}")
-                        # Get device details
-                        device = _get_device_details(protocol, addr[0], mac)
-                        if device:
-                            responses[mac] = device
-                            discovered.append(device)
-                            logging.info(f"Discovered LIFX device: {device.get('name', 'Unknown')} at {addr[0]}")
-                        else:
-                            logging.debug(f"Failed to get details for device at {addr[0]}")
+                if parsed:
+                    logging.debug(f"Received packet type {parsed['type']} from {addr[0]}")
+                    if parsed['type'] == MSG_STATE_SERVICE:
+                        mac = parsed['target']
+                        if mac not in responses:
+                            logging.info(f"Got STATE_SERVICE response from {addr[0]} (MAC: {mac.hex()})") 
+                            # Get device details
+                            device = _get_device_details(protocol, addr[0], mac)
+                            if device:
+                                responses[mac] = device
+                                discovered.append(device)
+                                logging.info(f"Discovered LIFX device: {device.get('name', 'Unknown')} at {addr[0]}")
+                            else:
+                                logging.debug(f"Failed to get details for device at {addr[0]}")
                             
             except socket.timeout:
                 # This is expected, continue listening
