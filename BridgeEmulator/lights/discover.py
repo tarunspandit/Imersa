@@ -396,7 +396,6 @@ def discover_lights(detectedLights: List[Dict], device_ips: List[str]) -> None:
     if lifx_enabled is None:
         lifx_enabled = True if lifx_config == {} else bool(lifx_config.get("enabled", True))
     if lifx_enabled:
-        opts = {}
         # Merge static IPs preference: runtime first, then config
         static_ips = []
         if isinstance(lifx_config, dict):
@@ -405,10 +404,10 @@ def discover_lights(detectedLights: List[Dict], device_ips: List[str]) -> None:
             # runtime overrides/extends
             rt_ips = lifx_runtime.get("static_ips", []) or []
             static_ips.extend([ip for ip in rt_ips if ip not in static_ips])
-            if "max_fps" in lifx_runtime:
-                opts["max_fps"] = lifx_runtime.get("max_fps")
-        opts["static_ips"] = static_ips
-        lifx.discover(detectedLights, opts)
+        
+        # Use static IPs if configured, otherwise use discovered device IPs
+        lifx_ips = static_ips if static_ips else device_ips
+        lifx.discover(detectedLights, lifx_ips)
     # native_multi probe all esp8266 lights with firmware from diyhue repo
     if bridgeConfig["config"]["native_multi"]["enabled"]:
         native_multi.discover(detectedLights, device_ips)
