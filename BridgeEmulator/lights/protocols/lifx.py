@@ -358,6 +358,27 @@ class LifxDevice:
                 return self.last_state
         
         return self.last_state or {'on': False, 'bri': 0}
+    
+    def _get_tile_orientation(self, accel_x: int, accel_y: int, accel_z: int) -> str:
+        """Determine tile orientation from accelerometer data"""
+        # If accelerometer returns (-1, -1, -1), assume right side up
+        if accel_x == -1 and accel_y == -1 and accel_z == -1:
+            return "RightSideUp"
+        
+        # Find axis with largest magnitude
+        abs_x = abs(accel_x)
+        abs_y = abs(accel_y)
+        abs_z = abs(accel_z)
+        
+        if abs_x >= abs_y and abs_x >= abs_z:
+            # X-axis has largest magnitude
+            return "RotatedRight" if accel_x > 0 else "RotatedLeft"
+        elif abs_z >= abs_x and abs_z >= abs_y:
+            # Z-axis has largest magnitude
+            return "FaceDown" if accel_z > 0 else "FaceUp"
+        else:
+            # Y-axis has largest magnitude
+            return "UpsideDown" if accel_y > 0 else "RightSideUp"
 
 
 class LifxProtocol:
@@ -914,27 +935,6 @@ class LifxProtocol:
                 ))
         
         return colors
-    
-    def _get_tile_orientation(self, accel_x: int, accel_y: int, accel_z: int) -> str:
-        """Determine tile orientation from accelerometer data"""
-        # If accelerometer returns (-1, -1, -1), assume right side up
-        if accel_x == -1 and accel_y == -1 and accel_z == -1:
-            return "RightSideUp"
-        
-        # Find axis with largest magnitude
-        abs_x = abs(accel_x)
-        abs_y = abs(accel_y)
-        abs_z = abs(accel_z)
-        
-        if abs_x >= abs_y and abs_x >= abs_z:
-            # X-axis has largest magnitude
-            return "RotatedRight" if accel_x > 0 else "RotatedLeft"
-        elif abs_z >= abs_x and abs_z >= abs_y:
-            # Z-axis has largest magnitude
-            return "FaceDown" if accel_z > 0 else "FaceUp"
-        else:
-            # Y-axis has largest magnitude
-            return "UpsideDown" if accel_y > 0 else "RightSideUp"
     
     def _reorient_tile_colors(self, colors: List[Tuple[int, int, int, int]], 
                              width: int, height: int, orientation: str) -> List[Tuple[int, int, int, int]]:
