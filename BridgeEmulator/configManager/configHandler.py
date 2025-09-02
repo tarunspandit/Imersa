@@ -202,12 +202,18 @@ class Config:
                             data["owner"] = self.yaml_config["apiUsers"][list(self.yaml_config["apiUsers"])[0]]
                         else:
                             data["owner"] = self.yaml_config["apiUsers"][data["owner"]]
-                        self.yaml_config["groups"][group] = Group.Group(data)
+                        # Clean up missing lights from group data
+                        valid_lights = []
                         for light in data["lights"]:
                             if light in self.yaml_config["lights"]:
-                                self.yaml_config["groups"][group].add_light(self.yaml_config["lights"][light])
+                                valid_lights.append(light)
                             else:
-                                logging.warning(f"Group '{group}' references non-existent light '{light}', skipping")
+                                logging.warning(f"Group '{group}' references non-existent light '{light}', removing from group")
+                        data["lights"] = valid_lights
+                        
+                        self.yaml_config["groups"][group] = Group.Group(data)
+                        for light in valid_lights:
+                            self.yaml_config["groups"][group].add_light(self.yaml_config["lights"][light])
 
             #scenes
             if os.path.exists(self.configDir + "/scenes.yaml"):
@@ -220,15 +226,23 @@ class Config:
                         data["group"] = group
                     else:
                         objctsList = []
+                        valid_scene_lights = []
                         for light in data["lights"]:
-                            objctsList.append(weakref.ref(self.yaml_config["lights"][light]))
+                            if light in self.yaml_config["lights"]:
+                                objctsList.append(weakref.ref(self.yaml_config["lights"][light]))
+                                valid_scene_lights.append(light)
+                            else:
+                                logging.warning(f"Scene '{scene}' references non-existent light '{light}', removing from scene")
                         data["lights"] = objctsList
                     owner = self.yaml_config["apiUsers"][data["owner"]]
                     data["owner"] = owner
                     self.yaml_config["scenes"][scene] = Scene.Scene(data)
                     for light, lightstate in data["lightstates"].items():
-                        lightObj = self.yaml_config["lights"][light]
-                        self.yaml_config["scenes"][scene].lightstates[lightObj] = lightstate
+                        if light in self.yaml_config["lights"]:
+                            lightObj = self.yaml_config["lights"][light]
+                            self.yaml_config["scenes"][scene].lightstates[lightObj] = lightstate
+                        else:
+                            logging.warning(f"Scene '{scene}' lightstate references non-existent light '{light}', removing")
             #smart_scene
             if os.path.exists(self.configDir + "/smart_scene.yaml"):
                 smart_scene = _open_yaml(self.configDir + "/smart_scene.yaml")
