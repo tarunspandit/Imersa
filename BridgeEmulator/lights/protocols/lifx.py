@@ -968,21 +968,27 @@ class LifxProtocol:
         colors = colors[:64]
         
         # Build payload per LIFX protocol specification
-        # SetTileState64 structure:
-        # - tile_index (uint8): which tile to update
-        # - length (uint8): how many tiles (1 for single tile)
-        # - x (uint8): X coordinate in tile (0 for full tile)
-        # - y (uint8): Y coordinate in tile (0 for full tile)
-        # - width (uint8): width of update area (8 for full tile)
-        # - reserved (uint8): must be 0
-        # - duration (uint32): transition time in ms
-        payload = struct.pack('<BBBBBBHI',
-                            tile_index,  # Tile index
-                            1,           # Length (1 tile)
+        # SetTileState64 (packet 715) structure:
+        # - tile_index (uint8): which tile to update (0-indexed from controller)
+        # - length (uint8): how many tiles to update (1 for single tile)
+        # - fb_index (uint8): frame buffer index (normally 0 for visible frame)
+        # - x (uint8): X coordinate to start applying colors
+        # - y (uint8): Y coordinate to start applying colors
+        # - width (uint8): width of color square (8 for LIFX Tile, 5 for LIFX Candle)
+        # - duration (uint32): transition time in milliseconds
+        # - colors (64 × HSBK): array of 64 color values
+        
+        # Determine width based on tile dimensions (8x8 for Tile, 5x5 for Candle)
+        # For now default to 8, will be improved when device type detection is added
+        tile_width = 8
+        
+        payload = struct.pack('<BBBBBBBI',
+                            tile_index,  # Tile index (0-based)
+                            1,           # Length (number of tiles to update)
+                            0,           # Frame buffer index (0 = visible frame)
                             0,           # X coordinate (0 = start from left)
                             0,           # Y coordinate (0 = start from top)
-                            8,           # Width (8 = full tile width)
-                            0,           # Reserved byte
+                            tile_width,  # Width (8 for Tile, 5 for Candle)
                             duration_ms) # Duration in milliseconds
         
         # Add 64 colors (HSBK each)
