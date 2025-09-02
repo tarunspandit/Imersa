@@ -759,18 +759,24 @@ class LifxProtocol:
         
         colors = []
         
-        # For each pixel in the tile
+        # For each pixel in the tile (row-major order as LIFX expects)
         for y in range(tile_height):
             for x in range(tile_width):
                 # Calculate position in overall gradient space (0.0 to 1.0)
                 # This considers the tile's position in the arrangement
-                if total_width > 1:
-                    gradient_x = (tile_x + (x / max(1, tile_width - 1))) / total_width
-                else:
-                    gradient_x = x / max(1, tile_width - 1)
+                # Normalize pixel position within its tile (0.0 to 1.0)
+                pixel_x_normalized = x / max(1, tile_width - 1) if tile_width > 1 else 0.5
                 
-                # For now, use horizontal gradient (could extend to 2D)
-                position = gradient_x
+                # Calculate absolute position in the tile arrangement
+                if total_width > 1:
+                    # tile_x is the tile's position, add normalized pixel position
+                    absolute_x = tile_x + pixel_x_normalized
+                    gradient_position = absolute_x / total_width
+                else:
+                    gradient_position = pixel_x_normalized
+                
+                # Clamp to valid range
+                position = max(0.0, min(1.0, gradient_position))
                 
                 # Find surrounding gradient points
                 prev_point = points[0]
