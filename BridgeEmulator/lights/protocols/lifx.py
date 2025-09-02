@@ -475,17 +475,15 @@ class LifxProtocol:
         
         # 2. Parallel IP scanning for specific IPs (always run as fallback)
         # This helps when broadcast doesn't work (Docker, VLANs, etc)
-        if device_ips or len(discovered_this_run) == 0:
-            # If broadcast found nothing, ensure we have IPs to scan
-            if not device_ips and len(discovered_this_run) == 0:
-                import configManager
-                HOST_IP = configManager.runtimeConfig.arg.get("HOST_IP", "192.168.1.1")
-                subnet = '.'.join(HOST_IP.split('.')[0:3])
-                device_ips = [f"{subnet}.{i}" for i in range(1, 255)]
-                logging.info(f"LIFX: Broadcast found 0 devices, scanning subnet {subnet}.1-254")
+        if len(discovered_this_run) == 0:
+            # Broadcast found nothing, scan the full subnet for LIFX devices
+            import configManager
+            HOST_IP = configManager.runtimeConfig.arg.get("HOST_IP", "192.168.1.1")
+            subnet = '.'.join(HOST_IP.split('.')[0:3])
+            scan_ips = [f"{subnet}.{i}" for i in range(1, 255)]
+            logging.info(f"LIFX: Broadcast found 0 devices, scanning full subnet {subnet}.1-254")
             
-            if device_ips:
-                logging.info(f"LIFX: Scanning {len(device_ips)} IPs via unicast")
+            logging.info(f"LIFX: Scanning {len(scan_ips)} IPs via unicast")
             
             def scan_single_ip(ip: str) -> Optional[Tuple[str, Dict]]:
                 """Scan a single IP for LIFX device"""
@@ -508,14 +506,14 @@ class LifxProtocol:
                 return None
             
             # Use ThreadPoolExecutor for parallel scanning
-            with ThreadPoolExecutor(max_workers=min(20, len(device_ips))) as executor:
-                futures = [executor.submit(scan_single_ip, ip) for ip in device_ips]
+            with ThreadPoolExecutor(max_workers=min(20, len(scan_ips))) as executor:
+                futures = [executor.submit(scan_single_ip, ip) for ip in scan_ips]
                 
                 completed = 0
                 for future in futures:
                     completed += 1
                     if completed % 50 == 0:
-                        logging.debug(f"LIFX: Scanned {completed}/{len(device_ips)} IPs...")
+                        logging.debug(f"LIFX: Scanned {completed}/{len(scan_ips)} IPs...")
                     result = future.result()
                     if result:
                         ip, response = result
