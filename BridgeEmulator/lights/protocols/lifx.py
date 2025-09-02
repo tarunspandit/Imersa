@@ -115,7 +115,12 @@ class LIFXProtocol:
         self.devices = {}
         self.discovery_thread = None
         self.running = True
-        self._init_socket()
+        try:
+            self._init_socket()
+        except Exception as e:
+            logging.error(f"Failed to initialize socket in __init__: {e}")
+            # Ensure socket is None if initialization fails
+            self.socket = None
         
     def _init_socket(self):
         """Initialize UDP socket with optimizations"""
@@ -174,7 +179,7 @@ class LIFXProtocol:
             
         # Protocol header
         reserved2 = b'\x00' * 8
-        reserved3 = b'\x00' * 2
+        reserved3 = 0  # 2 bytes reserved as 16-bit integer
         
         # Pack header
         header = struct.pack('<HHI8s6sBB8sHH',
@@ -201,6 +206,9 @@ class LIFXProtocol:
                     sock.sendto(packet, (ip, port))
                 else:
                     # Broadcast
+                    if not self.socket:
+                        logging.error("Cannot send broadcast: socket not initialized")
+                        return None
                     self.socket.sendto(packet, (LIFX_BROADCAST_ADDR, port))
                     
             return None
@@ -258,11 +266,28 @@ class LIFXProtocol:
 def discover(detectedLights, device_ips=None):
     """Discover LIFX devices on the network"""
     logging.info("Starting LIFX discovery...")
-    protocol = LIFXProtocol()
+    protocol = None
     discovered = []
     
     try:
+        # Create protocol instance with error handling
+        try:
+            protocol = LIFXProtocol()
+            logging.debug(f"LIFXProtocol created, has _build_header: {hasattr(protocol, '_build_header')}")
+        except Exception as e:
+            logging.error(f"Failed to create LIFXProtocol: {e}")
+            return
+            
         # Send discovery broadcast
+        if not hasattr(protocol, '_build_header'):
+            logging.error("LIFXProtocol missing _build_header method")
+            return
+        
+        # Check if socket is available
+        if not protocol.socket:
+            logging.error("LIFXProtocol socket not initialized")
+            return
+            
         discovery_packet = protocol._build_header(MSG_GET_SERVICE, tagged=True)
         protocol._send_packet(discovery_packet)
         
@@ -308,9 +333,15 @@ def discover(detectedLights, device_ips=None):
                 detectedLights.append(light_config)
                 
     except Exception as e:
+        import traceback
         logging.error(f"LIFX discovery error: {e}")
+        logging.debug(f"Discovery traceback: {traceback.format_exc()}")
     finally:
-        protocol.cleanup()
+        if protocol is not None:
+            try:
+                protocol.cleanup()
+            except Exception as e:
+                logging.debug(f"Error during cleanup: {e}")
         
     logging.info(f"LIFX discovery complete. Found {len(discovered)} devices")
 
@@ -354,11 +385,14 @@ def _get_device_details(protocol: LIFXProtocol, ip: str, mac: bytes) -> Optional
                     
                 elif parsed['type'] == MSG_STATE_VERSION:
                     if len(parsed['payload']) >= 12:
-                        vendor, product, version = struct.unpack('<IIL', parsed['payload'][:12])
-                        device['vendor_id'] = vendor
-                        device['product_id'] = product
-                        device['version'] = version
-                        device['capabilities'] = _get_product_capabilities(product)
+                        try:
+                            vendor, product, version = struct.unpack('<IIL', parsed['payload'][:12])
+                            device['vendor_id'] = vendor
+                            device['product_id'] = product
+                            device['version'] = version
+                            device['capabilities'] = _get_product_capabilities(product)
+                        except struct.error as e:
+                            logging.debug(f"Failed to parse version info: {e}")
                         
                 elif parsed['type'] == MSG_LIGHT_STATE:
                     # Device supports color
@@ -463,14 +497,20 @@ def _get_multizone_info(protocol: LIFXProtocol, ip: str, mac: bytes) -> Dict:
                 if parsed['type'] == MSG_STATE_EXTENDED_COLOR_ZONES:
                     info['supports_extended_multizone'] = True
                     if len(parsed['payload']) >= 8:
-                        zone_count = struct.unpack('<H', parsed['payload'][2:4])[0]
-                        info['zone_count'] = zone_count
+                        try:
+                            zone_count = struct.unpack('<H', parsed['payload'][2:4])[0]
+                            info['zone_count'] = zone_count
+                        except struct.error as e:
+                            logging.debug(f"Failed to parse extended zone count: {e}")
                         
                 elif parsed['type'] == MSG_STATE_MULTI_ZONE:
                     if len(parsed['payload']) >= 2:
-                        zone_count = struct.unpack('<B', parsed['payload'][1:2])[0] + 1
-                        if 'zone_count' not in info:
-                            info['zone_count'] = zone_count
+                        try:
+                            zone_count = struct.unpack('<B', parsed['payload'][1:2])[0] + 1
+                            if 'zone_count' not in info:
+                                info['zone_count'] = zone_count
+                        except struct.error as e:
+                            logging.debug(f"Failed to parse zone count: {e}")
                             
             except socket.timeout:
                 continue
@@ -506,16 +546,19 @@ def _get_tile_info(protocol: LIFXProtocol, ip: str, mac: bytes) -> Dict:
                     
                 if parsed['type'] == MSG_STATE_DEVICE_CHAIN:
                     if len(parsed['payload']) >= 5:
-                        tile_count = struct.unpack('<B', parsed['payload'][0:1])[0]
-                        info['tile_count'] = tile_count
-                        
-                        # Parse tile dimensions (assuming uniform tiles)
-                        if len(parsed['payload']) >= 55:  # Minimum for one tile
-                            width = struct.unpack('<B', parsed['payload'][51:52])[0]
-                            height = struct.unpack('<B', parsed['payload'][52:53])[0]
-                            info['tile_width'] = width
-                            info['tile_height'] = height
-                            info['total_pixels'] = tile_count * width * height
+                        try:
+                            tile_count = struct.unpack('<B', parsed['payload'][0:1])[0]
+                            info['tile_count'] = tile_count
+                            
+                            # Parse tile dimensions (assuming uniform tiles)
+                            if len(parsed['payload']) >= 55:  # Minimum for one tile
+                                width = struct.unpack('<B', parsed['payload'][51:52])[0]
+                                height = struct.unpack('<B', parsed['payload'][52:53])[0]
+                                info['tile_width'] = width
+                                info['tile_height'] = height
+                                info['total_pixels'] = tile_count * width * height
+                        except struct.error as e:
+                            logging.debug(f"Failed to parse tile info: {e}")
                             
             except socket.timeout:
                 continue
@@ -542,9 +585,17 @@ def _convert_to_bridge_format(device: Dict) -> Dict:
         elif device.get('capabilities', {}).get('has_multizone'):
             modelid = "LST002"  # Light strip
             
+        # Generate default name if not provided
+        default_name = "LIFX Device"
+        if 'mac' in device and device['mac']:
+            try:
+                default_name = f"LIFX {device['mac'][-6:]}"
+            except (TypeError, IndexError):
+                pass
+        
         config = {
             "protocol": "lifx",
-            "name": device.get('name', f"LIFX {device['mac'][-6:]}"),
+            "name": device.get('name', default_name),
             "modelid": modelid,
             "protocol_cfg": {
                 "ip": device['ip'],
@@ -887,12 +938,15 @@ def _parse_entertainment_data(data: bytes) -> Dict:
         # Entertainment format: [light_id(1), r(2), g(2), b(2), padding(2)]...
         offset = 0
         while offset + 9 <= len(data):
-            light_id = data[offset]
-            r = struct.unpack('>H', data[offset+1:offset+3])[0]
-            g = struct.unpack('>H', data[offset+3:offset+5])[0]
-            b = struct.unpack('>H', data[offset+5:offset+7])[0]
-            
-            light_data[light_id] = (r, g, b)
+            try:
+                light_id = data[offset]
+                r = struct.unpack('>H', data[offset+1:offset+3])[0]
+                g = struct.unpack('>H', data[offset+3:offset+5])[0]
+                b = struct.unpack('>H', data[offset+5:offset+7])[0]
+                
+                light_data[light_id] = (r, g, b)
+            except struct.error as e:
+                logging.debug(f"Failed to parse entertainment data: {e}")
             offset += 9
             
     except Exception as e:
@@ -972,8 +1026,12 @@ def _parse_light_state(payload: bytes) -> Dict:
         if len(payload) < 52:
             return {}
             
-        hue, sat, bri, kelvin = struct.unpack('<HHHH', payload[0:8])
-        power = struct.unpack('<H', payload[10:12])[0]
+        try:
+            hue, sat, bri, kelvin = struct.unpack('<HHHH', payload[0:8])
+            power = struct.unpack('<H', payload[10:12])[0]
+        except struct.error as e:
+            logging.debug(f"Failed to parse light state: {e}")
+            return {}
         label = payload[12:44].decode('utf-8', errors='ignore').rstrip('\x00')
         
         # Convert to bridge format
