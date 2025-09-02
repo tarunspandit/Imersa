@@ -69,8 +69,11 @@ class LifxPacket:
         # Frame (8 bytes)
         frame = struct.pack('<H', size)  # size (16 bits)
         
-        # Protocol:1024, addressable:1, tagged, origin:0 (16 bits total)
-        protocol_flags = (1024 & 0xFFF) | (1 << 12) | (int(tagged) << 13) | (0 << 14)
+        # Protocol:1024 (0x400), addressable:1, tagged, origin:0 (16 bits total)
+        # According to LIFX docs: protocol uses first 12 bits, addressable is bit 12, tagged is bit 13
+        protocol_flags = 0x1400  # Protocol 1024 (0x400 << 0) with addressable bit (1 << 12)
+        if tagged:
+            protocol_flags |= 0x2000  # Set tagged bit (1 << 13)
         frame += struct.pack('<H', protocol_flags)
         
         # Source (32 bits)
@@ -385,9 +388,10 @@ class LifxProtocol:
             
             # Send multiple GetService broadcasts for reliability
             packet = packet_builder.build_header(MSG_GET_SERVICE, tagged=True)
+            logging.info(f"LIFX: Sending GetService broadcast packet ({len(packet)} bytes): {packet.hex()}")
             for retry in range(3):
                 broadcast_sock.sendto(packet, (BROADCAST_IP, LIFX_PORT))
-                logging.debug(f"LIFX: Sent broadcast discovery {retry+1}/3 to {BROADCAST_IP}:{LIFX_PORT}")
+                logging.info(f"LIFX: Sent broadcast discovery {retry+1}/3 to {BROADCAST_IP}:{LIFX_PORT}")
                 time.sleep(0.1)  # Small delay between broadcasts
             
             # Collect responses with non-blocking receives
@@ -401,6 +405,7 @@ class LifxProtocol:
                 if readable:
                     try:
                         data, addr = broadcast_sock.recvfrom(1024)
+                        logging.info(f"LIFX: Received response from {addr[0]}:{addr[1]} - {len(data)} bytes")
                         response = packet_builder.parse_header(data)
                         
                         if response and response['msg_type'] == MSG_STATE_SERVICE:
@@ -467,6 +472,7 @@ class LifxProtocol:
                     scan_sock.settimeout(0.5)  # Short timeout for faster scanning
                     
                     packet = packet_builder.build_header(MSG_GET_SERVICE, tagged=False)
+                    logging.debug(f"LIFX: Scanning IP {ip}:{LIFX_PORT}")
                     scan_sock.sendto(packet, (ip, LIFX_PORT))
                     
                     data, _ = scan_sock.recvfrom(1024)
