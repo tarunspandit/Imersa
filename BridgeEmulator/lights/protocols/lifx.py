@@ -20,6 +20,7 @@ import asyncio
 import random
 
 import logManager
+import configManager
 from functions.colors import convert_rgb_xy, convert_xy
 
 logging = logManager.logger.get_logger(__name__)
@@ -273,7 +274,6 @@ def discover(detectedLights, opts=None):
         opts = {}
     
     static_ips = opts.get("static_ips", [])
-    device_ips = opts.get("device_ips", [])
     protocol = None
     discovered = []
     
@@ -293,16 +293,36 @@ def discover(detectedLights, opts=None):
             
         discovery_packet = protocol._build_header(MSG_GET_SERVICE, tagged=True)
         
-        # Collect IPs to scan
+        # Get IPs from bridge IP_RANGE configuration
         all_ips = set()
         
-        # Add device_ips from network scan
-        if device_ips:
-            logging.info(f"Adding {len(device_ips)} IPs from network scan")
-            for ip in device_ips:
-                if ':' in ip:  # Handle IP:port format
-                    ip = ip.split(':')[0]
-                all_ips.add(ip)
+        # Get subnet from bridge configuration
+        bridgeConfig = configManager.bridgeConfig.yaml_config
+        rangeConfig = bridgeConfig["config"]["IP_RANGE"]
+        HOST_IP = configManager.runtimeConfig.arg["HOST_IP"]
+        
+        # Generate IPs in the configured subnet
+        ip_range_start = rangeConfig["IP_RANGE_START"]
+        ip_range_end = rangeConfig["IP_RANGE_END"]
+        sub_ip_range_start = rangeConfig["SUB_IP_RANGE_START"]
+        sub_ip_range_end = rangeConfig["SUB_IP_RANGE_END"]
+        
+        host_parts = HOST_IP.split('.')
+        
+        # Generate all IPs in the range (limit to prevent scanning too many IPs)
+        max_ips = 254  # Limit to one /24 subnet worth of IPs
+        ip_count = 0
+        
+        for sub_addr in range(sub_ip_range_start, sub_ip_range_end + 1):
+            for addr in range(ip_range_start, ip_range_end + 1):
+                ip = f"{host_parts[0]}.{host_parts[1]}.{sub_addr}.{addr}"
+                if ip != HOST_IP:  # Skip our own IP
+                    all_ips.add(ip)
+                    ip_count += 1
+                    if ip_count >= max_ips:
+                        break
+            if ip_count >= max_ips:
+                break
         
         # Add static IPs if configured
         if static_ips:
@@ -312,12 +332,9 @@ def discover(detectedLights, opts=None):
                     ip = ip.split(':')[0]
                 all_ips.add(ip)
         
-        if all_ips:
-            logging.info(f"Scanning {len(all_ips)} IP addresses for LIFX devices")
-        else:
-            logging.info("No specific IPs to scan, will use broadcast only")
+        logging.info(f"Scanning {len(all_ips)} IP addresses in subnet {host_parts[0]}.{host_parts[1]}.{sub_ip_range_start}-{sub_ip_range_end}.{ip_range_start}-{ip_range_end} for LIFX devices")
         
-        # Send unicast discovery to specific IPs if we have any
+        # Send unicast discovery to all IPs in subnet
         if all_ips:
             from concurrent.futures import ThreadPoolExecutor, as_completed
             
