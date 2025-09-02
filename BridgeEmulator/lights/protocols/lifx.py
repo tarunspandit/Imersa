@@ -1107,7 +1107,8 @@ class LifxProtocol:
         
         logging.debug(f"LIFX: Sending colors to {device.label} tile {tile_index}: "
                      f"{tile_width}x{tile_height}={total_pixels} pixels, "
-                     f"will need {(total_pixels + 63) // 64} Set64 message(s)")
+                     f"will need {(total_pixels + 63) // 64} Set64 message(s), "
+                     f"width_param={width_param}")
         
         # Build all Set64 packets first
         packets = []
@@ -1131,9 +1132,32 @@ class LifxProtocol:
                 x_offset = (chunk_index % chunks_per_row) * 8
                 y_offset = (chunk_index // chunks_per_row) * 8
             
-            # Get next 64 colors (or remaining colors)
-            chunk_end = min(pixels_sent + 64, total_pixels)
-            chunk_colors = colors[pixels_sent:chunk_end]
+            # Get next 64 colors based on device width
+            if tile_width > 8:
+                # For wide devices (e.g., 16x8 Ceiling), extract columns not sequential pixels
+                # This ensures gradient displays correctly across the full width
+                chunk_colors = []
+                chunk_x = x_offset  # Which column chunk (0 or 8)
+                
+                # Extract 8 columns from each row
+                for row in range(min(tile_height, 8)):
+                    row_start = row * tile_width
+                    for col in range(8):
+                        pixel_col = chunk_x + col
+                        if pixel_col < tile_width:
+                            pixel_idx = row_start + pixel_col
+                            if pixel_idx < len(colors):
+                                chunk_colors.append(colors[pixel_idx])
+                            else:
+                                chunk_colors.append((0, 0, 0, DEFAULT_KELVIN))
+                        else:
+                            chunk_colors.append((0, 0, 0, DEFAULT_KELVIN))
+                
+                chunk_end = pixels_sent + 64
+            else:
+                # For 8-wide or narrower devices, use sequential pixels
+                chunk_end = min(pixels_sent + 64, total_pixels)
+                chunk_colors = colors[pixels_sent:chunk_end]
             
             # Pad to 64 colors if needed
             while len(chunk_colors) < 64:
@@ -1160,36 +1184,29 @@ class LifxProtocol:
             packets.append((MSG_SET_TILE_STATE_64, payload, x_offset, y_offset, pixels_sent, chunk_end))
             pixels_sent = chunk_end
         
-        # Send all packets - in parallel if multiple, otherwise just send
+        # Send all packets - sequentially for wide devices to ensure proper ordering
         if len(packets) > 1:
-            # Multiple packets - send in parallel using ThreadPoolExecutor
-            # Create a socket for each worker to avoid contention
-            sockets = []
-            for _ in range(len(packets)):
-                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                sock.settimeout(0.1)
-                sockets.append(sock)
+            # Multiple packets - send sequentially with small delay for proper ordering
+            # This is critical for wide devices like Ceiling to display correctly
+            import time
             
-            def send_packet_wrapper(packet_data_with_socket):
-                packet_data, sock = packet_data_with_socket
-                msg_type, payload, x, y, start, end = packet_data
-                device.send_packet(msg_type, payload, ack_required=False, res_required=False, reuse_socket=sock)
-                logging.debug(f"LIFX: Sent SetTileState64 to {device.label}, "
-                            f"tile {tile_index}, x={x}, y={y}, pixels {start}-{end-1}")
+            # Use a single socket for all packets to same device
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.settimeout(0.1)
             
-            # Use ThreadPoolExecutor to send packets in parallel
-            with ThreadPoolExecutor(max_workers=len(packets)) as executor:
-                futures = [executor.submit(send_packet_wrapper, (packet, sockets[i])) 
-                          for i, packet in enumerate(packets)]
-                # Wait for all to complete
-                for future in futures:
-                    try:
-                        future.result(timeout=0.1)  # 100ms timeout
-                    except Exception as e:
-                        logging.warning(f"LIFX: Failed to send Set64 packet: {e}")
-            
-            # Clean up sockets
-            for sock in sockets:
+            try:
+                for packet in packets:
+                    msg_type, payload, x, y, start, end = packet
+                    device.send_packet(msg_type, payload, ack_required=False, res_required=False, reuse_socket=sock)
+                    logging.debug(f"LIFX: Sent SetTileState64 to {device.label}, "
+                                f"tile {tile_index}, x={x}, y={y}, pixels {start}-{end-1}")
+                    
+                    # Small delay between packets to ensure proper ordering (5ms)
+                    if packet != packets[-1]:  # Don't delay after last packet
+                        time.sleep(0.005)
+            except Exception as e:
+                logging.warning(f"LIFX: Failed to send Set64 packet: {e}")
+            finally:
                 try:
                     sock.close()
                 except:
