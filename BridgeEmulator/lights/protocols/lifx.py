@@ -594,7 +594,8 @@ class LifxProtocol:
         
         # Handle gradient for capable devices
         if 'gradient' in data and device.capabilities.get('type') in ['multizone', 'matrix']:
-            self._set_gradient(device, data['gradient'])
+            transition_time = data.get('transitiontime', 0)
+            self._set_gradient(device, data['gradient'], transition_time)
             return
         
         # Handle standard color/brightness
@@ -653,11 +654,14 @@ class LifxProtocol:
             
             device.send_packet(MSG_SET_COLOR, payload, ack_required=False, res_required=False)
     
-    def _set_gradient(self, device: LifxDevice, gradient: Dict) -> None:
+    def _set_gradient(self, device: LifxDevice, gradient: Dict, transition_time: int = 0) -> None:
         """Set gradient on multizone or matrix device"""
         points = gradient.get('points', [])
         if not points:
             return
+        
+        # Convert transition time from deciseconds to milliseconds
+        duration_ms = transition_time * 100 if transition_time else 0
             
         if device.capabilities['type'] == 'multizone':
             # Map gradient to zones
@@ -673,13 +677,29 @@ class LifxProtocol:
                     self._send_color_zone(device, i, i, color)
                     
         elif device.capabilities['type'] == 'matrix':
-            # Map gradient to tiles
+            # Map gradient to tiles considering their spatial arrangement
             tiles = device.capabilities.get('tiles', [])
+            
+            # Calculate overall bounds for gradient mapping
+            if tiles:
+                min_x = min(t.get('x', 0) for t in tiles)
+                max_x = max(t.get('x', 0) for t in tiles)
+                min_y = min(t.get('y', 0) for t in tiles)
+                max_y = max(t.get('y', 0) for t in tiles)
+                gradient_width = max_x - min_x + 1
+                gradient_height = max_y - min_y + 1
+            
             for tile in tiles:
                 width = tile.get('width', 8)
                 height = tile.get('height', 8)
-                tile_colors = self._map_gradient_to_grid(points, width, height)
-                self._send_tile_state(device, tile['index'], tile_colors)
+                tile_x = tile.get('x', 0)
+                tile_y = tile.get('y', 0)
+                
+                # Map gradient to this tile based on its position
+                tile_colors = self._map_gradient_to_tile(points, width, height, 
+                                                         tile_x, tile_y, 
+                                                         gradient_width, gradient_height)
+                self._send_tile_state(device, tile['index'], tile_colors, duration_ms)
     
     def _interpolate_gradient(self, points: List[Dict], count: int) -> List[Tuple[int, int, int, int]]:
         """Interpolate gradient points to specific number of colors"""
@@ -730,12 +750,73 @@ class LifxProtocol:
             
         return colors
     
-    def _map_gradient_to_grid(self, points: List[Dict], width: int, height: int) -> List[Tuple[int, int, int, int]]:
-        """Map gradient points to 2D grid"""
-        # For now, simple horizontal gradient
-        # Could be enhanced to support 2D gradients
-        total_pixels = width * height
-        return self._interpolate_gradient(points, total_pixels)
+    def _map_gradient_to_tile(self, points: List[Dict], tile_width: int, tile_height: int,
+                              tile_x: float, tile_y: float, 
+                              total_width: float, total_height: float) -> List[Tuple[int, int, int, int]]:
+        """Map gradient points to a tile based on its position in the overall arrangement"""
+        if not points:
+            return [(0, 0, 0, DEFAULT_KELVIN)] * (tile_width * tile_height)
+        
+        colors = []
+        
+        # For each pixel in the tile
+        for y in range(tile_height):
+            for x in range(tile_width):
+                # Calculate position in overall gradient space (0.0 to 1.0)
+                # This considers the tile's position in the arrangement
+                if total_width > 1:
+                    gradient_x = (tile_x + (x / max(1, tile_width - 1))) / total_width
+                else:
+                    gradient_x = x / max(1, tile_width - 1)
+                
+                # For now, use horizontal gradient (could extend to 2D)
+                position = gradient_x
+                
+                # Find surrounding gradient points
+                prev_point = points[0]
+                next_point = points[-1]
+                
+                for j, point in enumerate(points):
+                    point_pos = j / max(1, len(points) - 1)
+                    if point_pos <= position:
+                        prev_point = point
+                    if point_pos >= position:
+                        next_point = point
+                        break
+                
+                # Interpolate color
+                if prev_point == next_point:
+                    xy = prev_point.get('color', {}).get('xy', {'x': 0.5, 'y': 0.5})
+                else:
+                    prev_xy = prev_point.get('color', {}).get('xy', {'x': 0.5, 'y': 0.5})
+                    next_xy = next_point.get('color', {}).get('xy', {'x': 0.5, 'y': 0.5})
+                    
+                    # Calculate interpolation factor
+                    prev_pos = points.index(prev_point) / max(1, len(points) - 1)
+                    next_pos = points.index(next_point) / max(1, len(points) - 1)
+                    
+                    if next_pos - prev_pos > 0:
+                        t = (position - prev_pos) / (next_pos - prev_pos)
+                    else:
+                        t = 0
+                    
+                    xy = {
+                        'x': prev_xy['x'] + (next_xy['x'] - prev_xy['x']) * t,
+                        'y': prev_xy['y'] + (next_xy['y'] - prev_xy['y']) * t
+                    }
+                
+                # Convert to HSBK
+                rgb = convert_xy(xy['x'], xy['y'], 255)
+                h, s, v = self._rgb_to_hsv(rgb[0], rgb[1], rgb[2])
+                
+                colors.append((
+                    int(h * 65535),         # Hue
+                    int(s * 65535),         # Saturation
+                    int(v * 65535),         # Brightness
+                    DEFAULT_KELVIN          # Kelvin
+                ))
+        
+        return colors
     
     def _send_extended_zones(self, device: LifxDevice, colors: List[Tuple[int, int, int, int]]) -> None:
         """Send SetExtendedColorZones message for efficient multizone updates"""
@@ -792,19 +873,30 @@ class LifxProtocol:
         
         device.send_packet(MSG_SET_COLOR_ZONES, payload, ack_required=False, res_required=False)
     
-    def _send_tile_state(self, device: LifxDevice, tile_index: int, colors: List[Tuple[int, int, int, int]]) -> None:
+    def _send_tile_state(self, device: LifxDevice, tile_index: int, colors: List[Tuple[int, int, int, int]], duration_ms: int = 0) -> None:
         """Send SetTileState64 message"""
         # Ensure we have exactly 64 colors
         while len(colors) < 64:
             colors.append((0, 0, 0, DEFAULT_KELVIN))
         colors = colors[:64]
         
-        # Build payload
-        payload = struct.pack('<BBBxI',
+        # Build payload per LIFX protocol specification
+        # SetTileState64 structure:
+        # - tile_index (uint8): which tile to update
+        # - length (uint8): how many tiles (1 for single tile)
+        # - x (uint8): X coordinate in tile (0 for full tile)
+        # - y (uint8): Y coordinate in tile (0 for full tile)
+        # - width (uint8): width of update area (8 for full tile)
+        # - reserved (uint8): must be 0
+        # - duration (uint32): transition time in ms
+        payload = struct.pack('<BBBBBBHI',
                             tile_index,  # Tile index
-                            1,          # Length (1 tile)
-                            0,          # Reserved
-                            0)          # Duration
+                            1,           # Length (1 tile)
+                            0,           # X coordinate (0 = start from left)
+                            0,           # Y coordinate (0 = start from top)
+                            8,           # Width (8 = full tile width)
+                            0,           # Reserved byte
+                            duration_ms) # Duration in milliseconds
         
         # Add 64 colors (HSBK each)
         for color in colors:
