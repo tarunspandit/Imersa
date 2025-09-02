@@ -11,7 +11,6 @@ import threading
 import json
 import logging as log_module
 import math
-import ipaddress
 import os
 from typing import Dict, List, Tuple, Optional, Union, Any
 from collections import defaultdict, deque
@@ -21,7 +20,6 @@ import asyncio
 import random
 
 import logManager
-import configManager
 from functions.colors import convert_rgb_xy, convert_xy
 
 logging = logManager.logger.get_logger(__name__)
@@ -266,36 +264,6 @@ class LIFXProtocol:
             self.socket = None
 
 
-def _get_network_ips_from_config():
-    """Get IP addresses to scan based on bridge configuration"""
-    ips = set()
-    
-    # Get bridge configuration
-    bridgeConfig = configManager.bridgeConfig.yaml_config
-    rangeConfig = bridgeConfig["config"]["IP_RANGE"]
-    HOST_IP = configManager.runtimeConfig.arg["HOST_IP"]
-    
-    # Extract network range settings
-    ip_range_start = rangeConfig["IP_RANGE_START"]
-    ip_range_end = rangeConfig["IP_RANGE_END"]
-    sub_ip_range_start = rangeConfig["SUB_IP_RANGE_START"]
-    sub_ip_range_end = rangeConfig["SUB_IP_RANGE_END"]
-    
-    # Build IP list based on configured ranges
-    host_parts = HOST_IP.split('.')
-    
-    logging.info(f"LIFX: Scanning subnet {host_parts[0]}.{host_parts[1]}.{sub_ip_range_start}-{sub_ip_range_end}.{ip_range_start}-{ip_range_end}")
-    
-    # Generate IPs within the configured range
-    for sub_addr in range(sub_ip_range_start, sub_ip_range_end + 1):
-        for addr in range(ip_range_start, ip_range_end + 1):
-            ip = f"{host_parts[0]}.{host_parts[1]}.{sub_addr}.{addr}"
-            if ip != HOST_IP:  # Skip our own IP
-                ips.add(ip)
-    
-    return list(ips)
-
-
 def discover(detectedLights, opts=None):
     """Discover LIFX devices on the network using subnet unicast"""
     logging.info("Starting LIFX discovery...")
@@ -325,67 +293,70 @@ def discover(detectedLights, opts=None):
             
         discovery_packet = protocol._build_header(MSG_GET_SERVICE, tagged=True)
         
-        # Get IPs from bridge configuration
-        all_ips = set(_get_network_ips_from_config())
+        # Collect IPs to scan
+        all_ips = set()
         
-        # Add static IPs if provided
-        if static_ips:
-            logging.info(f"Adding {len(static_ips)} static IP(s) to scan")
-            for ip in static_ips:
-                if ':' in ip:  # Handle IP:port format
-                    ip = ip.split(':')[0]
-                all_ips.add(ip)
-        
-        # Add device_ips if provided (from port scanning)
+        # Add device_ips from network scan
         if device_ips:
-            logging.debug(f"Adding {len(device_ips)} device IP(s) from port scan")
+            logging.info(f"Adding {len(device_ips)} IPs from network scan")
             for ip in device_ips:
                 if ':' in ip:  # Handle IP:port format
                     ip = ip.split(':')[0]
                 all_ips.add(ip)
         
-        logging.info(f"Scanning {len(all_ips)} IP addresses for LIFX devices")
+        # Add static IPs if configured
+        if static_ips:
+            logging.info(f"Adding {len(static_ips)} static IP(s)")
+            for ip in static_ips:
+                if ':' in ip:  # Handle IP:port format
+                    ip = ip.split(':')[0]
+                all_ips.add(ip)
         
-        # Use threading for parallel scanning
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        import queue
+        if all_ips:
+            logging.info(f"Scanning {len(all_ips)} IP addresses for LIFX devices")
+        else:
+            logging.info("No specific IPs to scan, will use broadcast only")
         
-        def send_discovery_to_ip(ip_str):
-            """Send discovery packet to a single IP"""
-            try:
-                # Create a separate socket for this thread
-                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                sock.settimeout(0.1)
-                sock.sendto(discovery_packet, (ip_str, LIFX_PORT))
-                sock.close()
-                return ip_str, True
-            except Exception as e:
-                return ip_str, False
-        
-        # Send discovery packets in parallel with rate limiting
-        max_workers = 20  # Limit concurrent threads
-        sent_count = 0
-        
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Submit tasks in batches to control rate
-            batch_size = 100
-            ip_list = list(all_ips)
+        # Send unicast discovery to specific IPs if we have any
+        if all_ips:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
             
-            for i in range(0, len(ip_list), batch_size):
-                batch = ip_list[i:i+batch_size]
-                futures = [executor.submit(send_discovery_to_ip, ip) for ip in batch]
+            def send_discovery_to_ip(ip_str):
+                """Send discovery packet to a single IP"""
+                try:
+                    # Create a separate socket for this thread
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    sock.settimeout(0.1)
+                    sock.sendto(discovery_packet, (ip_str, LIFX_PORT))
+                    sock.close()
+                    return ip_str, True
+                except Exception as e:
+                    return ip_str, False
+            
+            # Send discovery packets in parallel with rate limiting
+            max_workers = 20  # Limit concurrent threads
+            sent_count = 0
+            
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit tasks in batches to control rate
+                batch_size = 100
+                ip_list = list(all_ips)
                 
-                # Wait for batch to complete
-                for future in as_completed(futures):
-                    ip, success = future.result()
-                    if success:
-                        sent_count += 1
-                
-                # Small delay between batches to avoid network flooding
-                if i + batch_size < len(ip_list):
-                    time.sleep(0.1)
-        
-        logging.info(f"Successfully sent discovery packets to {sent_count} addresses")
+                for i in range(0, len(ip_list), batch_size):
+                    batch = ip_list[i:i+batch_size]
+                    futures = [executor.submit(send_discovery_to_ip, ip) for ip in batch]
+                    
+                    # Wait for batch to complete
+                    for future in as_completed(futures):
+                        ip, success = future.result()
+                        if success:
+                            sent_count += 1
+                    
+                    # Small delay between batches to avoid network flooding
+                    if i + batch_size < len(ip_list):
+                        time.sleep(0.1)
+            
+            logging.info(f"Successfully sent discovery packets to {sent_count} addresses")
         
         # Also try broadcast as fallback (might work in some environments)
         try:
