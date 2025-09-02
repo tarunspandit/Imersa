@@ -990,47 +990,89 @@ class LifxProtocol:
         device.send_packet(MSG_SET_COLOR_ZONES, payload, ack_required=False, res_required=False)
     
     def _send_tile_state(self, device: LifxDevice, tile_index: int, colors: List[Tuple[int, int, int, int]], duration_ms: int = 0) -> None:
-        """Send SetTileState64 message"""
-        # Ensure we have exactly 64 colors
-        while len(colors) < 64:
-            colors.append((0, 0, 0, DEFAULT_KELVIN))
-        colors = colors[:64]
+        """Send SetTileState64 message(s) for devices with any number of pixels"""
+        # Get actual tile dimensions from capabilities
+        tiles = device.capabilities.get('tiles', [])
+        tile_info = None
+        for tile in tiles:
+            if tile['index'] == tile_index:
+                tile_info = tile
+                break
         
-        # Build payload per LIFX protocol specification
-        # SetTileState64 (packet 715) structure:
-        # - tile_index (uint8): which tile to update (0-indexed from controller)
-        # - length (uint8): how many tiles to update (1 for single tile)
-        # - fb_index (uint8): frame buffer index (normally 0 for visible frame)
-        # - x (uint8): X coordinate to start applying colors
-        # - y (uint8): Y coordinate to start applying colors
-        # - width (uint8): width of color square (8 for LIFX Tile, 5 for LIFX Candle)
-        # - duration (uint32): transition time in milliseconds
-        # - colors (64 × HSBK): array of 64 color values
+        if not tile_info:
+            logging.warning(f"LIFX: Tile index {tile_index} not found in device capabilities")
+            return
         
-        # Determine width based on device type
-        # LIFX Tile uses width=8, LIFX Candle uses width=5
+        # Get actual dimensions
+        tile_width = tile_info.get('width', 8)
+        tile_height = tile_info.get('height', 8)
+        total_pixels = len(colors)
+        
+        # Determine device width parameter for Set64 message
+        # This tells the device how to interpret the 64-color grid
         device_type = device.capabilities.get('device_type', 'tile')
-        tile_width = 5 if device_type == 'candle' else 8
+        width_param = 5 if device_type == 'candle' else 8
         
-        payload = struct.pack('<BBBBBBI',
-                            tile_index,  # Tile index (0-based)
-                            1,           # Length (number of tiles to update)
-                            0,           # Frame buffer index (0 = visible frame)
-                            0,           # X coordinate (0 = start from left)
-                            0,           # Y coordinate (0 = start from top)
-                            tile_width,  # Width (8 for Tile, 5 for Candle)
-                            duration_ms) # Duration in milliseconds
+        logging.debug(f"LIFX: Sending colors to {device.label} tile {tile_index}: "
+                     f"{tile_width}x{tile_height}={total_pixels} pixels, "
+                     f"will need {(total_pixels + 63) // 64} Set64 message(s)")
         
-        # Add 64 colors (HSBK each)
-        for color in colors:
-            payload += struct.pack('<HHHH',
-                                 color[0],   # Hue
-                                 color[1],   # Saturation
-                                 color[2],   # Brightness
-                                 color[3])   # Kelvin
+        # Send multiple Set64 messages if device has >64 pixels
+        pixels_sent = 0
+        message_count = 0
         
-        device.send_packet(MSG_SET_TILE_STATE_64, payload, ack_required=False, res_required=False)
-        logging.debug(f"LIFX: Sent SetTileState64 to {device.label}, tile {tile_index}, payload size: {len(payload)} bytes")
+        while pixels_sent < total_pixels:
+            # Calculate x,y offset for this chunk
+            if tile_width <= 8:
+                # For 8-wide or narrower devices, chunk vertically
+                x_offset = 0
+                y_offset = (pixels_sent // 64) * 8  # Each Set64 covers 8 rows
+                
+                # Special handling for 5x5 Candle
+                if tile_width == 5 and tile_height == 5:
+                    x_offset = 0
+                    y_offset = 0  # Single message covers entire 5x5
+            else:
+                # For wider devices (e.g., 16x8), chunk horizontally
+                chunks_per_row = (tile_width + 7) // 8  # Round up
+                chunk_index = pixels_sent // 64
+                x_offset = (chunk_index % chunks_per_row) * 8
+                y_offset = (chunk_index // chunks_per_row) * 8
+            
+            # Get next 64 colors (or remaining colors)
+            chunk_end = min(pixels_sent + 64, total_pixels)
+            chunk_colors = colors[pixels_sent:chunk_end]
+            
+            # Pad to 64 colors if needed
+            while len(chunk_colors) < 64:
+                chunk_colors.append((0, 0, 0, DEFAULT_KELVIN))
+            
+            # Build Set64 packet
+            payload = struct.pack('<BBBBBBI',
+                                tile_index,      # Tile index (0-based)
+                                1,               # Length (number of tiles to update)
+                                0,               # Frame buffer index (0 = visible frame)
+                                x_offset,        # X coordinate to start applying colors
+                                y_offset,        # Y coordinate to start applying colors
+                                width_param,     # Width (8 for Tile, 5 for Candle)
+                                duration_ms)     # Duration in milliseconds
+            
+            # Add 64 colors (HSBK each)
+            for color in chunk_colors[:64]:
+                payload += struct.pack('<HHHH',
+                                     color[0],   # Hue
+                                     color[1],   # Saturation
+                                     color[2],   # Brightness
+                                     color[3])   # Kelvin
+            
+            device.send_packet(MSG_SET_TILE_STATE_64, payload, ack_required=False, res_required=False)
+            
+            message_count += 1
+            logging.debug(f"LIFX: Sent SetTileState64 #{message_count} to {device.label}, "
+                         f"tile {tile_index}, x={x_offset}, y={y_offset}, "
+                         f"pixels {pixels_sent}-{chunk_end-1}")
+            
+            pixels_sent = chunk_end
     
     def _rgb_to_hsv(self, r: int, g: int, b: int) -> Tuple[float, float, float]:
         """Convert RGB to HSV"""
