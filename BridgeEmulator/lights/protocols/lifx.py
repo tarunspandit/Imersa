@@ -1012,7 +1012,7 @@ class LifxProtocol:
         device_type = device.capabilities.get('device_type', 'tile')
         tile_width = 5 if device_type == 'candle' else 8
         
-        payload = struct.pack('<BBBBBBBI',
+        payload = struct.pack('<BBBBBBI',
                             tile_index,  # Tile index (0-based)
                             1,           # Length (number of tiles to update)
                             0,           # Frame buffer index (0 = visible frame)
