@@ -1135,8 +1135,9 @@ def entertainmentService(group, user, mirror_port=None):
                                             
                                             # Find surrounding gradient points
                                             for j in range(len(gradient_points) - 1):
-                                                pt1_pos = gradient_points[j]["id"] / max(1, len(gradient_points) - 1)
-                                                pt2_pos = gradient_points[j + 1]["id"] / max(1, len(gradient_points) - 1)
+                                                # Use array indices for position, not point IDs
+                                                pt1_pos = j / max(1, len(gradient_points) - 1)
+                                                pt2_pos = (j + 1) / max(1, len(gradient_points) - 1)
                                                 
                                                 if pt1_pos <= position <= pt2_pos:
                                                     # Interpolate between these two points
