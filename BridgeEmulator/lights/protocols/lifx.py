@@ -240,42 +240,35 @@ class LifxDevice:
             response = self.send_packet(MSG_GET_DEVICE_CHAIN)
             if response and response['msg_type'] == MSG_STATE_DEVICE_CHAIN:
                 payload = response['payload']
-                if len(payload) >= 5:
+                # StateDeviceChain structure (per documentation):
+                # Byte 0: start_index (uint8)
+                # Bytes 1-880: tile_devices array (16 tiles × 55 bytes each)
+                # Byte 881: tile_devices_count (uint8) - actual number of tiles
+                if len(payload) >= 882:
                     start_index = payload[0]
-                    total_count = payload[1]
+                    tile_count = payload[881]  # Actual tile count is at byte 881, NOT byte 1
                     
-                    # Parse tile devices - StateDeviceChain structure:
-                    # Byte 0: start_index (uint8)
-                    # Byte 1: tile_devices_count (uint8)
-                    # Bytes 2-4: reserved
-                    # Bytes 5+: array of tile devices (55 bytes each)
                     tiles = []
-                    offset = 5  # Start after header
+                    offset = 1  # Tiles start at byte 1 (after start_index)
                     
-                    for i in range(min(total_count, 16)):  # Max 16 tiles
-                        if offset + 55 <= len(payload):
-                            # Tile structure (55 bytes):
-                            # Bytes 0-1: accel_meas_x (int16)
-                            # Bytes 2-3: accel_meas_y (int16)
-                            # Bytes 4-5: accel_meas_z (int16)
-                            # Bytes 6-7: reserved (2 bytes)
+                    for i in range(min(tile_count, 16)):  # Process actual tiles
+                        if offset + 55 <= 881:  # Stay within tile array bounds
+                            # Tile structure (55 bytes per documentation):
+                            # Bytes 0-5: Accelerometer (3 × int16)
+                            # Bytes 6-7: Reserved
                             # Bytes 8-11: user_x (float32)
                             # Bytes 12-15: user_y (float32)
-                            # Bytes 16: width (uint8)
-                            # Bytes 17: height (uint8)
-                            # Bytes 18: reserved (1 byte)
-                            # Bytes 19-50: device_version_data (32 bytes)
-                            # Bytes 51-54: firmware_build/version (4 bytes)
+                            # Bytes 16: width (uint8) - number of zones per row
+                            # Bytes 17: height (uint8) - number of zones per column
+                            # Bytes 18-54: Device info and reserved
                             
-                            # Extract width and height at correct offsets
+                            # Extract width and height at correct offsets within tile
                             width = payload[offset + 16]
                             height = payload[offset + 17]
                             
-                            # Default to 8x8 if dimensions are 0 (common for tiles)
-                            if width == 0:
-                                width = 8
-                            if height == 0:
-                                height = 8
+                            # Skip invalid tiles (0x0 dimensions mean no tile present)
+                            if width == 0 or height == 0:
+                                break
                             
                             # Extract user position floats
                             user_x = struct.unpack('<f', payload[offset + 8:offset + 12])[0] if offset + 12 <= len(payload) else 0
@@ -295,6 +288,7 @@ class LifxDevice:
                     if tiles:
                         self.capabilities['type'] = 'matrix'
                         self.capabilities['tiles'] = tiles
+                        self.capabilities['tile_count'] = len(tiles)
                         self.capabilities['total_pixels'] = sum(t['width'] * t['height'] for t in tiles)
                         logging.info(f"LIFX: {self.label} is matrix with {len(tiles)} tiles, {self.capabilities['total_pixels']} total pixels")
                         return
@@ -444,9 +438,22 @@ class LifxProtocol:
                                 device.discover_capabilities()
                                 self.devices[serial_hex] = device
                                 
-                                # Map to appropriate Hue model
+                                # Map to appropriate Hue model and add gradient capabilities
+                                protocol_cfg = {
+                                    'mac': serial_hex,
+                                    'ip': ip,
+                                    'port': device_port,
+                                    'capabilities': device.capabilities
+                                }
+                                
                                 if device.capabilities['type'] in ['multizone', 'matrix']:
                                     modelid = 'LCX004'  # Gradient capable
+                                    # Add points_capable for gradient devices
+                                    if device.capabilities['type'] == 'multizone':
+                                        protocol_cfg['points_capable'] = min(device.capabilities.get('zone_count', 8), 16)
+                                    else:  # matrix
+                                        tile_count = device.capabilities.get('tile_count', len(device.capabilities.get('tiles', [])))
+                                        protocol_cfg['points_capable'] = min(tile_count * 4, 16)
                                 elif device.capabilities.get('color', True):
                                     modelid = 'LCT015'  # Color bulb
                                 else:
@@ -456,12 +463,7 @@ class LifxProtocol:
                                     'protocol': 'lifx',
                                     'name': device.label,
                                     'modelid': modelid,
-                                    'protocol_cfg': {
-                                        'mac': serial_hex,
-                                        'ip': ip,
-                                        'port': device_port,
-                                        'capabilities': device.capabilities
-                                    }
+                                    'protocol_cfg': protocol_cfg
                                 })
                                 
                     except Exception as e:
@@ -539,9 +541,22 @@ class LifxProtocol:
                             device.discover_capabilities()
                             self.devices[serial_hex] = device
                             
-                            # Map to appropriate Hue model
+                            # Map to appropriate Hue model and add gradient capabilities
+                            protocol_cfg = {
+                                'mac': serial_hex,
+                                'ip': ip,
+                                'port': device_port,
+                                'capabilities': device.capabilities
+                            }
+                            
                             if device.capabilities['type'] in ['multizone', 'matrix']:
                                 modelid = 'LCX004'
+                                # Add points_capable for gradient devices
+                                if device.capabilities['type'] == 'multizone':
+                                    protocol_cfg['points_capable'] = min(device.capabilities.get('zone_count', 8), 16)
+                                else:  # matrix
+                                    tile_count = device.capabilities.get('tile_count', len(device.capabilities.get('tiles', [])))
+                                    protocol_cfg['points_capable'] = min(tile_count * 4, 16)
                             elif device.capabilities.get('color', True):
                                 modelid = 'LCT015'
                             else:
@@ -551,12 +566,7 @@ class LifxProtocol:
                                 'protocol': 'lifx',
                                 'name': device.label,
                                 'modelid': modelid,
-                                'protocol_cfg': {
-                                    'mac': serial_hex,
-                                    'ip': ip,
-                                    'port': device_port,
-                                    'capabilities': device.capabilities
-                                }
+                                'protocol_cfg': protocol_cfg
                             })
         
         logging.info(f"LIFX: Discovery complete, found {len(discovered_this_run)} new devices, {len(self.devices)} total")
