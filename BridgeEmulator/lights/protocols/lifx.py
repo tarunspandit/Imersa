@@ -240,6 +240,7 @@ class LifxDevice:
             response = self.send_packet(MSG_GET_DEVICE_CHAIN)
             if response and response['msg_type'] == MSG_STATE_DEVICE_CHAIN:
                 payload = response['payload']
+                logging.info(f"LIFX: Got StateDeviceChain response, payload length: {len(payload)}")
                 # StateDeviceChain structure (per documentation):
                 # Byte 0: start_index (uint8)
                 # Bytes 1-880: tile_devices array (16 tiles × 55 bytes each)
@@ -247,6 +248,9 @@ class LifxDevice:
                 if len(payload) >= 882:
                     start_index = payload[0]
                     tile_count = payload[881]  # Actual tile count is at byte 881, NOT byte 1
+                    
+                    logging.info(f"LIFX: StateDeviceChain - payload length: {len(payload)}, start_index: {start_index}, tile_count: {tile_count}")
+                    logging.debug(f"LIFX: First 100 bytes of payload (hex): {payload[:100].hex()}")
                     
                     tiles = []
                     offset = 1  # Tiles start at byte 1 (after start_index)
@@ -271,8 +275,16 @@ class LifxDevice:
                             width = payload[offset + 16]
                             height = payload[offset + 17]
                             
+                            # Debug: Log raw tile structure for analysis
+                            tile_bytes = payload[offset:offset + 55] if offset + 55 <= len(payload) else payload[offset:]
+                            logging.info(f"LIFX: Tile {i} raw bytes (hex): {tile_bytes.hex()}")
+                            logging.info(f"LIFX: Tile {i} - width byte at offset 16: 0x{width:02x} ({width})")
+                            logging.info(f"LIFX: Tile {i} - height byte at offset 17: 0x{height:02x} ({height})")
+                            logging.info(f"LIFX: Tile {i} - total pixels: {width * height}")
+                            
                             # Skip invalid tiles (0x0 dimensions mean no tile present)
                             if width == 0 or height == 0:
+                                logging.debug(f"LIFX: Tile {i} - skipping empty tile slot")
                                 break
                             
                             # Extract user position floats
@@ -293,11 +305,20 @@ class LifxDevice:
                             offset += 55
                             
                             # Detect device type based on dimensions
-                            # LIFX Tile is 8x8, LIFX Candle is 5x5
-                            if width == 5 and height == 5:
-                                self.capabilities['device_type'] = 'candle'
-                            else:
+                            pixels = width * height
+                            if width == 8 and height == 8:
                                 self.capabilities['device_type'] = 'tile'
+                            elif width == 5 and height == 5:
+                                self.capabilities['device_type'] = 'candle'
+                            elif width == 8 and height == 16:
+                                self.capabilities['device_type'] = 'ceiling'
+                            elif pixels == 55:  # LIFX Tube (11x5 or 5x11)
+                                self.capabilities['device_type'] = 'tube'
+                            elif pixels == 30:  # LIFX Tube variant
+                                self.capabilities['device_type'] = 'tube_mini'
+                            else:
+                                self.capabilities['device_type'] = f'matrix_{width}x{height}'
+                                logging.info(f"LIFX: Unknown matrix device with dimensions {width}x{height}")
                             
                             logging.debug(f"LIFX: Tile {i}: {width}x{height} at position ({user_x}, {user_y})")
                     
@@ -308,8 +329,10 @@ class LifxDevice:
                         self.capabilities['total_pixels'] = sum(t['width'] * t['height'] for t in tiles)
                         logging.info(f"LIFX: {self.label} is matrix with {len(tiles)} tiles, {self.capabilities['total_pixels']} total pixels")
                         return
+                else:
+                    logging.warning(f"LIFX: StateDeviceChain payload too short: {len(payload)} bytes (expected 882)")
         except Exception as e:
-            logging.debug(f"LIFX: Not matrix: {e}")
+            logging.warning(f"LIFX: Matrix detection failed: {e}")
         
         # Default to standard bulb
         self.capabilities['type'] = 'standard'
