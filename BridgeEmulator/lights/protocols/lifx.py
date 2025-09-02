@@ -647,24 +647,25 @@ class LifxProtocol:
             # Get current state as baseline
             current = device.last_state or device.get_state()
             
-            # Build HSBK values
+            # Build HSBK values - IMPORTANT: Brightness is independent of color
+            # We preserve hue and saturation when only brightness changes
+            # When color changes, we extract pure color at full brightness
+            # to get accurate hue/saturation, then apply brightness separately
             hue = current.get('hue', 0)
             sat = current.get('sat', 254)
             bri = current.get('bri', 254)
             kelvin = DEFAULT_KELVIN
             
             if 'xy' in data:
-                # Convert XY to HSV - use actual brightness, not 255!
+                # Convert XY to HSV - extract pure color at full brightness
                 x, y = data['xy']
-                # Use provided brightness, or current brightness from Light's state
-                xy_brightness = data.get('bri', light.state.get('bri', 254))
-                rgb = convert_xy(x, y, xy_brightness)
-                h, s, v = self._rgb_to_hsv(rgb[0], rgb[1], rgb[2])
+                # Get pure color without brightness scaling to preserve saturation
+                rgb_pure = convert_xy(x, y, 255)
+                h, s, v = self._rgb_to_hsv(rgb_pure[0], rgb_pure[1], rgb_pure[2])
                 hue = int(h * 65535)
                 sat = int(s * 254)
-                if 'bri' not in data:
-                    # Use the V component from the RGB conversion
-                    bri = int(v * 254)
+                # Brightness is handled independently - never derive from V
+                # This ensures color remains constant regardless of brightness level
                     
             if 'ct' in data:
                 # Convert mired to kelvin
@@ -812,14 +813,14 @@ class LifxProtocol:
                     'y': prev_xy['y'] + (next_xy['y'] - prev_xy['y']) * t
                 }
             
-            # Convert to HSBK
-            rgb = convert_xy(xy['x'], xy['y'], brightness)
-            h, s, _ = self._rgb_to_hsv(rgb[0], rgb[1], rgb[2])
+            # Convert to HSBK - extract pure color for accurate saturation
+            rgb_pure = convert_xy(xy['x'], xy['y'], 255)  # Full brightness for pure color
+            h, s, _ = self._rgb_to_hsv(rgb_pure[0], rgb_pure[1], rgb_pure[2])
             
             colors.append((
-                int(h * 65535),         # Hue
-                int(s * 65535),         # Saturation
-                int((brightness / 254) * 65535),  # Use provided brightness
+                int(h * 65535),         # Hue (unaffected by brightness)
+                int(s * 65535),         # Saturation (from pure color)
+                int((brightness / 254) * 65535),  # Brightness applied separately
                 DEFAULT_KELVIN          # Kelvin
             ))
             
@@ -901,14 +902,14 @@ class LifxProtocol:
                         'y': prev_xy['y'] + (next_xy['y'] - prev_xy['y']) * t
                     }
                 
-                # Convert to HSBK
-                rgb = convert_xy(xy['x'], xy['y'], brightness)
-                h, s, _ = self._rgb_to_hsv(rgb[0], rgb[1], rgb[2])
+                # Convert to HSBK - extract pure color for accurate saturation
+                rgb_pure = convert_xy(xy['x'], xy['y'], 255)  # Full brightness for pure color
+                h, s, _ = self._rgb_to_hsv(rgb_pure[0], rgb_pure[1], rgb_pure[2])
                 
                 colors.append((
-                    int(h * 65535),         # Hue
-                    int(s * 65535),         # Saturation
-                    int((brightness / 254) * 65535),  # Use provided brightness
+                    int(h * 65535),         # Hue (unaffected by brightness)
+                    int(s * 65535),         # Saturation (from pure color)
+                    int((brightness / 254) * 65535),  # Brightness applied separately
                     DEFAULT_KELVIN          # Kelvin
                 ))
         
