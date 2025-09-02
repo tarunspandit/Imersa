@@ -276,6 +276,9 @@ def discover(detectedLights, opts=None):
         opts = {}
     
     static_ips = opts.get("static_ips", [])
+    
+    # Check if running in Docker
+    is_docker = os.path.exists('/.dockerenv') or os.environ.get('DOCKER_CONTAINER', False)
     protocol = None
     discovered = []
     
@@ -304,19 +307,52 @@ def discover(detectedLights, opts=None):
         host_parts = HOST_IP.split('.')
         all_ips = []
         
-        # Generate IPs in configured range
-        for sub in range(rangeConfig["SUB_IP_RANGE_START"], rangeConfig["SUB_IP_RANGE_END"] + 1):
-            for addr in range(rangeConfig["IP_RANGE_START"], rangeConfig["IP_RANGE_END"] + 1):
-                ip = f"{host_parts[0]}.{host_parts[1]}.{sub}.{addr}"
-                if ip != HOST_IP:
-                    all_ips.append(ip)
-                if len(all_ips) >= 254:  # Limit scan
+        # Docker network handling
+        if is_docker:
+            logging.info("Running in Docker - adjusting discovery for container network")
+            # In Docker, we need to scan the Docker bridge network and possibly the host network
+            # Try common Docker network ranges
+            docker_ranges = [
+                ("172.17", 0, 0, 1, 255),  # Default Docker bridge
+                ("172.18", 0, 0, 1, 255),  # Custom Docker networks
+                ("192.168", 1, 1, 1, 255), # Common home network if using host mode
+            ]
+            
+            # Also scan the actual host network based on HOST_IP
+            if not HOST_IP.startswith("172."):
+                # HOST_IP is likely the real network, scan it
+                for addr in range(1, 255):
+                    ip = f"{host_parts[0]}.{host_parts[1]}.{host_parts[2]}.{addr}"
+                    if ip != HOST_IP:
+                        all_ips.append(ip)
+            
+            # Add Docker network ranges
+            for prefix, sub_start, sub_end, addr_start, addr_end in docker_ranges:
+                for sub in range(sub_start, sub_end + 1):
+                    for addr in range(addr_start, min(addr_end + 1, 256)):
+                        ip = f"{prefix}.{sub}.{addr}"
+                        if ip not in all_ips and ip != HOST_IP:
+                            all_ips.append(ip)
+                        if len(all_ips) >= 500:  # Larger limit for Docker
+                            break
+                    if len(all_ips) >= 500:
+                        break
+        else:
+            # Normal non-Docker discovery
+            # Generate IPs in configured range
+            for sub in range(rangeConfig["SUB_IP_RANGE_START"], rangeConfig["SUB_IP_RANGE_END"] + 1):
+                for addr in range(rangeConfig["IP_RANGE_START"], rangeConfig["IP_RANGE_END"] + 1):
+                    ip = f"{host_parts[0]}.{host_parts[1]}.{sub}.{addr}"
+                    if ip != HOST_IP:
+                        all_ips.append(ip)
+                    if len(all_ips) >= 254:  # Limit scan
+                        break
+                if len(all_ips) >= 254:
                     break
-            if len(all_ips) >= 254:
-                break
         
-        # Add static IPs if configured
+        # Add static IPs if configured (important for Docker)
         if static_ips:
+            logging.info(f"Adding {len(static_ips)} static IPs to discovery")
             for ip in static_ips:
                 if ':' in ip:
                     ip = ip.split(':')[0]
@@ -344,7 +380,7 @@ def discover(detectedLights, opts=None):
             logging.debug(f"Broadcast failed (expected in containers): {e}")
         
         # Listen for responses
-        discovery_timeout = 8  # Give more time for responses to find all devices
+        discovery_timeout = 10 if is_docker else 8  # More time for Docker networking
         start_time = time.time()
         responses = {}
         protocol.socket.settimeout(0.1)  # Short timeout to check more frequently
