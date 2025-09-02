@@ -448,12 +448,9 @@ class LifxProtocol:
                                 
                                 if device.capabilities['type'] in ['multizone', 'matrix']:
                                     modelid = 'LCX004'  # Gradient capable
-                                    # Add points_capable for gradient devices
-                                    if device.capabilities['type'] == 'multizone':
-                                        protocol_cfg['points_capable'] = min(device.capabilities.get('zone_count', 8), 16)
-                                    else:  # matrix
-                                        tile_count = device.capabilities.get('tile_count', len(device.capabilities.get('tiles', [])))
-                                        protocol_cfg['points_capable'] = min(tile_count * 4, 16)
+                                    # Set points_capable to 5 (Hue API limit)
+                                    # Device capabilities are preserved for proper interpolation
+                                    protocol_cfg['points_capable'] = 5
                                 elif device.capabilities.get('color', True):
                                     modelid = 'LCT015'  # Color bulb
                                 else:
@@ -551,12 +548,9 @@ class LifxProtocol:
                             
                             if device.capabilities['type'] in ['multizone', 'matrix']:
                                 modelid = 'LCX004'
-                                # Add points_capable for gradient devices
-                                if device.capabilities['type'] == 'multizone':
-                                    protocol_cfg['points_capable'] = min(device.capabilities.get('zone_count', 8), 16)
-                                else:  # matrix
-                                    tile_count = device.capabilities.get('tile_count', len(device.capabilities.get('tiles', [])))
-                                    protocol_cfg['points_capable'] = min(tile_count * 4, 16)
+                                # Set points_capable to 5 (Hue API limit)
+                                # Device capabilities are preserved for proper interpolation
+                                protocol_cfg['points_capable'] = 5
                             elif device.capabilities.get('color', True):
                                 modelid = 'LCT015'
                             else:
