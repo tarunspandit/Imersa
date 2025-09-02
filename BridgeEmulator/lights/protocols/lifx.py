@@ -11,6 +11,8 @@ import threading
 import json
 import logging as log_module
 import math
+import ipaddress
+import os
 from typing import Dict, List, Tuple, Optional, Union, Any
 from collections import defaultdict, deque
 from dataclasses import dataclass
@@ -19,6 +21,7 @@ import asyncio
 import random
 
 import logManager
+import configManager
 from functions.colors import convert_rgb_xy, convert_xy
 
 logging = logManager.logger.get_logger(__name__)
@@ -263,9 +266,46 @@ class LIFXProtocol:
             self.socket = None
 
 
-def discover(detectedLights, device_ips=None):
-    """Discover LIFX devices on the network"""
+def _get_network_ips_from_config():
+    """Get IP addresses to scan based on bridge configuration"""
+    ips = set()
+    
+    # Get bridge configuration
+    bridgeConfig = configManager.bridgeConfig.yaml_config
+    rangeConfig = bridgeConfig["config"]["IP_RANGE"]
+    HOST_IP = configManager.runtimeConfig.arg["HOST_IP"]
+    
+    # Extract network range settings
+    ip_range_start = rangeConfig["IP_RANGE_START"]
+    ip_range_end = rangeConfig["IP_RANGE_END"]
+    sub_ip_range_start = rangeConfig["SUB_IP_RANGE_START"]
+    sub_ip_range_end = rangeConfig["SUB_IP_RANGE_END"]
+    
+    # Build IP list based on configured ranges
+    host_parts = HOST_IP.split('.')
+    
+    logging.info(f"LIFX: Scanning subnet {host_parts[0]}.{host_parts[1]}.{sub_ip_range_start}-{sub_ip_range_end}.{ip_range_start}-{ip_range_end}")
+    
+    # Generate IPs within the configured range
+    for sub_addr in range(sub_ip_range_start, sub_ip_range_end + 1):
+        for addr in range(ip_range_start, ip_range_end + 1):
+            ip = f"{host_parts[0]}.{host_parts[1]}.{sub_addr}.{addr}"
+            if ip != HOST_IP:  # Skip our own IP
+                ips.add(ip)
+    
+    return list(ips)
+
+
+def discover(detectedLights, opts=None):
+    """Discover LIFX devices on the network using subnet unicast"""
     logging.info("Starting LIFX discovery...")
+    
+    # Handle options parameter
+    if opts is None:
+        opts = {}
+    
+    static_ips = opts.get("static_ips", [])
+    device_ips = opts.get("device_ips", [])
     protocol = None
     discovered = []
     
@@ -278,24 +318,91 @@ def discover(detectedLights, device_ips=None):
             logging.error(f"Failed to create LIFXProtocol: {e}")
             return
             
-        # Send discovery broadcast
-        if not hasattr(protocol, '_build_header'):
-            logging.error("LIFXProtocol missing _build_header method")
-            return
-        
         # Check if socket is available
         if not protocol.socket:
             logging.error("LIFXProtocol socket not initialized")
             return
             
         discovery_packet = protocol._build_header(MSG_GET_SERVICE, tagged=True)
-        protocol._send_packet(discovery_packet)
+        
+        # Get IPs from bridge configuration
+        all_ips = set(_get_network_ips_from_config())
+        
+        # Add static IPs if provided
+        if static_ips:
+            logging.info(f"Adding {len(static_ips)} static IP(s) to scan")
+            for ip in static_ips:
+                if ':' in ip:  # Handle IP:port format
+                    ip = ip.split(':')[0]
+                all_ips.add(ip)
+        
+        # Add device_ips if provided (from port scanning)
+        if device_ips:
+            logging.debug(f"Adding {len(device_ips)} device IP(s) from port scan")
+            for ip in device_ips:
+                if ':' in ip:  # Handle IP:port format
+                    ip = ip.split(':')[0]
+                all_ips.add(ip)
+        
+        logging.info(f"Scanning {len(all_ips)} IP addresses for LIFX devices")
+        
+        # Use threading for parallel scanning
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import queue
+        
+        def send_discovery_to_ip(ip_str):
+            """Send discovery packet to a single IP"""
+            try:
+                # Create a separate socket for this thread
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.settimeout(0.1)
+                sock.sendto(discovery_packet, (ip_str, LIFX_PORT))
+                sock.close()
+                return ip_str, True
+            except Exception as e:
+                return ip_str, False
+        
+        # Send discovery packets in parallel with rate limiting
+        max_workers = 20  # Limit concurrent threads
+        sent_count = 0
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit tasks in batches to control rate
+            batch_size = 100
+            ip_list = list(all_ips)
+            
+            for i in range(0, len(ip_list), batch_size):
+                batch = ip_list[i:i+batch_size]
+                futures = [executor.submit(send_discovery_to_ip, ip) for ip in batch]
+                
+                # Wait for batch to complete
+                for future in as_completed(futures):
+                    ip, success = future.result()
+                    if success:
+                        sent_count += 1
+                
+                # Small delay between batches to avoid network flooding
+                if i + batch_size < len(ip_list):
+                    time.sleep(0.1)
+        
+        logging.info(f"Successfully sent discovery packets to {sent_count} addresses")
+        
+        # Also try broadcast as fallback (might work in some environments)
+        try:
+            protocol._send_packet(discovery_packet)
+            logging.debug("Also sent broadcast discovery packet")
+        except Exception as e:
+            logging.debug(f"Broadcast failed (expected in container): {e}")
         
         # Listen for responses
+        discovery_timeout = 3  # 3 seconds should be enough for local network
         start_time = time.time()
         responses = {}
+        protocol.socket.settimeout(0.05)  # Very short timeout for non-blocking receive
         
-        while time.time() - start_time < 3:  # 3 second discovery window
+        logging.info(f"Listening for LIFX device responses for {discovery_timeout} seconds...")
+        
+        while time.time() - start_time < discovery_timeout:
             try:
                 data, addr = protocol.socket.recvfrom(1024)
                 parsed = protocol._parse_packet(data)
@@ -303,17 +410,22 @@ def discover(detectedLights, device_ips=None):
                 if parsed and parsed['type'] == MSG_STATE_SERVICE:
                     mac = parsed['target']
                     if mac not in responses:
+                        logging.debug(f"Got STATE_SERVICE response from {addr[0]}")
                         # Get device details
                         device = _get_device_details(protocol, addr[0], mac)
                         if device:
                             responses[mac] = device
                             discovered.append(device)
-                            logging.info(f"Discovered LIFX device: {device['name']} at {addr[0]}")
+                            logging.info(f"Discovered LIFX device: {device.get('name', 'Unknown')} at {addr[0]}")
+                        else:
+                            logging.debug(f"Failed to get details for device at {addr[0]}")
                             
             except socket.timeout:
-                continue
+                # This is expected, continue listening
+                pass
             except Exception as e:
-                logging.debug(f"Discovery receive error: {e}")
+                if "Resource temporarily unavailable" not in str(e):
+                    logging.debug(f"Discovery receive error: {e}")
                 
         # Also check specific IPs if provided
         if device_ips:
@@ -351,8 +463,11 @@ def _get_device_details(protocol: LIFXProtocol, ip: str, mac: bytes) -> Optional
     try:
         device = {
             'ip': ip,
-            'mac': mac.hex(),
-            'port': LIFX_PORT
+            'mac': mac.hex() if mac else 'unknown',
+            'port': LIFX_PORT,
+            'name': f'LIFX Device {ip}',  # Default name
+            'has_color': True,  # Assume color support by default
+            'capabilities': {'has_color': True}
         }
         
         # Get device label
@@ -367,9 +482,10 @@ def _get_device_details(protocol: LIFXProtocol, ip: str, mac: bytes) -> Optional
         state_packet = protocol._build_header(MSG_GET_COLOR, target=mac)
         protocol._send_packet(state_packet, ip)
         
-        # Collect responses
+        # Collect responses with shorter timeout for faster discovery
         start_time = time.time()
-        while time.time() - start_time < 1:
+        responses_received = 0
+        while time.time() - start_time < 0.5 and responses_received < 3:  # Shorter timeout
             try:
                 data, addr = protocol.socket.recvfrom(1024)
                 if addr[0] != ip:
@@ -381,7 +497,9 @@ def _get_device_details(protocol: LIFXProtocol, ip: str, mac: bytes) -> Optional
                     
                 if parsed['type'] == MSG_STATE_LABEL:
                     label = parsed['payload'][:32].decode('utf-8', errors='ignore').rstrip('\x00')
-                    device['name'] = label
+                    if label:  # Only update if we got a valid label
+                        device['name'] = label
+                    responses_received += 1
                     
                 elif parsed['type'] == MSG_STATE_VERSION:
                     if len(parsed['payload']) >= 12:
@@ -391,12 +509,14 @@ def _get_device_details(protocol: LIFXProtocol, ip: str, mac: bytes) -> Optional
                             device['product_id'] = product
                             device['version'] = version
                             device['capabilities'] = _get_product_capabilities(product)
+                            responses_received += 1
                         except struct.error as e:
                             logging.debug(f"Failed to parse version info: {e}")
                         
                 elif parsed['type'] == MSG_LIGHT_STATE:
                     # Device supports color
                     device['has_color'] = True
+                    responses_received += 1
                     
             except socket.timeout:
                 continue
@@ -414,8 +534,12 @@ def _get_device_details(protocol: LIFXProtocol, ip: str, mac: bytes) -> Optional
             tile_info = _get_tile_info(protocol, ip, mac)
             if tile_info:
                 device.update(tile_info)
+        
+        # Log device discovery details
+        logging.debug(f"Device details for {ip}: {device}")
                 
-        return device if 'name' in device else None
+        # Always return device since we have defaults
+        return device
         
     except Exception as e:
         logging.error(f"Failed to get device details: {e}")

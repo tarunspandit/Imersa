@@ -408,6 +408,7 @@ def discover_lights(detectedLights: List[Dict], device_ips: List[str]) -> None:
             if "max_fps" in lifx_runtime:
                 opts["max_fps"] = lifx_runtime.get("max_fps")
         opts["static_ips"] = static_ips
+        opts["device_ips"] = device_ips  # Pass the device_ips from network scan
         lifx.discover(detectedLights, opts)
     # native_multi probe all esp8266 lights with firmware from diyhue repo
     if bridgeConfig["config"]["native_multi"]["enabled"]:
