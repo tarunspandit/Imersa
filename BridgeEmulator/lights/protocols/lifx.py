@@ -150,7 +150,8 @@ class LifxDevice:
         self.packet = LifxPacket()
         
     def send_packet(self, msg_type: int, payload: bytes = b'', 
-                   ack_required: bool = False, res_required: bool = True) -> Optional[Dict]:
+                   ack_required: bool = False, res_required: bool = True,
+                   reuse_socket: Optional[socket.socket] = None) -> Optional[Dict]:
         """Send a packet to this device and optionally wait for response"""
         packet = self.packet.build_header(
             msg_type, payload, tagged=False, 
@@ -158,8 +159,14 @@ class LifxDevice:
             target=self.mac
         )
         
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(PACKET_TIMEOUT)
+        # Use provided socket or create new one
+        if reuse_socket:
+            sock = reuse_socket
+            should_close = False
+        else:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.settimeout(PACKET_TIMEOUT)
+            should_close = True
         
         try:
             sock.sendto(packet, (self.ip, self.port))
@@ -170,7 +177,8 @@ class LifxDevice:
         except Exception as e:
             logging.debug(f"LIFX: Error sending packet to {self.ip}: {e}")
         finally:
-            sock.close()
+            if should_close:
+                sock.close()
             
         return None
     
@@ -794,6 +802,8 @@ class LifxProtocol:
                 min_y = min(t.get('y', 0) for t in tiles)
                 max_y = max(t.get('y', 0) for t in tiles)
             
+            # Prepare all tiles data first
+            tile_tasks = []
             for tile in tiles:
                 width = tile.get('width', 8)
                 height = tile.get('height', 8)
@@ -822,7 +832,28 @@ class LifxProtocol:
                 if orientation != 'RightSideUp':
                     tile_colors = self._reorient_tile_colors(tile_colors, width, height, orientation)
                 
-                self._send_tile_state(device, tile['index'], tile_colors, duration_ms)
+                tile_tasks.append((tile['index'], tile_colors))
+            
+            # Send to all tiles - in parallel if multiple
+            if len(tile_tasks) > 1:
+                # Multiple tiles - send in parallel
+                def send_tile_wrapper(task_data):
+                    tile_index, colors = task_data
+                    self._send_tile_state(device, tile_index, colors, duration_ms)
+                
+                with ThreadPoolExecutor(max_workers=min(len(tile_tasks), 5)) as executor:
+                    futures = [executor.submit(send_tile_wrapper, task) for task in tile_tasks]
+                    # Wait for all to complete
+                    for future in futures:
+                        try:
+                            future.result(timeout=0.2)  # 200ms timeout
+                        except Exception as e:
+                            logging.warning(f"LIFX: Failed to send gradient to tile: {e}")
+            else:
+                # Single tile - send directly
+                if tile_tasks:
+                    tile_index, colors = tile_tasks[0]
+                    self._send_tile_state(device, tile_index, colors, duration_ms)
     
     def _interpolate_gradient(self, points: List[Dict], count: int, brightness: int = 254) -> List[Tuple[int, int, int, int]]:
         """Interpolate gradient points to specific number of colors"""
@@ -1078,9 +1109,9 @@ class LifxProtocol:
                      f"{tile_width}x{tile_height}={total_pixels} pixels, "
                      f"will need {(total_pixels + 63) // 64} Set64 message(s)")
         
-        # Send multiple Set64 messages if device has >64 pixels
+        # Build all Set64 packets first
+        packets = []
         pixels_sent = 0
-        message_count = 0
         
         while pixels_sent < total_pixels:
             # Calculate x,y offset for this chunk
@@ -1126,14 +1157,50 @@ class LifxProtocol:
                                      color[2],   # Brightness
                                      color[3])   # Kelvin
             
-            device.send_packet(MSG_SET_TILE_STATE_64, payload, ack_required=False, res_required=False)
-            
-            message_count += 1
-            logging.debug(f"LIFX: Sent SetTileState64 #{message_count} to {device.label}, "
-                         f"tile {tile_index}, x={x_offset}, y={y_offset}, "
-                         f"pixels {pixels_sent}-{chunk_end-1}")
-            
+            packets.append((MSG_SET_TILE_STATE_64, payload, x_offset, y_offset, pixels_sent, chunk_end))
             pixels_sent = chunk_end
+        
+        # Send all packets - in parallel if multiple, otherwise just send
+        if len(packets) > 1:
+            # Multiple packets - send in parallel using ThreadPoolExecutor
+            # Create a socket for each worker to avoid contention
+            sockets = []
+            for _ in range(len(packets)):
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.settimeout(0.1)
+                sockets.append(sock)
+            
+            def send_packet_wrapper(packet_data_with_socket):
+                packet_data, sock = packet_data_with_socket
+                msg_type, payload, x, y, start, end = packet_data
+                device.send_packet(msg_type, payload, ack_required=False, res_required=False, reuse_socket=sock)
+                logging.debug(f"LIFX: Sent SetTileState64 to {device.label}, "
+                            f"tile {tile_index}, x={x}, y={y}, pixels {start}-{end-1}")
+            
+            # Use ThreadPoolExecutor to send packets in parallel
+            with ThreadPoolExecutor(max_workers=len(packets)) as executor:
+                futures = [executor.submit(send_packet_wrapper, (packet, sockets[i])) 
+                          for i, packet in enumerate(packets)]
+                # Wait for all to complete
+                for future in futures:
+                    try:
+                        future.result(timeout=0.1)  # 100ms timeout
+                    except Exception as e:
+                        logging.warning(f"LIFX: Failed to send Set64 packet: {e}")
+            
+            # Clean up sockets
+            for sock in sockets:
+                try:
+                    sock.close()
+                except:
+                    pass
+        else:
+            # Single packet - send directly
+            if packets:
+                msg_type, payload, x, y, start, end = packets[0]
+                device.send_packet(msg_type, payload, ack_required=False, res_required=False)
+                logging.debug(f"LIFX: Sent SetTileState64 to {device.label}, "
+                            f"tile {tile_index}, x={x}, y={y}, pixels {start}-{end-1}")
     
     def _rgb_to_hsv(self, r: int, g: int, b: int) -> Tuple[float, float, float]:
         """Convert RGB to HSV"""
