@@ -292,6 +292,13 @@ class LifxDevice:
                             })
                             offset += 55
                             
+                            # Detect device type based on dimensions
+                            # LIFX Tile is 8x8, LIFX Candle is 5x5
+                            if width == 5 and height == 5:
+                                self.capabilities['device_type'] = 'candle'
+                            else:
+                                self.capabilities['device_type'] = 'tile'
+                            
                             logging.debug(f"LIFX: Tile {i}: {width}x{height} at position ({user_x}, {user_y})")
                     
                     if tiles:
@@ -602,10 +609,15 @@ class LifxProtocol:
                 return  # Don't send color commands when turning off
         
         # Handle gradient for capable devices
-        if 'gradient' in data and device.capabilities.get('type') in ['multizone', 'matrix']:
-            transition_time = data.get('transitiontime', 0)
-            self._set_gradient(device, data['gradient'], transition_time)
-            return
+        if 'gradient' in data:
+            device_type = device.capabilities.get('type')
+            logging.debug(f"LIFX: Gradient data received for {device.label}, device type: {device_type}")
+            if device_type in ['multizone', 'matrix']:
+                transition_time = data.get('transitiontime', 0)
+                self._set_gradient(device, data['gradient'], transition_time)
+                return
+            else:
+                logging.debug(f"LIFX: Device {device.label} type {device_type} doesn't support gradients")
         
         # Handle standard color/brightness
         if any(k in data for k in ['bri', 'xy', 'ct', 'hue', 'sat']):
@@ -667,7 +679,10 @@ class LifxProtocol:
         """Set gradient on multizone or matrix device"""
         points = gradient.get('points', [])
         if not points:
+            logging.debug(f"LIFX: No gradient points provided for {device.label}")
             return
+        
+        logging.debug(f"LIFX: Setting gradient on {device.label} with {len(points)} points, type: {device.capabilities.get('type')}")
         
         # Convert transition time from deciseconds to milliseconds
         duration_ms = transition_time * 100 if transition_time else 0
@@ -784,16 +799,30 @@ class LifxProtocol:
         for y in range(tile_height):
             for x in range(tile_width):
                 # Calculate position in overall gradient space (0.0 to 1.0)
-                # This considers the tile's position in the arrangement
+                # Note: Hue gradient API provides 1D gradient points only
+                # For 2D tiles, we map based on dominant dimension
+                
                 # Normalize pixel position within its tile (0.0 to 1.0)
                 pixel_x_normalized = x / max(1, tile_width - 1) if tile_width > 1 else 0.5
+                pixel_y_normalized = y / max(1, tile_height - 1) if tile_height > 1 else 0.5
                 
-                # Calculate absolute position in the tile arrangement
-                if total_width > 1:
-                    # tile_x is the tile's position, add normalized pixel position
+                # Determine gradient position based on tile arrangement
+                if total_width > 1 and total_height > 1:
+                    # 2D arrangement - use diagonal distance for gradient mapping
+                    absolute_x = tile_x + pixel_x_normalized
+                    absolute_y = tile_y + pixel_y_normalized
+                    # Calculate position along diagonal (0,0) to (width,height)
+                    gradient_position = (absolute_x / total_width + absolute_y / total_height) / 2
+                elif total_width > 1:
+                    # Horizontal arrangement - map based on X position
                     absolute_x = tile_x + pixel_x_normalized
                     gradient_position = absolute_x / total_width
+                elif total_height > 1:
+                    # Vertical arrangement - map based on Y position
+                    absolute_y = tile_y + pixel_y_normalized
+                    gradient_position = absolute_y / total_height
                 else:
+                    # Single tile - use horizontal gradient across tile
                     gradient_position = pixel_x_normalized
                 
                 # Clamp to valid range
@@ -978,9 +1007,10 @@ class LifxProtocol:
         # - duration (uint32): transition time in milliseconds
         # - colors (64 × HSBK): array of 64 color values
         
-        # Determine width based on tile dimensions (8x8 for Tile, 5x5 for Candle)
-        # For now default to 8, will be improved when device type detection is added
-        tile_width = 8
+        # Determine width based on device type
+        # LIFX Tile uses width=8, LIFX Candle uses width=5
+        device_type = device.capabilities.get('device_type', 'tile')
+        tile_width = 5 if device_type == 'candle' else 8
         
         payload = struct.pack('<BBBBBBBI',
                             tile_index,  # Tile index (0-based)
@@ -1000,6 +1030,7 @@ class LifxProtocol:
                                  color[3])   # Kelvin
         
         device.send_packet(MSG_SET_TILE_STATE_64, payload, ack_required=False, res_required=False)
+        logging.debug(f"LIFX: Sent SetTileState64 to {device.label}, tile {tile_index}, payload size: {len(payload)} bytes")
     
     def _rgb_to_hsv(self, r: int, g: int, b: int) -> Tuple[float, float, float]:
         """Convert RGB to HSV"""
@@ -1021,6 +1052,87 @@ class LifxProtocol:
         v = max_c
         
         return h / 360.0, s, v
+    
+    def send_rgb_rapid(self, light, r: int, g: int, b: int) -> None:
+        """Send rapid RGB update for entertainment mode (single color devices)"""
+        mac_hex = light.protocol_cfg.get('mac')
+        if not mac_hex:
+            return
+            
+        device = self.devices.get(mac_hex)
+        if not device:
+            return
+        
+        # Convert RGB to HSBK
+        h, s, v = self._rgb_to_hsv(r, g, b)
+        
+        hue_lifx = int(h * 65535)
+        sat_lifx = int(s * 65535)
+        bri_lifx = int(v * 65535)
+        kelvin = DEFAULT_KELVIN
+        
+        # Build SetColor payload with 0 duration for instant change
+        payload = struct.pack('<BHHHHI',
+                            0,             # Reserved
+                            hue_lifx,      # Hue
+                            sat_lifx,      # Saturation
+                            bri_lifx,      # Brightness
+                            kelvin,        # Kelvin
+                            0)             # Duration (0 for instant)
+        
+        device.send_packet(MSG_SET_COLOR, payload, ack_required=False, res_required=False)
+    
+    def send_rgb_zones_rapid(self, light, zone_colors: List[Tuple[int, int, int]]) -> None:
+        """Send rapid RGB zone updates for entertainment mode (multizone/matrix devices)"""
+        mac_hex = light.protocol_cfg.get('mac')
+        if not mac_hex:
+            return
+            
+        device = self.devices.get(mac_hex)
+        if not device:
+            return
+        
+        device_type = device.capabilities.get('type')
+        
+        if device_type == 'multizone':
+            # Convert RGB colors to HSBK
+            hsbk_colors = []
+            for r, g, b in zone_colors:
+                h, s, v = self._rgb_to_hsv(r, g, b)
+                hsbk_colors.append((
+                    int(h * 65535),
+                    int(s * 65535),
+                    int(v * 65535),
+                    DEFAULT_KELVIN
+                ))
+            
+            # Use extended zones for efficiency if supported
+            if device.capabilities.get('supports_extended', False):
+                self._send_extended_zones(device, hsbk_colors)
+            else:
+                # Send individual zone updates
+                for i, color in enumerate(hsbk_colors):
+                    self._send_color_zone(device, i, i, color)
+                    
+        elif device_type == 'matrix':
+            # For matrix devices, map zones to tiles
+            tiles = device.capabilities.get('tiles', [])
+            if not tiles:
+                return
+            
+            # Convert zone colors to gradient points
+            gradient_points = []
+            for i, (r, g, b) in enumerate(zone_colors):
+                # Convert RGB to XY for gradient point
+                from functions.colors import convert_rgb_xy
+                xy = convert_rgb_xy(r, g, b)
+                gradient_points.append({
+                    'color': {'xy': {'x': xy[0], 'y': xy[1]}}
+                })
+            
+            # Use existing gradient logic
+            gradient = {'points': gradient_points}
+            self._set_gradient(device, gradient, transition_time=0)
     
     def get_light_state(self, light) -> Dict:
         """Get current light state"""
