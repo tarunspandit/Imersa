@@ -414,17 +414,6 @@ def discover(detectedLights, opts=None):
             except Exception as e:
                 if "Resource temporarily unavailable" not in str(e):
                     logging.debug(f"Discovery receive error: {e}")
-                
-        # Also check specific IPs if provided
-        if device_ips:
-            for ip in device_ips:
-                try:
-                    device = _probe_device(protocol, ip)
-                    if device and device not in discovered:
-                        discovered.append(device)
-                        logging.info(f"Found LIFX device at {ip}")
-                except Exception as e:
-                    logging.debug(f"Failed to probe {ip}: {e}")
                     
         # Convert discovered devices to bridge format
         for device in discovered:
