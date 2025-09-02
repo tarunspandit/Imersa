@@ -384,7 +384,11 @@ class LifxProtocol:
             broadcast_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             broadcast_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
             broadcast_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            broadcast_sock.settimeout(0.1)  # Short timeout for non-blocking receives
+            # Bind to any available port on all interfaces - critical for receiving responses
+            broadcast_sock.bind(('', 0))
+            bound_port = broadcast_sock.getsockname()[1]
+            logging.info(f"LIFX: Discovery socket bound to port {bound_port}")
+            broadcast_sock.settimeout(0.5)  # Increased timeout for better reliability
             
             # Send multiple GetService broadcasts for reliability
             packet = packet_builder.build_header(MSG_GET_SERVICE, tagged=True)
@@ -400,7 +404,7 @@ class LifxProtocol:
             
             while time.time() < end_time:
                 # Use select to check for data without blocking
-                readable, _, _ = select.select([broadcast_sock], [], [], 0.1)
+                readable, _, _ = select.select([broadcast_sock], [], [], 0.5)
                 
                 if readable:
                     try:
