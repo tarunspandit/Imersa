@@ -595,15 +595,32 @@ class LifxProtocol:
                 mac = bytes.fromhex(mac_hex)
                 device = LifxDevice(mac, ip, light.name)
                 device.capabilities = light.protocol_cfg.get('capabilities', {})
+                # Initialize cached state from Light object to avoid network queries
+                device.last_state = {
+                    'on': light.state.get('on', False),
+                    'bri': light.state.get('bri', 254),
+                    'hue': light.state.get('hue', 0),
+                    'sat': light.state.get('sat', 0),
+                    'xy': light.state.get('xy', [0.5, 0.5]),
+                    'ct': light.state.get('ct', 366),
+                    'colormode': light.state.get('colormode', 'hs')
+                }
                 self.devices[mac_hex] = device
             else:
                 return
+        
+        # Initialize last_state if needed
+        if not device.last_state:
+            device.last_state = {}
         
         # Handle power state
         if 'on' in data:
             power = 65535 if data['on'] else 0
             payload = struct.pack('<H', power)
             device.send_packet(MSG_SET_POWER, payload, ack_required=False, res_required=False)
+            
+            # Update cached state
+            device.last_state['on'] = data['on']
             
             if not data['on']:
                 return  # Don't send color commands when turning off
@@ -614,7 +631,13 @@ class LifxProtocol:
             logging.debug(f"LIFX: Gradient data received for {device.label}, device type: {device_type}")
             if device_type in ['multizone', 'matrix']:
                 transition_time = data.get('transitiontime', 0)
-                self._set_gradient(device, data['gradient'], transition_time)
+                # Use Light's cached brightness instead of querying device
+                device_brightness = light.state.get('bri', 254)
+                self._set_gradient(device, data['gradient'], transition_time, device_brightness)
+                
+                # Update cached state
+                device.last_state['gradient'] = data['gradient']
+                device.last_state['bri'] = device_brightness
                 return
             else:
                 logging.debug(f"LIFX: Device {device.label} type {device_type} doesn't support gradients")
@@ -631,13 +654,16 @@ class LifxProtocol:
             kelvin = DEFAULT_KELVIN
             
             if 'xy' in data:
-                # Convert XY to HSV
+                # Convert XY to HSV - use actual brightness, not 255!
                 x, y = data['xy']
-                rgb = convert_xy(x, y, 255)
+                # Use provided brightness, or current brightness from Light's state
+                xy_brightness = data.get('bri', light.state.get('bri', 254))
+                rgb = convert_xy(x, y, xy_brightness)
                 h, s, v = self._rgb_to_hsv(rgb[0], rgb[1], rgb[2])
                 hue = int(h * 65535)
                 sat = int(s * 254)
                 if 'bri' not in data:
+                    # Use the V component from the RGB conversion
                     bri = int(v * 254)
                     
             if 'ct' in data:
@@ -674,22 +700,36 @@ class LifxProtocol:
                                 duration)      # Duration
             
             device.send_packet(MSG_SET_COLOR, payload, ack_required=False, res_required=False)
+            
+            # Update cached state
+            if 'bri' in data:
+                device.last_state['bri'] = data['bri']
+            if 'xy' in data:
+                device.last_state['xy'] = data['xy']
+                device.last_state['colormode'] = 'xy'
+            if 'ct' in data:
+                device.last_state['ct'] = data['ct']
+                device.last_state['colormode'] = 'ct'
+            if 'hue' in data:
+                device.last_state['hue'] = data['hue']
+                device.last_state['colormode'] = 'hs'
+            if 'sat' in data:
+                device.last_state['sat'] = data['sat']
+                device.last_state['colormode'] = 'hs'
     
-    def _set_gradient(self, device: LifxDevice, gradient: Dict, transition_time: int = 0) -> None:
+    def _set_gradient(self, device: LifxDevice, gradient: Dict, transition_time: int = 0, device_brightness: int = 254) -> None:
         """Set gradient on multizone or matrix device"""
         points = gradient.get('points', [])
         if not points:
             logging.debug(f"LIFX: No gradient points provided for {device.label}")
             return
         
-        logging.debug(f"LIFX: Setting gradient on {device.label} with {len(points)} points, type: {device.capabilities.get('type')}")
+        logging.debug(f"LIFX: Setting gradient on {device.label} with {len(points)} points, type: {device.capabilities.get('type')}, brightness: {device_brightness}")
         
         # Convert transition time from deciseconds to milliseconds
         duration_ms = transition_time * 100 if transition_time else 0
         
-        # Get current brightness for gradient (Hue gradient points don't include brightness)
-        current_state = device.last_state or device.get_state()
-        device_brightness = current_state.get('bri', 254) if current_state else 254
+        # Brightness is now passed in from Light's cached state - no network query needed!
             
         if device.capabilities['type'] == 'multizone':
             # Map gradient to zones
@@ -1190,6 +1230,16 @@ class LifxProtocol:
                 mac = bytes.fromhex(mac_hex)
                 device = LifxDevice(mac, ip, light.name)
                 device.capabilities = light.protocol_cfg.get('capabilities', {})
+                # Initialize cached state from Light object
+                device.last_state = {
+                    'on': light.state.get('on', False),
+                    'bri': light.state.get('bri', 254),
+                    'hue': light.state.get('hue', 0),
+                    'sat': light.state.get('sat', 0),
+                    'xy': light.state.get('xy', [0.5, 0.5]),
+                    'ct': light.state.get('ct', 366),
+                    'colormode': light.state.get('colormode', 'hs')
+                }
                 self.devices[mac_hex] = device
             else:
                 return {}
