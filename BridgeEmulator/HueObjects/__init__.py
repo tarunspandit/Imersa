@@ -1,6 +1,7 @@
 import uuid
 import logManager
 import random
+from concurrent.futures import ThreadPoolExecutor
 
 logging = logManager.logger.get_logger(__name__)
 
@@ -75,6 +76,8 @@ def setGroupAction(group, state, scene=None):
         group.action.update(state)
 
     queueState = {}
+    lights_to_update = []  # Collect lights for parallel update
+    
     for light in group.lights:
         if light() and light().id_v1 in lightsState:  # apply only if the light belong to this group
             for key, value in lightsState[light().id_v1].items():
@@ -101,7 +104,29 @@ def setGroupAction(group, state, scene=None):
                     queueState[light().protocol_cfg["ip"]]["lights"][light(
                     ).protocol_cfg["command_topic"]] = lightsState[light().id_v1]
             else:
-                light().setV1State(lightsState[light().id_v1])
+                # Collect for parallel update instead of immediate sequential update
+                lights_to_update.append((light(), lightsState[light().id_v1]))
+    
+    # Update all lights in parallel
+    if lights_to_update:
+        def update_light(light_and_state):
+            light, state = light_and_state
+            try:
+                light.setV1State(state)
+            except Exception as e:
+                logging.warning(f"Failed to update light {light.name}: {e}")
+        
+        # Use ThreadPoolExecutor to update all lights simultaneously
+        with ThreadPoolExecutor(max_workers=min(len(lights_to_update), 20)) as executor:
+            futures = [executor.submit(update_light, item) for item in lights_to_update]
+            # Wait for all updates to complete with timeout
+            for future in futures:
+                try:
+                    future.result(timeout=2.0)  # 2 second timeout per light
+                except Exception as e:
+                    logging.warning(f"Light update failed: {e}")
+    
+    # Handle queued states (native_multi, mqtt)
     for device, state in queueState.items():
         state["object"].setV1State(state)
 

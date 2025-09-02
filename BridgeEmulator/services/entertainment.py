@@ -1100,11 +1100,14 @@ def entertainmentService(group, user, mirror_port=None):
                             except:
                                 pass
 
-                    # LIFX zone/gradient processing
+                    # LIFX zone/gradient processing - PARALLEL
                     if lifxLights:
                         max_fps = _lifx_tuning()
                         min_interval = 1.0 / max_fps
                         now_ts = time.time()
+                        
+                        # Prepare all LIFX updates
+                        lifx_updates = []
                         
                         for key, data in lifxLights.items():
                             # Check frame rate limit
@@ -1117,65 +1120,91 @@ def entertainmentService(group, user, mirror_port=None):
                             gradient_points = data["gradient_points"]
                             zones = data["zones"]
                             
-                            try:
-                                if points_capable > 0 and gradient_points:
-                                    # Device supports zones/gradient
-                                    # Sort gradient points by ID
-                                    gradient_points.sort(key=lambda x: x["id"])
-                                    
-                                    # Build zone colors array
-                                    zone_colors = []
-                                    
-                                    # If we have multiple gradient points, interpolate between them
-                                    if len(gradient_points) > 1:
-                                        # Map gradient points to zones
-                                        for i in range(points_capable):
-                                            # Find position in gradient (0.0 to 1.0)
-                                            position = i / max(1, points_capable - 1)
-                                            
-                                            # Find surrounding gradient points
-                                            for j in range(len(gradient_points) - 1):
-                                                # Use array indices for position, not point IDs
-                                                pt1_pos = j / max(1, len(gradient_points) - 1)
-                                                pt2_pos = (j + 1) / max(1, len(gradient_points) - 1)
-                                                
-                                                if pt1_pos <= position <= pt2_pos:
-                                                    # Interpolate between these two points
-                                                    if pt2_pos - pt1_pos > 0:
-                                                        t = (position - pt1_pos) / (pt2_pos - pt1_pos)
-                                                    else:
-                                                        t = 0
-                                                    
-                                                    r1, g1, b1 = gradient_points[j]["color"]
-                                                    r2, g2, b2 = gradient_points[j + 1]["color"]
-                                                    
-                                                    r = int(r1 + (r2 - r1) * t)
-                                                    g = int(g1 + (g2 - g1) * t)
-                                                    b = int(b1 + (b2 - b1) * t)
-                                                    
-                                                    zone_colors.append((r, g, b))
-                                                    break
-                                            else:
-                                                # Use last color for remaining zones
-                                                if gradient_points:
-                                                    zone_colors.append(tuple(gradient_points[-1]["color"]))
-                                    else:
-                                        # Single gradient point - use it for all zones
-                                        color = tuple(gradient_points[0]["color"])
-                                        zone_colors = [color] * points_capable
-                                    
-                                    # Send zones to device
-                                    lifx_protocol.send_rgb_zones_rapid(light, zone_colors)
-                                    
-                                elif zones:
-                                    # Non-gradient device with single color
-                                    r, g, b = zones.get(0, [0, 0, 0])
-                                    lifx_protocol.send_rgb_rapid(light, r, g, b)
-                                    
-                                _lifx_last_send[key] = now_ts
+                            # Prepare update data
+                            update_data = {
+                                'key': key,
+                                'light': light,
+                                'points_capable': points_capable,
+                                'gradient_points': gradient_points,
+                                'zones': zones
+                            }
+                            lifx_updates.append(update_data)
+                        
+                        # Process all LIFX devices in parallel
+                        if lifx_updates:
+                            def process_lifx_device(update_data):
+                                key = update_data['key']
+                                light = update_data['light']
+                                points_capable = update_data['points_capable']
+                                gradient_points = update_data['gradient_points']
+                                zones = update_data['zones']
                                 
-                            except Exception as e:
-                                logging.debug(f"LIFX zone processing error: {e}")
+                                try:
+                                    if points_capable > 0 and gradient_points:
+                                        # Device supports zones/gradient
+                                        # Sort gradient points by ID
+                                        gradient_points.sort(key=lambda x: x["id"])
+                                        
+                                        # Build zone colors array
+                                        zone_colors = []
+                                        
+                                        # If we have multiple gradient points, interpolate between them
+                                        if len(gradient_points) > 1:
+                                            # Map gradient points to zones
+                                            for i in range(points_capable):
+                                                # Find position in gradient (0.0 to 1.0)
+                                                position = i / max(1, points_capable - 1)
+                                                
+                                                # Find surrounding gradient points
+                                                for j in range(len(gradient_points) - 1):
+                                                    # Use array indices for position, not point IDs
+                                                    pt1_pos = j / max(1, len(gradient_points) - 1)
+                                                    pt2_pos = (j + 1) / max(1, len(gradient_points) - 1)
+                                                    
+                                                    if pt1_pos <= position <= pt2_pos:
+                                                        # Interpolate between these two points
+                                                        if pt2_pos - pt1_pos > 0:
+                                                            t = (position - pt1_pos) / (pt2_pos - pt1_pos)
+                                                        else:
+                                                            t = 0
+                                                        
+                                                        r1, g1, b1 = gradient_points[j]["color"]
+                                                        r2, g2, b2 = gradient_points[j + 1]["color"]
+                                                        
+                                                        r = int(r1 + (r2 - r1) * t)
+                                                        g = int(g1 + (g2 - g1) * t)
+                                                        b = int(b1 + (b2 - b1) * t)
+                                                        
+                                                        zone_colors.append((r, g, b))
+                                                        break
+                                                else:
+                                                    # Use last color for remaining zones
+                                                    if gradient_points:
+                                                        zone_colors.append(tuple(gradient_points[-1]["color"]))
+                                        else:
+                                            # Single gradient point - use it for all zones
+                                            color = tuple(gradient_points[0]["color"])
+                                            zone_colors = [color] * points_capable
+                                        
+                                        # Send zones to device
+                                        lifx_protocol.send_rgb_zones_rapid(light, zone_colors)
+                                        
+                                    elif zones:
+                                        # Non-gradient device with single color
+                                        r, g, b = zones.get(0, [0, 0, 0])
+                                        lifx_protocol.send_rgb_rapid(light, r, g, b)
+                                        
+                                    _lifx_last_send[key] = now_ts
+                                    
+                                except Exception as e:
+                                    logging.debug(f"LIFX zone processing error for {key}: {e}")
+                            
+                            # Use ThreadPoolExecutor to send to all LIFX devices in parallel
+                            from concurrent.futures import ThreadPoolExecutor
+                            with ThreadPoolExecutor(max_workers=min(len(lifx_updates), 10)) as executor:
+                                futures = [executor.submit(process_lifx_device, data) for data in lifx_updates]
+                                # Don't wait for results in entertainment mode - keep it fast
+                                # The futures will complete in the background
 
                     # Hue lights are handled via DTLS tunnel, no need for API calls
 
