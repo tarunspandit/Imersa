@@ -191,16 +191,44 @@ class LifxDevice:
         
         # Try multizone capabilities (strips, beams, neon)
         try:
-            response = self.send_packet(MSG_GET_COLOR_ZONES, struct.pack('<BB', 0, 255))
-            if response and response['msg_type'] == MSG_STATE_ZONE:
+            # Send GetColorZones with start_index=0, end_index=255
+            payload = struct.pack('<BB', 0, 255)
+            response = self.send_packet(MSG_GET_COLOR_ZONES, payload)
+            
+            # Check for StateZone or StateMultiZone response
+            if response and response['msg_type'] in [MSG_STATE_ZONE, MSG_STATE_MULTI_ZONE]:
                 payload = response['payload']
-                if len(payload) >= 2:
+                
+                if response['msg_type'] == MSG_STATE_ZONE and len(payload) >= 14:
+                    # StateZone structure:
+                    # Byte 0: zones_count (uint8) - total number of zones
+                    # Byte 1: zone_index (uint8) - index of this zone
+                    # Bytes 2-9: HSBK (4x uint16)
+                    # Bytes 10-13: reserved
                     zone_count = payload[0]
-                    self.capabilities['type'] = 'multizone'
-                    self.capabilities['zone_count'] = zone_count
-                    self.capabilities['supports_extended'] = zone_count > 16
-                    logging.info(f"LIFX: {self.label} is multizone with {zone_count} zones")
-                    return
+                    zone_index = payload[1]
+                    
+                    if zone_count > 0:
+                        self.capabilities['type'] = 'multizone'
+                        self.capabilities['zone_count'] = zone_count
+                        self.capabilities['supports_extended'] = zone_count > 16
+                        logging.info(f"LIFX: {self.label} is multizone with {zone_count} zones")
+                        return
+                        
+                elif response['msg_type'] == MSG_STATE_MULTI_ZONE and len(payload) >= 66:
+                    # StateMultiZone structure:
+                    # Byte 0: zones_count (uint8)
+                    # Byte 1: zone_index (uint8)
+                    # Bytes 2-65: 8 HSBK values (8 * 8 bytes)
+                    zone_count = payload[0]
+                    
+                    if zone_count > 0:
+                        self.capabilities['type'] = 'multizone'
+                        self.capabilities['zone_count'] = zone_count
+                        self.capabilities['supports_extended'] = zone_count > 16
+                        logging.info(f"LIFX: {self.label} is multizone with {zone_count} zones")
+                        return
+                        
         except Exception as e:
             logging.debug(f"LIFX: Not multizone: {e}")
         
@@ -210,28 +238,45 @@ class LifxDevice:
             if response and response['msg_type'] == MSG_STATE_DEVICE_CHAIN:
                 payload = response['payload']
                 if len(payload) >= 5:
+                    start_index = payload[0]
                     total_count = payload[1]
                     
-                    # Parse tile devices
+                    # Parse tile devices - StateDeviceChain structure:
+                    # Byte 0: start_index (uint8)
+                    # Byte 1: tile_devices_count (uint8)
+                    # Bytes 2-4: reserved
+                    # Bytes 5+: array of tile devices (55 bytes each)
                     tiles = []
-                    offset = 5
+                    offset = 5  # Start after header
+                    
                     for i in range(min(total_count, 16)):  # Max 16 tiles
                         if offset + 55 <= len(payload):
-                            # Each tile entry is 55 bytes
-                            # Skip first 32 bytes (accel_meas_x, y, z, reserved, user_x, user_y)
-                            # Then get width and height at offset 48-49
-                            width = payload[offset + 48]
-                            height = payload[offset + 49]
+                            # Tile structure (55 bytes):
+                            # Bytes 0-1: accel_meas_x (int16)
+                            # Bytes 2-3: accel_meas_y (int16)
+                            # Bytes 4-5: accel_meas_z (int16)
+                            # Bytes 6-7: reserved (2 bytes)
+                            # Bytes 8-11: user_x (float32)
+                            # Bytes 12-15: user_y (float32)
+                            # Bytes 16: width (uint8)
+                            # Bytes 17: height (uint8)
+                            # Bytes 18: reserved (1 byte)
+                            # Bytes 19-50: device_version_data (32 bytes)
+                            # Bytes 51-54: firmware_build/version (4 bytes)
                             
-                            # Default to 8x8 if dimensions are 0
+                            # Extract width and height at correct offsets
+                            width = payload[offset + 16]
+                            height = payload[offset + 17]
+                            
+                            # Default to 8x8 if dimensions are 0 (common for tiles)
                             if width == 0:
                                 width = 8
                             if height == 0:
                                 height = 8
                             
-                            # User position floats
-                            user_x = struct.unpack('<f', payload[offset + 24:offset + 28])[0] if offset + 28 <= len(payload) else 0
-                            user_y = struct.unpack('<f', payload[offset + 28:offset + 32])[0] if offset + 32 <= len(payload) else 0
+                            # Extract user position floats
+                            user_x = struct.unpack('<f', payload[offset + 8:offset + 12])[0] if offset + 12 <= len(payload) else 0
+                            user_y = struct.unpack('<f', payload[offset + 12:offset + 16])[0] if offset + 16 <= len(payload) else 0
                             
                             tiles.append({
                                 'index': i,
@@ -241,6 +286,8 @@ class LifxDevice:
                                 'y': user_y
                             })
                             offset += 55
+                            
+                            logging.debug(f"LIFX: Tile {i}: {width}x{height} at position ({user_x}, {user_y})")
                     
                     if tiles:
                         self.capabilities['type'] = 'matrix'
@@ -325,90 +372,142 @@ class LifxProtocol:
     def discover(self, detectedLights: List, device_ips: List[str]) -> None:
         """Discover LIFX devices on the network"""
         logging.info("LIFX: Discovery started")
-        discovered = set()
+        discovered_this_run = set()
         packet_builder = LifxPacket()
         
-        # 1. Try broadcast discovery
+        # 1. Try broadcast discovery with dedicated socket
         try:
-            sock = self._get_socket()
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            # Create dedicated broadcast socket
+            broadcast_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            broadcast_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            broadcast_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            broadcast_sock.settimeout(0.1)  # Short timeout for non-blocking receives
             
-            # Send GetService broadcast
+            # Send multiple GetService broadcasts for reliability
             packet = packet_builder.build_header(MSG_GET_SERVICE, tagged=True)
-            sock.sendto(packet, (BROADCAST_IP, LIFX_PORT))
-            logging.debug(f"LIFX: Sent broadcast discovery to {BROADCAST_IP}:{LIFX_PORT}")
+            for retry in range(3):
+                broadcast_sock.sendto(packet, (BROADCAST_IP, LIFX_PORT))
+                logging.debug(f"LIFX: Sent broadcast discovery {retry+1}/3 to {BROADCAST_IP}:{LIFX_PORT}")
+                time.sleep(0.1)  # Small delay between broadcasts
             
-            # Collect responses
-            start = time.time()
-            while time.time() - start < DISCOVERY_TIMEOUT:
-                try:
-                    data, addr = sock.recvfrom(1024)
-                    response = packet_builder.parse_header(data)
-                    
-                    if response and response['msg_type'] == MSG_STATE_SERVICE:
-                        mac = response['target']
-                        ip = addr[0]
+            # Collect responses with non-blocking receives
+            import select
+            end_time = time.time() + DISCOVERY_TIMEOUT
+            
+            while time.time() < end_time:
+                # Use select to check for data without blocking
+                readable, _, _ = select.select([broadcast_sock], [], [], 0.1)
+                
+                if readable:
+                    try:
+                        data, addr = broadcast_sock.recvfrom(1024)
+                        response = packet_builder.parse_header(data)
                         
-                        if mac not in discovered:
-                            discovered.add(mac)
-                            logging.info(f"LIFX: Found device via broadcast at {ip}")
+                        if response and response['msg_type'] == MSG_STATE_SERVICE:
+                            # Parse StateService payload for port info
+                            payload = response['payload']
+                            device_port = LIFX_PORT
+                            if len(payload) >= 5:
+                                service_type = payload[0]
+                                device_port = struct.unpack('<I', payload[1:5])[0]
+                                logging.debug(f"LIFX: Device at {addr[0]} reports service {service_type} on port {device_port}")
                             
-                            # Create device and discover capabilities
-                            device = LifxDevice(mac, ip)
-                            device.discover_capabilities()
-                            self.devices[mac.hex()] = device
+                            serial = response['target']
+                            serial_hex = serial.hex()
+                            ip = addr[0]
                             
-                            # Map to appropriate Hue model
-                            if device.capabilities['type'] in ['multizone', 'matrix']:
-                                modelid = 'LCX004'  # Gradient capable
-                            elif device.capabilities.get('color', True):
-                                modelid = 'LCT015'  # Color bulb
-                            else:
-                                modelid = 'LTW001'  # White only
-                            
-                            detectedLights.append({
-                                'protocol': 'lifx',
-                                'name': device.label,
-                                'modelid': modelid,
-                                'protocol_cfg': {
-                                    'mac': mac.hex(),
-                                    'ip': ip,
-                                    'capabilities': device.capabilities
-                                }
-                            })
-                            
-                except socket.timeout:
-                    continue
-                except Exception as e:
-                    logging.debug(f"LIFX: Error processing broadcast response: {e}")
+                            # Check if already discovered (avoid duplicates)
+                            if serial_hex not in self.devices and serial not in discovered_this_run:
+                                discovered_this_run.add(serial)
+                                logging.info(f"LIFX: Found device via broadcast at {ip}:{device_port}")
+                                
+                                # Create device and discover capabilities
+                                device = LifxDevice(serial, ip)
+                                device.port = device_port  # Use discovered port
+                                device.discover_capabilities()
+                                self.devices[serial_hex] = device
+                                
+                                # Map to appropriate Hue model
+                                if device.capabilities['type'] in ['multizone', 'matrix']:
+                                    modelid = 'LCX004'  # Gradient capable
+                                elif device.capabilities.get('color', True):
+                                    modelid = 'LCT015'  # Color bulb
+                                else:
+                                    modelid = 'LTW001'  # White only
+                                
+                                detectedLights.append({
+                                    'protocol': 'lifx',
+                                    'name': device.label,
+                                    'modelid': modelid,
+                                    'protocol_cfg': {
+                                        'mac': serial_hex,
+                                        'ip': ip,
+                                        'port': device_port,
+                                        'capabilities': device.capabilities
+                                    }
+                                })
+                                
+                    except Exception as e:
+                        logging.debug(f"LIFX: Error processing broadcast response: {e}")
+                        continue
+                        
+            broadcast_sock.close()
                     
         except Exception as e:
             logging.debug(f"LIFX: Broadcast discovery error: {e}")
         
-        # 2. Fallback to direct IP scanning
+        # 2. Parallel IP scanning for specific IPs
         if device_ips:
             logging.info(f"LIFX: Scanning {len(device_ips)} specific IPs")
             
-            for ip in device_ips:
+            def scan_single_ip(ip: str) -> Optional[Tuple[str, Dict]]:
+                """Scan a single IP for LIFX device"""
                 try:
-                    sock = self._get_socket()
-                    packet = packet_builder.build_header(MSG_GET_SERVICE, tagged=False)
-                    sock.sendto(packet, (ip, LIFX_PORT))
+                    scan_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    scan_sock.settimeout(0.5)  # Short timeout for faster scanning
                     
-                    data, _ = sock.recvfrom(1024)
+                    packet = packet_builder.build_header(MSG_GET_SERVICE, tagged=False)
+                    scan_sock.sendto(packet, (ip, LIFX_PORT))
+                    
+                    data, _ = scan_sock.recvfrom(1024)
                     response = packet_builder.parse_header(data)
+                    scan_sock.close()
                     
                     if response and response['msg_type'] == MSG_STATE_SERVICE:
-                        mac = response['target']
+                        return (ip, response)
+                except Exception:
+                    pass
+                return None
+            
+            # Use ThreadPoolExecutor for parallel scanning
+            with ThreadPoolExecutor(max_workers=min(20, len(device_ips))) as executor:
+                futures = [executor.submit(scan_single_ip, ip) for ip in device_ips]
+                
+                for future in futures:
+                    result = future.result()
+                    if result:
+                        ip, response = result
                         
-                        if mac not in discovered:
-                            discovered.add(mac)
-                            logging.info(f"LIFX: Found device via IP scan at {ip}")
+                        # Parse StateService payload
+                        payload = response['payload']
+                        device_port = LIFX_PORT
+                        if len(payload) >= 5:
+                            service_type = payload[0]
+                            device_port = struct.unpack('<I', payload[1:5])[0]
+                        
+                        serial = response['target']
+                        serial_hex = serial.hex()
+                        
+                        # Check if already discovered
+                        if serial_hex not in self.devices and serial not in discovered_this_run:
+                            discovered_this_run.add(serial)
+                            logging.info(f"LIFX: Found device via IP scan at {ip}:{device_port}")
                             
                             # Create device and discover capabilities
-                            device = LifxDevice(mac, ip)
+                            device = LifxDevice(serial, ip)
+                            device.port = device_port
                             device.discover_capabilities()
-                            self.devices[mac.hex()] = device
+                            self.devices[serial_hex] = device
                             
                             # Map to appropriate Hue model
                             if device.capabilities['type'] in ['multizone', 'matrix']:
@@ -423,16 +522,14 @@ class LifxProtocol:
                                 'name': device.label,
                                 'modelid': modelid,
                                 'protocol_cfg': {
-                                    'mac': mac.hex(),
+                                    'mac': serial_hex,
                                     'ip': ip,
+                                    'port': device_port,
                                     'capabilities': device.capabilities
                                 }
                             })
-                            
-                except Exception as e:
-                    logging.debug(f"LIFX: Error scanning IP {ip}: {e}")
         
-        logging.info(f"LIFX: Discovery complete, found {len(discovered)} devices")
+        logging.info(f"LIFX: Discovery complete, found {len(discovered_this_run)} new devices, {len(self.devices)} total")
     
     def set_light(self, light, data: Dict) -> None:
         """Set light state based on Hue bridge commands"""
@@ -607,11 +704,42 @@ class LifxProtocol:
         return self._interpolate_gradient(points, total_pixels)
     
     def _send_extended_zones(self, device: LifxDevice, colors: List[Tuple[int, int, int, int]]) -> None:
-        """Send SetExtendedColorZones message"""
-        # This would need full implementation of extended zones protocol
-        # For now, fall back to regular zones
-        for i, color in enumerate(colors):
-            self._send_color_zone(device, i, i, color)
+        """Send SetExtendedColorZones message for efficient multizone updates"""
+        # SetExtendedColorZones can update up to 82 zones in a single message
+        duration = 0  # Immediate transition
+        apply = 1  # Apply immediately (APPLY_APPLY)
+        zone_index = 0  # Starting zone
+        
+        # Process colors in chunks of 82 (max zones per message)
+        for chunk_start in range(0, len(colors), 82):
+            chunk = colors[chunk_start:chunk_start + 82]
+            colors_count = len(chunk)
+            
+            # Build SetExtendedColorZones payload
+            # Duration (uint32) + Apply (uint8) + Zone Index (uint16) + Colors Count (uint8)
+            payload = struct.pack('<IBHB', 
+                                duration,      # Duration in ms
+                                apply,         # Apply flag
+                                chunk_start,   # Starting zone index
+                                colors_count)  # Number of colors
+            
+            # Add HSBK values for each zone
+            for color in chunk:
+                payload += struct.pack('<HHHH',
+                                     color[0],  # Hue
+                                     color[1],  # Saturation
+                                     color[2],  # Brightness
+                                     color[3])  # Kelvin
+            
+            # Pad with zeros if less than 82 zones (optional, but keeps packet size consistent)
+            while len(chunk) < 82:
+                payload += struct.pack('<HHHH', 0, 0, 0, DEFAULT_KELVIN)
+                chunk.append((0, 0, 0, DEFAULT_KELVIN))
+            
+            # Send the extended zones message
+            device.send_packet(MSG_SET_EXTENDED_COLOR_ZONES, payload, ack_required=False, res_required=False)
+            
+            logging.debug(f"LIFX: Sent extended zones update for zones {chunk_start}-{chunk_start + colors_count - 1}")
     
     def _send_color_zone(self, device: LifxDevice, start: int, end: int, color: Tuple[int, int, int, int]) -> None:
         """Send SetColorZones message"""
