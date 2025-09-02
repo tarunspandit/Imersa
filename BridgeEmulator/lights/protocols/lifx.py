@@ -787,13 +787,12 @@ class LifxProtocol:
             tiles = device.capabilities.get('tiles', [])
             
             # Calculate overall bounds for gradient mapping
+            min_x = min_y = max_x = max_y = 0
             if tiles:
                 min_x = min(t.get('x', 0) for t in tiles)
                 max_x = max(t.get('x', 0) for t in tiles)
                 min_y = min(t.get('y', 0) for t in tiles)
                 max_y = max(t.get('y', 0) for t in tiles)
-                gradient_width = max_x - min_x + 1
-                gradient_height = max_y - min_y + 1
             
             for tile in tiles:
                 width = tile.get('width', 8)
@@ -801,10 +800,21 @@ class LifxProtocol:
                 tile_x = tile.get('x', 0)
                 tile_y = tile.get('y', 0)
                 
-                # Map gradient to this tile based on its position
+                # Normalize tile position to 0-1 range
+                if max_x > min_x:
+                    tile_x_normalized = (tile_x - min_x) / (max_x - min_x)
+                else:
+                    tile_x_normalized = 0.5
+                    
+                if max_y > min_y:
+                    tile_y_normalized = (tile_y - min_y) / (max_y - min_y)
+                else:
+                    tile_y_normalized = 0.5
+                
+                # Map gradient to this tile based on its normalized position
                 tile_colors = self._map_gradient_to_tile(points, width, height, 
-                                                         tile_x, tile_y, 
-                                                         gradient_width, gradient_height,
+                                                         tile_x_normalized, tile_y_normalized, 
+                                                         len(tiles),  # Use tile count instead of width/height
                                                          device_brightness)
                 
                 # Reorient colors based on tile orientation
@@ -839,12 +849,19 @@ class LifxProtocol:
             prev_xy = prev_point.get('color', {}).get('xy', {'x': 0.5, 'y': 0.5})
             next_xy = next_point.get('color', {}).get('xy', {'x': 0.5, 'y': 0.5})
             
-            # Interpolate (simplified - could be improved)
+            # Interpolate between the two surrounding points
             if prev_point == next_point:
                 xy = prev_xy
             else:
-                # Linear interpolation
-                t = position
+                # Calculate interpolation factor between prev and next points
+                prev_pos = points.index(prev_point) / max(1, len(points) - 1)
+                next_pos = points.index(next_point) / max(1, len(points) - 1)
+                
+                if next_pos - prev_pos > 0:
+                    t = (position - prev_pos) / (next_pos - prev_pos)
+                else:
+                    t = 0
+                
                 xy = {
                     'x': prev_xy['x'] + (next_xy['x'] - prev_xy['x']) * t,
                     'y': prev_xy['y'] + (next_xy['y'] - prev_xy['y']) * t
@@ -864,10 +881,10 @@ class LifxProtocol:
         return colors
     
     def _map_gradient_to_tile(self, points: List[Dict], tile_width: int, tile_height: int,
-                              tile_x: float, tile_y: float, 
-                              total_width: float, total_height: float,
+                              tile_x_normalized: float, tile_y_normalized: float, 
+                              tile_count: int,
                               brightness: int = 254) -> List[Tuple[int, int, int, int]]:
-        """Map gradient points to a tile based on its position in the overall arrangement"""
+        """Map gradient points to a tile based on its normalized position (0-1)"""
         if not points:
             return [(0, 0, 0, DEFAULT_KELVIN)] * (tile_width * tile_height)
         
@@ -877,31 +894,19 @@ class LifxProtocol:
         for y in range(tile_height):
             for x in range(tile_width):
                 # Calculate position in overall gradient space (0.0 to 1.0)
-                # Note: Hue gradient API provides 1D gradient points only
-                # For 2D tiles, we map based on dominant dimension
+                # Hue gradients are 1D - we map them horizontally across tiles
                 
-                # Normalize pixel position within its tile (0.0 to 1.0)
-                pixel_x_normalized = x / max(1, tile_width - 1) if tile_width > 1 else 0.5
-                pixel_y_normalized = y / max(1, tile_height - 1) if tile_height > 1 else 0.5
-                
-                # Determine gradient position based on tile arrangement
-                if total_width > 1 and total_height > 1:
-                    # 2D arrangement - use diagonal distance for gradient mapping
-                    absolute_x = tile_x + pixel_x_normalized
-                    absolute_y = tile_y + pixel_y_normalized
-                    # Calculate position along diagonal (0,0) to (width,height)
-                    gradient_position = (absolute_x / total_width + absolute_y / total_height) / 2
-                elif total_width > 1:
-                    # Horizontal arrangement - map based on X position
-                    absolute_x = tile_x + pixel_x_normalized
-                    gradient_position = absolute_x / total_width
-                elif total_height > 1:
-                    # Vertical arrangement - map based on Y position
-                    absolute_y = tile_y + pixel_y_normalized
-                    gradient_position = absolute_y / total_height
+                if tile_count > 1:
+                    # Multiple tiles - gradient spans across all tiles
+                    # Tile position is already normalized (0-1), pixel adds detail within tile
+                    pixel_fraction = x / max(1, tile_width - 1) if tile_width > 1 else 0.5
+                    # Each tile gets 1/tile_count of the gradient space
+                    tile_gradient_width = 1.0 / tile_count
+                    # Position = tile's starting position + pixel position within tile's portion
+                    gradient_position = tile_x_normalized + (pixel_fraction * tile_gradient_width)
                 else:
-                    # Single tile - use horizontal gradient across tile
-                    gradient_position = pixel_x_normalized
+                    # Single tile - gradient spans across the tile horizontally
+                    gradient_position = x / max(1, tile_width - 1) if tile_width > 1 else 0.5
                 
                 # Clamp to valid range
                 position = max(0.0, min(1.0, gradient_position))
