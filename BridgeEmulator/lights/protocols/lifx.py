@@ -20,7 +20,6 @@ import asyncio
 import random
 
 import logManager
-import configManager
 from functions.colors import convert_rgb_xy, convert_xy
 
 logging = logManager.logger.get_logger(__name__)
@@ -269,6 +268,9 @@ def discover(detectedLights, opts=None):
     """Discover LIFX devices on the network using subnet unicast"""
     logging.info("Starting LIFX discovery...")
     
+    # Import configManager here to avoid circular import
+    import configManager
+    
     # Handle options parameter
     if opts is None:
         opts = {}
@@ -342,10 +344,10 @@ def discover(detectedLights, opts=None):
             logging.debug(f"Broadcast failed (expected in containers): {e}")
         
         # Listen for responses
-        discovery_timeout = 5  # Give more time for responses
+        discovery_timeout = 8  # Give more time for responses to find all devices
         start_time = time.time()
         responses = {}
-        protocol.socket.settimeout(0.5)  # Increase timeout for better reception
+        protocol.socket.settimeout(0.1)  # Short timeout to check more frequently
         
         logging.info(f"Listening for LIFX device responses for {discovery_timeout} seconds...")
         received_count = 0
@@ -363,14 +365,8 @@ def discover(detectedLights, opts=None):
                         mac = parsed['target']
                         if mac not in responses:
                             logging.info(f"Got STATE_SERVICE response from {addr[0]} (MAC: {mac.hex()})") 
-                            # Get device details
-                            device = _get_device_details(protocol, addr[0], mac)
-                            if device:
-                                responses[mac] = device
-                                discovered.append(device)
-                                logging.info(f"Discovered LIFX device: {device.get('name', 'Unknown')} at {addr[0]}")
-                            else:
-                                logging.debug(f"Failed to get details for device at {addr[0]}")
+                            # Store basic info, get details later
+                            responses[mac] = {'ip': addr[0], 'mac': mac}
                             
             except socket.timeout:
                 # This is expected, continue listening
@@ -378,6 +374,17 @@ def discover(detectedLights, opts=None):
             except Exception as e:
                 if "Resource temporarily unavailable" not in str(e):
                     logging.debug(f"Discovery receive error: {e}")
+        
+        logging.info(f"Found {len(responses)} LIFX devices, getting details...")
+        
+        # Now get details for all discovered devices
+        for mac, basic_info in responses.items():
+            device = _get_device_details(protocol, basic_info['ip'], basic_info['mac'])
+            if device:
+                discovered.append(device)
+                logging.info(f"Discovered LIFX device: {device.get('name', 'Unknown')} at {basic_info['ip']}")
+            else:
+                logging.debug(f"Failed to get details for device at {basic_info['ip']}")
                     
         # Convert discovered devices to bridge format
         for device in discovered:
@@ -426,7 +433,7 @@ def _get_device_details(protocol: LIFXProtocol, ip: str, mac: bytes) -> Optional
         # Collect responses with shorter timeout for faster discovery
         start_time = time.time()
         responses_received = 0
-        while time.time() - start_time < 0.5 and responses_received < 3:  # Shorter timeout
+        while time.time() - start_time < 0.2 and responses_received < 3:  # Very short timeout per device
             try:
                 data, addr = protocol.socket.recvfrom(1024)
                 if addr[0] != ip:
@@ -751,7 +758,7 @@ def _set_color(protocol: LIFXProtocol, ip: str, mac: bytes, light, data):
         if "xy" in data:
             # Convert xy to HSB
             x, y = data["xy"]
-            rgb = convert_xy((x, y), brightness / 257)
+            rgb = convert_xy(x, y, brightness / 257)
             hue, saturation, _ = _rgb_to_hsb(rgb[0], rgb[1], rgb[2])
             
         elif "ct" in data:
@@ -770,7 +777,7 @@ def _set_color(protocol: LIFXProtocol, ip: str, mac: bytes, light, data):
         
         # Build SetColor packet
         packet = protocol._build_header(MSG_SET_COLOR, target=mac, ack_required=False)
-        payload = struct.pack('<BHHHHHI',
+        payload = struct.pack('<BHHHHI',
             0,  # reserved
             hue, saturation, brightness, kelvin,
             duration
