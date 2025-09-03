@@ -1188,13 +1188,47 @@ def entertainmentService(group, user, mirror_port=None):
                                             color = tuple(gradient_points[0]["color"])
                                             zone_colors = [color] * points_capable
                                         
-                                        # Send zones to device
-                                        lifx_protocol.send_rgb_zones_rapid(light, zone_colors)
+                                        # Use regular set_light() with gradient data for entertainment
+                                        # Convert zone colors to gradient points format
+                                        gradient_data = {
+                                            "points": []
+                                        }
+                                        
+                                        for i, (r, g, b) in enumerate(zone_colors):
+                                            # Normalize RGB to 0-1 range for XY conversion
+                                            r_norm = r / 255.0
+                                            g_norm = g / 255.0
+                                            b_norm = b / 255.0
+                                            
+                                            # Convert to XY color space
+                                            xy = convert_rgb_xy(r_norm, g_norm, b_norm)
+                                            
+                                            gradient_data["points"].append({
+                                                "color": [r, g, b],  # Keep original for gradient processing
+                                                "xy": xy
+                                            })
+                                        
+                                        # Call set_light with gradient data and instant transition
+                                        lifx_protocol.set_light(light, {
+                                            "gradient": gradient_data,
+                                            "transitiontime": 0  # Instant update for entertainment
+                                        })
                                         
                                     elif zones:
-                                        # Non-gradient device with single color
+                                        # Non-gradient device - use regular set_light() with XY color
                                         r, g, b = zones.get(0, [0, 0, 0])
-                                        lifx_protocol.send_rgb_rapid(light, r, g, b)
+                                        
+                                        # Convert RGB to XY (normalize to 0-1 range first)
+                                        r_norm = r / 255.0
+                                        g_norm = g / 255.0
+                                        b_norm = b / 255.0
+                                        xy = convert_rgb_xy(r_norm, g_norm, b_norm)
+                                        
+                                        # Call set_light with XY color and instant transition
+                                        lifx_protocol.set_light(light, {
+                                            "xy": xy,
+                                            "transitiontime": 0  # Instant update for entertainment
+                                        })
                                         
                                     _lifx_last_send[key] = now_ts
                                     
