@@ -678,7 +678,8 @@ def entertainmentService(group, user, mirror_port=None):
                                 except Exception:
                                     pass
                                 
-                                key = light.protocol_cfg.get("id") or light.protocol_cfg.get("ip")
+                                # Use MAC address as key to match LIFX protocol's device indexing
+                                key = light.protocol_cfg.get("mac")
                                 if key:
                                     if key not in lifxLights:
                                         lifxLights[key] = {
@@ -865,7 +866,8 @@ def entertainmentService(group, user, mirror_port=None):
                                 except Exception:
                                     pass
                                 
-                                key = light.protocol_cfg.get("id") or light.protocol_cfg.get("ip")
+                                # Use MAC address as key to match LIFX protocol's device indexing
+                                key = light.protocol_cfg.get("mac")
                                 if key:
                                     if key not in lifxLights:
                                         lifxLights[key] = {

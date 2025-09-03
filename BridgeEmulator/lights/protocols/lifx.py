@@ -1403,11 +1403,37 @@ class LifxProtocol:
         """Send rapid RGB update for entertainment mode (single color devices)"""
         mac_hex = light.protocol_cfg.get('mac')
         if not mac_hex:
+            logging.debug(f"LIFX: No MAC address in protocol_cfg for rapid update")
             return
             
         device = self.devices.get(mac_hex)
         if not device:
-            return
+            # Try to recreate device from protocol_cfg
+            ip = light.protocol_cfg.get('ip')
+            if ip:
+                try:
+                    mac = bytes.fromhex(mac_hex)
+                    device = LifxDevice(mac, ip, getattr(light, 'name', 'Unknown'))
+                    device.capabilities = light.protocol_cfg.get('capabilities', {})
+                    self.devices[mac_hex] = device
+                    logging.debug(f"LIFX: Recreated device {mac_hex} for rapid update")
+                    
+                    # Create entertainment socket for this new device if in entertainment mode
+                    if self._entertainment_mode and mac_hex not in self._entertainment_sockets:
+                        try:
+                            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                            sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
+                            sock.setblocking(False)
+                            self._entertainment_sockets[mac_hex] = sock
+                        except Exception as e:
+                            logging.debug(f"LIFX: Failed to create entertainment socket: {e}")
+                except Exception as e:
+                    logging.warning(f"LIFX: Failed to recreate device for rapid update: {e}")
+                    return
+            else:
+                logging.debug(f"LIFX: Device {mac_hex} not found and cannot recreate (no IP)")
+                return
         
         # Convert RGB to HSBK
         h, s, v = self._rgb_to_hsv(r, g, b)
@@ -1446,11 +1472,37 @@ class LifxProtocol:
         """Send rapid RGB zone updates for entertainment mode (multizone/matrix devices)"""
         mac_hex = light.protocol_cfg.get('mac')
         if not mac_hex:
+            logging.debug(f"LIFX: No MAC address in protocol_cfg for zones rapid update")
             return
             
         device = self.devices.get(mac_hex)
         if not device:
-            return
+            # Try to recreate device from protocol_cfg
+            ip = light.protocol_cfg.get('ip')
+            if ip:
+                try:
+                    mac = bytes.fromhex(mac_hex)
+                    device = LifxDevice(mac, ip, getattr(light, 'name', 'Unknown'))
+                    device.capabilities = light.protocol_cfg.get('capabilities', {})
+                    self.devices[mac_hex] = device
+                    logging.debug(f"LIFX: Recreated device {mac_hex} for zones rapid update")
+                    
+                    # Create entertainment socket for this new device if in entertainment mode
+                    if self._entertainment_mode and mac_hex not in self._entertainment_sockets:
+                        try:
+                            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                            sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
+                            sock.setblocking(False)
+                            self._entertainment_sockets[mac_hex] = sock
+                        except Exception as e:
+                            logging.debug(f"LIFX: Failed to create entertainment socket: {e}")
+                except Exception as e:
+                    logging.warning(f"LIFX: Failed to recreate device for zones rapid update: {e}")
+                    return
+            else:
+                logging.debug(f"LIFX: Device {mac_hex} not found and cannot recreate (no IP)")
+                return
         
         device_type = device.capabilities.get('type')
         
@@ -1498,7 +1550,7 @@ class LifxProtocol:
             # Use existing gradient logic with entertainment socket
             gradient = {'points': gradient_points}
             # Pass brightness from light's cached state for fast updates
-            device_brightness = light.state.get('bri', 254)
+            device_brightness = getattr(light, 'state', {}).get('bri', 254)
             self._set_gradient_rapid(device, gradient, device_brightness, entertainment_sock)
     
     def get_light_state(self, light) -> Dict:
