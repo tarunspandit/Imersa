@@ -188,13 +188,28 @@ class Config:
                 for group, data in groups.items():
                     data["id_v1"] = group
                     if data["type"] == "Entertainment":
-                        self.yaml_config["groups"][group] = EntertainmentConfiguration.EntertainmentConfiguration(data)
+                        # Validate lights exist before creating Entertainment group
+                        valid_lights = []
                         for light in data["lights"]:
+                            if light in self.yaml_config["lights"]:
+                                valid_lights.append(light)
+                            else:
+                                logging.warning(f"Entertainment group '{group}' references non-existent light '{light}', removing from group")
+                        data["lights"] = valid_lights
+                        
+                        self.yaml_config["groups"][group] = EntertainmentConfiguration.EntertainmentConfiguration(data)
+                        for light in valid_lights:
                             self.yaml_config["groups"][group].add_light(self.yaml_config["lights"][light])
                         if "locations" in data:
+                            # Also validate lights in locations
+                            valid_locations = {}
                             for light, location in data["locations"].items():
-                                lightObj = self.yaml_config["lights"][light]
-                                self.yaml_config["groups"][group].locations[lightObj] = location
+                                if light in self.yaml_config["lights"]:
+                                    lightObj = self.yaml_config["lights"][light]
+                                    valid_locations[lightObj] = location
+                                else:
+                                    logging.warning(f"Entertainment group '{group}' locations references non-existent light '{light}', skipping")
+                            self.yaml_config["groups"][group].locations = valid_locations
                     else:
                         if "owner" in data and isinstance(data["owner"], dict):
                             data["owner"] = self.yaml_config["apiUsers"][list(self.yaml_config["apiUsers"])[0]]
