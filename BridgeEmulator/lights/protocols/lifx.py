@@ -1105,9 +1105,17 @@ class LifxProtocol:
         tile_height = tile_info.get('height', 8)
         total_pixels = len(colors)
         
-        # Use actual tile width for Set64 message, capped at 8
-        # SetTileState64 can only handle 8-wide grids, wider devices need multiple messages
-        width_param = min(tile_width, 8)
+        # Width parameter for Set64 message
+        # Standard tiles use width=8, but some devices might accept their actual width
+        # For Ceiling devices, we could try using actual width (10 or 12)
+        if tile_count == 1 and tile_width > 8:
+            # For single wide tiles, experiment with actual width
+            # This might allow the device to handle the full width internally
+            width_param = tile_width  # Try actual width (e.g., 10 for Ceiling)
+            logging.info(f"LIFX: Testing with width_param={width_param} for single wide tile")
+        else:
+            # Standard approach: cap at 8
+            width_param = min(tile_width, 8)
         
         # Log device tile configuration
         logging.info(f"LIFX: Device {device.label} has {len(tiles)} tile(s) in chain")
@@ -1175,24 +1183,30 @@ class LifxProtocol:
                 chunk_colors.append((0, 0, 0, DEFAULT_KELVIN))
             
             # Build Set64 packet
-            # For single wide tiles, we need special handling
+            # Handle tile indexing based on device configuration
             tile_count = len(device.capabilities.get('tiles', []))
             effective_tile_index = tile_index
             effective_x_offset = x_offset
             
-            if tile_count == 1 and tile_width > 8:
-                # Single wide tile like Ceiling 10x12
-                # The Set64 protocol may not support x_offset > 7
-                # Some devices might accept virtual tile indexing even with tile_count=1
-                if x_offset >= 8:
-                    # Try using tile_index to address the right half
-                    # This works for some LIFX devices that treat wide tiles as virtual tiles
-                    effective_tile_index = tile_index + (x_offset // 8)
-                    effective_x_offset = x_offset % 8
-                    logging.info(f"LIFX: Single wide tile - trying virtual tile_index={effective_tile_index} for x_offset={x_offset}")
+            if tile_count == 1:
+                # Single tile device (like LIFX Ceiling)
+                # CRITICAL: Never change tile_index for single-tile devices!
+                # The device only recognizes tile_index=0
+                effective_tile_index = 0  # Always use tile 0 for single-tile devices
+                
+                # Strategy for wide single tiles:
+                # First, try using x_offset as-is (some devices may support x > 7)
+                # If that doesn't work, we'll need to use overlapping regions
+                if tile_width > 8 and x_offset >= 8:
+                    # For now, try the direct approach with x_offset as-is
+                    effective_x_offset = x_offset
+                    logging.info(f"LIFX: Single wide tile ({tile_width}x{tile_height}) - "
+                               f"tile_index=0, x_offset={x_offset} (testing if device accepts x > 7)")
+                else:
+                    effective_x_offset = x_offset
             elif tile_count > 1 and x_offset > 7:
-                # Multiple tiles - use actual tile indexing
-                # This is for chains of multiple physical tiles
+                # Multiple tiles in a chain - use actual tile indexing
+                # Each tile is addressed separately
                 effective_tile_index = tile_index + (x_offset // 8)
                 effective_x_offset = x_offset % 8
                 logging.info(f"LIFX: Multiple tiles - using tile_index={effective_tile_index} with x_offset={effective_x_offset}")
@@ -1231,8 +1245,9 @@ class LifxProtocol:
                 for i, packet in enumerate(packets):
                     msg_type, payload, x, y, start, end, tile_idx = packet
                     device.send_packet(msg_type, payload, ack_required=False, res_required=False, reuse_socket=sock)
-                    logging.debug(f"LIFX: Sent SetTileState64 packet {i+1}/{len(packets)} to {device.label}, "
-                                f"tile_index={tile_idx}, x={x}, y={y}, pixels {start}-{end-1}")
+                    logging.info(f"LIFX: Sent SetTileState64 packet {i+1}/{len(packets)} to {device.label} "
+                               f"({tile_width}x{tile_height}): "
+                               f"tile_index={tile_idx}, x={x}, y={y}, pixels {start}-{end-1}")
                     
                     # Small delay between packets to ensure proper ordering (5ms)
                     if packet != packets[-1]:  # Don't delay after last packet
@@ -1249,8 +1264,8 @@ class LifxProtocol:
             if packets:
                 msg_type, payload, x, y, start, end, tile_idx = packets[0]
                 device.send_packet(msg_type, payload, ack_required=False, res_required=False)
-                logging.debug(f"LIFX: Sent SetTileState64 to {device.label}, "
-                            f"tile_index={tile_idx}, x={x}, y={y}, pixels {start}-{end-1}")
+                logging.info(f"LIFX: Sent single SetTileState64 to {device.label} ({tile_width}x{tile_height}): "
+                           f"tile_index={tile_idx}, x={x}, y={y}, pixels {start}-{end-1}")
     
     def _rgb_to_hsv(self, r: int, g: int, b: int) -> Tuple[float, float, float]:
         """Convert RGB to HSV"""
