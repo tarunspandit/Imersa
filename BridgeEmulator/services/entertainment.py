@@ -1188,60 +1188,60 @@ def entertainmentService(group, user, mirror_port=None):
                                             color = tuple(gradient_points[0]["color"])
                                             zone_colors = [color] * points_capable
                                         
-                                        # Use regular set_light() with gradient data for entertainment
-                                        # Convert zone colors to gradient points format
-                                        gradient_data = {
-                                            "points": []
-                                        }
-                                        
-                                        # Get brightness from light state (already set from stream)
-                                        current_bri = light.state.get('bri', 254)
-                                        
-                                        for i, (r, g, b) in enumerate(zone_colors):
-                                            # Normalize RGB to 0-1 range for XY conversion
-                                            r_norm = r / 255.0
-                                            g_norm = g / 255.0
-                                            b_norm = b / 255.0
-                                            
-                                            # Convert to XY color space
-                                            xy = convert_rgb_xy(r_norm, g_norm, b_norm)
-                                            
-                                            # Format gradient point exactly as _set_gradient expects
-                                            gradient_data["points"].append({
-                                                "color": {
-                                                    "xy": {
-                                                        "x": xy[0],
-                                                        "y": xy[1]
-                                                    }
-                                                }
+                                        # Prefer rapid LIFX LAN updates for entertainment
+                                        # Use device capabilities to size zones correctly
+                                        caps = light.protocol_cfg.get('capabilities', {})
+                                        if caps.get('type') == 'multizone':
+                                            zone_count = int(caps.get('zone_count', len(zone_colors)))
+                                            if zone_count > 0:
+                                                # Interpolate provided colors across actual zones if needed
+                                                if len(zone_colors) != zone_count and len(zone_colors) > 0:
+                                                    z = []
+                                                    for i in range(zone_count):
+                                                        pos = i / max(1, zone_count - 1)
+                                                        # Find surrounding points in the provided list
+                                                        idx_float = pos * (len(zone_colors) - 1)
+                                                        i0 = int(idx_float)
+                                                        i1 = min(len(zone_colors) - 1, i0 + 1)
+                                                        t = idx_float - i0
+                                                        r0, g0, b0 = zone_colors[i0]
+                                                        r1, g1, b1 = zone_colors[i1]
+                                                        r = int(r0 + (r1 - r0) * t)
+                                                        g = int(g0 + (g1 - g0) * t)
+                                                        b = int(b0 + (b1 - b0) * t)
+                                                        z.append((r, g, b))
+                                                    zone_colors = z
+                                                lifx_protocol.send_rgb_zones_rapid(light, zone_colors[:zone_count])
+                                            else:
+                                                # Fallback to a single color
+                                                if zone_colors:
+                                                    lifx_protocol.send_rgb_rapid(light, *zone_colors[0])
+                                        elif caps.get('type') == 'matrix':
+                                            # For matrix devices, use existing gradient path (tiles)
+                                            gradient_data = {"points": []}
+                                            current_bri = light.state.get('bri', 254)
+                                            for (r, g, b) in zone_colors:
+                                                r_norm = r / 255.0
+                                                g_norm = g / 255.0
+                                                b_norm = b / 255.0
+                                                xy = convert_rgb_xy(r_norm, g_norm, b_norm)
+                                                gradient_data["points"].append({
+                                                    "color": {"xy": {"x": xy[0], "y": xy[1]}}
+                                                })
+                                            lifx_protocol.set_light(light, {
+                                                "gradient": gradient_data,
+                                                "bri": current_bri,
+                                                "transitiontime": 0
                                             })
-                                        
-                                        # Call set_light with gradient data, brightness, and instant transition
-                                        lifx_protocol.set_light(light, {
-                                            "gradient": gradient_data,
-                                            "bri": current_bri,  # Pass brightness extracted from stream
-                                            "transitiontime": 0  # Instant update for entertainment
-                                        })
+                                        else:
+                                            # Basic device: use first color
+                                            if zone_colors:
+                                                lifx_protocol.send_rgb_rapid(light, *zone_colors[0])
                                         
                                     elif zones:
-                                        # Non-gradient device - use regular set_light() with XY color
+                                        # Non-gradient device - rapid single color update
                                         r, g, b = zones.get(0, [0, 0, 0])
-                                        
-                                        # Get brightness from light state (already set from stream)
-                                        current_bri = light.state.get('bri', 254)
-                                        
-                                        # Convert RGB to XY (normalize to 0-1 range first)
-                                        r_norm = r / 255.0
-                                        g_norm = g / 255.0
-                                        b_norm = b / 255.0
-                                        xy = convert_rgb_xy(r_norm, g_norm, b_norm)
-                                        
-                                        # Call set_light with XY color, brightness, and instant transition
-                                        lifx_protocol.set_light(light, {
-                                            "xy": xy,
-                                            "bri": current_bri,  # Pass brightness extracted from stream
-                                            "transitiontime": 0  # Instant update for entertainment
-                                        })
+                                        lifx_protocol.send_rgb_rapid(light, r, g, b)
                                         
                                     _lifx_last_send[key] = now_ts
                                     

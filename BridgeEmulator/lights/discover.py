@@ -248,7 +248,9 @@ def manualAddLight(ip: str, protocol: str, config: Dict = {}) -> None:
                         if dev:
                             label = dev.get_label() or f"LIFX {ip}"
                             mac = dev.get_mac_addr()
+                            # Prefer hex MAC for stable identity and rapid mode
                             config.setdefault("id", mac)
+                            config.setdefault("mac", mac)
                             config.setdefault("label", label)
                             if name == "New Light":
                                 name = label
