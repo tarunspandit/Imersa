@@ -1194,6 +1194,9 @@ def entertainmentService(group, user, mirror_port=None):
                                             "points": []
                                         }
                                         
+                                        # Get brightness from light state (already set from stream)
+                                        current_bri = light.state.get('bri', 254)
+                                        
                                         for i, (r, g, b) in enumerate(zone_colors):
                                             # Normalize RGB to 0-1 range for XY conversion
                                             r_norm = r / 255.0
@@ -1203,14 +1206,20 @@ def entertainmentService(group, user, mirror_port=None):
                                             # Convert to XY color space
                                             xy = convert_rgb_xy(r_norm, g_norm, b_norm)
                                             
+                                            # Format gradient point exactly as _set_gradient expects
                                             gradient_data["points"].append({
-                                                "color": [r, g, b],  # Keep original for gradient processing
-                                                "xy": xy
+                                                "color": {
+                                                    "xy": {
+                                                        "x": xy[0],
+                                                        "y": xy[1]
+                                                    }
+                                                }
                                             })
                                         
-                                        # Call set_light with gradient data and instant transition
+                                        # Call set_light with gradient data, brightness, and instant transition
                                         lifx_protocol.set_light(light, {
                                             "gradient": gradient_data,
+                                            "bri": current_bri,  # Pass brightness extracted from stream
                                             "transitiontime": 0  # Instant update for entertainment
                                         })
                                         
@@ -1218,15 +1227,19 @@ def entertainmentService(group, user, mirror_port=None):
                                         # Non-gradient device - use regular set_light() with XY color
                                         r, g, b = zones.get(0, [0, 0, 0])
                                         
+                                        # Get brightness from light state (already set from stream)
+                                        current_bri = light.state.get('bri', 254)
+                                        
                                         # Convert RGB to XY (normalize to 0-1 range first)
                                         r_norm = r / 255.0
                                         g_norm = g / 255.0
                                         b_norm = b / 255.0
                                         xy = convert_rgb_xy(r_norm, g_norm, b_norm)
                                         
-                                        # Call set_light with XY color and instant transition
+                                        # Call set_light with XY color, brightness, and instant transition
                                         lifx_protocol.set_light(light, {
                                             "xy": xy,
+                                            "bri": current_bri,  # Pass brightness extracted from stream
                                             "transitiontime": 0  # Instant update for entertainment
                                         })
                                         
