@@ -21,9 +21,11 @@ from functions.colors import convert_xy, convert_rgb_xy, hsv_to_rgb
 
 logging = logManager.logger.get_logger(__name__)
 
-# Compatibility shim for legacy callers that expect lifxlan presence
-# This implementation is native and does not require lifxlan
-LifxLAN = None
+# Optional lifxlan fallback: use if installed
+try:
+    import lifxlan as LifxLAN  # type: ignore
+except Exception:
+    LifxLAN = None
 
 # Message type constants
 MSG_GET_SERVICE = 2
@@ -1768,19 +1770,20 @@ class LifxProtocol:
             target=mac_bytes
         )
         
-        # Send directly using socket pool
+        # Send directly using socket pool; on error, optionally fallback to lifxlan
         try:
             self._rapid_socket_pool[ip].sendto(packet, (ip, LIFX_PORT))
             self.metrics.record_send(mac_hex)  # Track successful send
+            return
         except Exception as e:
             self.metrics.record_error(mac_hex)  # Track error
             # Try to recreate socket on error
             logging.debug(f"LIFX: Send failed to {ip}, recreating socket: {e}")
             try:
                 self._rapid_socket_pool[ip].close()
-            except:
+            except Exception:
                 pass
-            del self._rapid_socket_pool[ip]
+            self._rapid_socket_pool.pop(ip, None)
             # Try once more with new socket
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -1789,9 +1792,23 @@ class LifxProtocol:
                 self._rapid_socket_pool[ip] = sock
                 self._rapid_socket_pool[ip].sendto(packet, (ip, LIFX_PORT))
                 self.metrics.record_send(mac_hex)  # Track retry success
-            except Exception as e2:
+                return
+            except Exception:
                 self.metrics.record_error(mac_hex)  # Track retry error
-                logging.warning(f"LIFX: Failed to send rapid update to {ip}: {e2}")
+        
+        # Fallback: use lifxlan if available
+        try:
+            if LifxLAN is not None:
+                mac = mac_hex
+                if len(mac) == 12:
+                    mac = ":".join(mac[i:i+2] for i in range(0, 12, 2))
+                light_obj = LifxLAN.Light(mac, ip, port=LIFX_PORT)
+                h, s, v = self._rgb_to_hsv(r, g, b)
+                color = (int(h * 65535), int(s * 65535), int(v * 65535), DEFAULT_KELVIN)
+                light_obj.set_color(color, duration=0, rapid=True)
+                logging.debug(f"LIFX: lifxlan fallback set_color sent to {ip}")
+        except Exception as e3:
+            logging.debug(f"LIFX: lifxlan fallback failed for {ip}: {e3}")
     
     def send_rgb_zones_rapid(self, light, zone_colors: List[Tuple[int, int, int]]) -> None:
         """Send rapid RGB zone updates (WLED pattern - simplified)"""
@@ -1912,6 +1929,20 @@ class LifxProtocol:
             # Full gradient support would require more complex tile mapping
             if zone_colors:
                 self.send_rgb_rapid(light, *zone_colors[0])
+        else:
+            # Fallback to lifxlan single-color if available
+            try:
+                if LifxLAN is not None and zone_colors:
+                    mac = mac_hex
+                    if len(mac) == 12:
+                        mac = ":".join(mac[i:i+2] for i in range(0, 12, 2))
+                    light_obj = LifxLAN.Light(mac, ip, port=LIFX_PORT)
+                    r, g, b = zone_colors[0]
+                    h, s, v = self._rgb_to_hsv(r, g, b)
+                    color = (int(h * 65535), int(s * 65535), int(v * 65535), DEFAULT_KELVIN)
+                    light_obj.set_color(color, duration=0, rapid=True)
+            except Exception:
+                pass
     
     def get_light_state(self, light) -> Dict:
         """Get current light state"""

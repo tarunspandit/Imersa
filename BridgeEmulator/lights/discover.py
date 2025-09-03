@@ -239,26 +239,22 @@ def manualAddLight(ip: str, protocol: str, config: Dict = {}) -> None:
         if protocol == "lifx":
             try:
                 from lights.protocols import lifx as lifx_protocol
-                if lifx_protocol.LifxLAN is None:
-                    logging.info(f"Manual add proceeding without lifxlan for {ip}")
-                else:
-                    # Try to resolve via unicast helper
-                    try:
-                        dev = lifx_protocol._unicast_discover_by_ip(ip)
-                        if dev:
-                            label = dev.get_label() or f"LIFX {ip}"
-                            mac = dev.get_mac_addr()
-                            # Prefer hex MAC for stable identity and rapid mode
-                            config.setdefault("id", mac)
-                            config.setdefault("mac", mac)
-                            config.setdefault("label", label)
-                            if name == "New Light":
-                                name = label
-                    except Exception as e2:
-                        logging.info(f"Manual add (lifxlan resolve) failed for {ip}: {e2}")
+                # Try to resolve via unicast helper regardless of lifxlan availability
+                try:
+                    dev = lifx_protocol._unicast_discover_by_ip(ip)
+                    if dev:
+                        label = dev.get_label() or f"LIFX {ip}"
+                        mac = dev.get_mac_addr()
+                        # Prefer hex MAC for stable identity and rapid mode
+                        config.setdefault("id", mac)
+                        config.setdefault("mac", mac)
+                        config.setdefault("label", label)
+                        if name == "New Light":
+                            name = label
+                except Exception as e2:
+                    logging.info(f"Manual add (unicast resolve) failed for {ip}: {e2}")
                 # Ensure an identifier exists to avoid duplicates; fallback to IP as id
                 config.setdefault("id", ip)
-                # Proceed to add even if unverified; control may resolve at runtime
             except Exception as e:
                 logging.info(f"Manual add lifx handler error for {ip}: {e}")
         addNewLight(modelid, name, protocol, config)
