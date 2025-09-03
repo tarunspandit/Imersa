@@ -14,6 +14,7 @@ import logging
 from threading import Lock
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Tuple, Optional, Any
+from collections import deque, defaultdict
 
 import logManager
 from functions.colors import convert_xy, convert_rgb_xy, hsv_to_rgb
@@ -30,6 +31,8 @@ MSG_GET_VERSION = 32
 MSG_STATE_VERSION = 33
 MSG_GET_COLOR = 101
 MSG_SET_COLOR = 102
+MSG_SET_WAVEFORM = 103
+MSG_SET_WAVEFORM_OPTIONAL = 119
 MSG_LIGHT_STATE = 107
 MSG_SET_COLOR_ZONES = 501
 MSG_GET_COLOR_ZONES = 502
@@ -49,6 +52,131 @@ DISCOVERY_TIMEOUT = 3
 PACKET_TIMEOUT = 2
 MAX_ZONES = 82
 DEFAULT_KELVIN = 3500
+MAX_MESSAGES_PER_SECOND = 20  # LIFX official rate limit
+
+# Waveform types (for SetWaveform)
+WAVEFORM_SAW = 0
+WAVEFORM_SINE = 1
+WAVEFORM_HALF_SINE = 2
+WAVEFORM_TRIANGLE = 3
+WAVEFORM_PULSE = 4
+
+
+class DeviceRateLimiter:
+    """Enforce LIFX 20 msg/sec per device limit to prevent protocol violations"""
+    
+    def __init__(self, max_rate: int = MAX_MESSAGES_PER_SECOND):
+        self.max_rate = max_rate
+        self.device_timers = defaultdict(deque)  # MAC -> deque of timestamps
+        self.lock = Lock()
+        self.rate_limit_hits = defaultdict(int)  # Track rate limit violations
+    
+    def can_send(self, mac: str, now: float = None) -> bool:
+        """Check if we can send to device (under rate limit)
+        
+        Uses sliding window algorithm to enforce rate limit.
+        Returns True if under limit, False if we should wait.
+        """
+        if now is None:
+            now = time.time()
+        
+        with self.lock:
+            timestamps = self.device_timers[mac]
+            
+            # Remove timestamps older than 1 second
+            cutoff = now - 1.0
+            while timestamps and timestamps[0] < cutoff:
+                timestamps.popleft()
+            
+            # Check if we're under the rate limit
+            if len(timestamps) < self.max_rate:
+                timestamps.append(now)
+                return True
+            else:
+                self.rate_limit_hits[mac] += 1
+                # Log rate limit hit periodically (not every time to avoid spam)
+                if self.rate_limit_hits[mac] % 100 == 1:
+                    logging.debug(f"LIFX: Rate limit hit for {mac} ({self.rate_limit_hits[mac]} total)")
+                return False
+    
+    def get_wait_time(self, mac: str) -> float:
+        """Get time to wait before next send is allowed"""
+        with self.lock:
+            timestamps = self.device_timers[mac]
+            if not timestamps or len(timestamps) < self.max_rate:
+                return 0.0
+            
+            # Calculate when the oldest timestamp will expire
+            oldest = timestamps[0]
+            wait_time = max(0, (oldest + 1.0) - time.time())
+            return wait_time
+    
+    def reset_device(self, mac: str):
+        """Reset rate limit tracking for a device"""
+        with self.lock:
+            self.device_timers[mac].clear()
+            self.rate_limit_hits[mac] = 0
+
+
+class LifxMetrics:
+    """Track performance metrics per documentation warnings"""
+    
+    def __init__(self):
+        self.messages_sent = defaultdict(int)
+        self.messages_dropped = defaultdict(int)
+        self.rate_limit_hits = defaultdict(int)
+        self.packet_errors = defaultdict(int)
+        self.last_reset = time.time()
+        self.lock = Lock()
+    
+    def record_send(self, mac: str):
+        """Record successful message send"""
+        with self.lock:
+            self.messages_sent[mac] += 1
+    
+    def record_drop(self, mac: str):
+        """Record dropped message due to rate limit"""
+        with self.lock:
+            self.messages_dropped[mac] += 1
+            self.rate_limit_hits[mac] += 1
+    
+    def record_error(self, mac: str):
+        """Record packet send error"""
+        with self.lock:
+            self.packet_errors[mac] += 1
+    
+    def get_stats(self, mac: str = None) -> Dict:
+        """Get performance statistics"""
+        with self.lock:
+            elapsed = time.time() - self.last_reset
+            if mac:
+                return {
+                    'messages_sent': self.messages_sent[mac],
+                    'messages_dropped': self.messages_dropped[mac],
+                    'rate_limit_hits': self.rate_limit_hits[mac],
+                    'packet_errors': self.packet_errors[mac],
+                    'elapsed_seconds': elapsed,
+                    'avg_rate': self.messages_sent[mac] / elapsed if elapsed > 0 else 0
+                }
+            else:
+                # Aggregate stats
+                return {
+                    'total_messages': sum(self.messages_sent.values()),
+                    'total_dropped': sum(self.messages_dropped.values()),
+                    'total_rate_limits': sum(self.rate_limit_hits.values()),
+                    'total_errors': sum(self.packet_errors.values()),
+                    'device_count': len(self.messages_sent),
+                    'elapsed_seconds': elapsed
+                }
+    
+    def reset(self):
+        """Reset all metrics"""
+        with self.lock:
+            self.messages_sent.clear()
+            self.messages_dropped.clear()
+            self.rate_limit_hits.clear()
+            self.packet_errors.clear()
+            self.last_reset = time.time()
 
 
 class LifxPacket:
@@ -387,6 +515,51 @@ class LifxDevice:
         
         return self.last_state or {'on': False, 'bri': 0}
     
+    def send_waveform(self, waveform_type: int, color: Tuple[int, int, int, int], 
+                     period_ms: int = 1000, cycles: float = 1.0, 
+                     skew_ratio: float = 0.5, transient: bool = False) -> bool:
+        """Send native LIFX waveform effect (compliant with packet 103)
+        
+        Args:
+            waveform_type: WAVEFORM_SAW, WAVEFORM_SINE, WAVEFORM_HALF_SINE, WAVEFORM_TRIANGLE, or WAVEFORM_PULSE
+            color: HSBK tuple (hue, saturation, brightness, kelvin)
+            period_ms: Period of one cycle in milliseconds
+            cycles: Number of cycles (0 = infinite)
+            skew_ratio: 0.0-1.0, affects waveform shape (0.5 = symmetric)
+            transient: If True, returns to original color after effect
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        # Build SetWaveform payload
+        # Byte 0: Reserved
+        # Byte 1: Transient flag
+        # Bytes 2-9: HSBK
+        # Bytes 10-13: Period
+        # Bytes 14-17: Cycles (float32)
+        # Bytes 18-19: Skew ratio (int16, -32768 to 32767)
+        # Byte 20: Waveform type
+        
+        payload = struct.pack('<BB', 0, int(transient))  # Reserved + Transient
+        payload += struct.pack('<HHHH', *color)  # HSBK
+        payload += struct.pack('<I', period_ms)  # Period
+        payload += struct.pack('<f', cycles)  # Cycles as float
+        
+        # Convert skew_ratio (0.0-1.0) to int16 range
+        skew_int = int((skew_ratio - 0.5) * 65535)
+        skew_int = max(-32768, min(32767, skew_int))
+        payload += struct.pack('<h', skew_int)  # Skew ratio
+        
+        payload += struct.pack('B', waveform_type)  # Waveform type
+        
+        try:
+            response = self.send_packet(MSG_SET_WAVEFORM, payload, ack_required=False, res_required=False)
+            logging.debug(f"LIFX: Sent waveform {waveform_type} to {self.label}")
+            return True
+        except Exception as e:
+            logging.error(f"LIFX: Failed to send waveform to {self.label}: {e}")
+            return False
+    
     def _get_tile_orientation(self, accel_x: int, accel_y: int, accel_z: int) -> str:
         """Determine tile orientation from accelerometer data"""
         # If accelerometer returns (-1, -1, -1), assume right side up
@@ -420,6 +593,8 @@ class LifxProtocol:
         self._entertainment_mode = False
         self._entertainment_sockets = {}  # Device MAC -> dedicated socket for entertainment
         self._rapid_socket_pool = {}  # IP -> socket for rapid updates (WLED pattern)
+        self.rate_limiter = DeviceRateLimiter()  # Enforce 20 msg/sec limit
+        self.metrics = LifxMetrics()  # Track performance
         self._init_socket_pool()
         
     def _init_socket_pool(self):
@@ -1373,6 +1548,9 @@ class LifxProtocol:
         logging.info("LIFX: Starting entertainment mode")
         self._entertainment_mode = True
         
+        # Reset metrics for this session
+        self.metrics.reset()
+        
         # Create dedicated sockets for each device for zero-latency updates
         for mac_hex, device in self.devices.items():
             if mac_hex not in self._entertainment_sockets:
@@ -1386,11 +1564,29 @@ class LifxProtocol:
                     logging.debug(f"LIFX: Created entertainment socket for {device.label}")
                 except Exception as e:
                     logging.warning(f"LIFX: Failed to create entertainment socket for {device.label}: {e}")
+        
+        logging.info(f"LIFX: Entertainment mode started with {len(self._entertainment_sockets)} device sockets")
     
     def stop_entertainment_mode(self) -> None:
         """Stop entertainment mode and clean up resources"""
         logging.info("LIFX: Stopping entertainment mode")
         self._entertainment_mode = False
+        
+        # Log performance metrics
+        stats = self.metrics.get_stats()
+        if stats['total_messages'] > 0:
+            logging.info(f"LIFX Entertainment Performance:")
+            logging.info(f"  Total messages sent: {stats['total_messages']}")
+            logging.info(f"  Messages dropped (rate limit): {stats['total_dropped']}")
+            logging.info(f"  Packet errors: {stats['total_errors']}")
+            logging.info(f"  Device count: {stats['device_count']}")
+            logging.info(f"  Duration: {stats['elapsed_seconds']:.1f} seconds")
+            avg_rate = stats['total_messages'] / stats['elapsed_seconds'] if stats['elapsed_seconds'] > 0 else 0
+            logging.info(f"  Average rate: {avg_rate:.1f} msg/sec")
+            
+            if stats['total_dropped'] > 0:
+                drop_rate = (stats['total_dropped'] / (stats['total_messages'] + stats['total_dropped'])) * 100
+                logging.warning(f"  Drop rate: {drop_rate:.1f}% - Consider reducing update frequency")
         
         # Close and clean up entertainment sockets
         for mac_hex, sock in self._entertainment_sockets.items():
@@ -1418,6 +1614,11 @@ class LifxProtocol:
         if not ip or not mac_hex:
             logging.debug(f"LIFX: Missing IP or MAC for rapid update")
             return
+        
+        # Check rate limit (20 msg/sec per device)
+        if not self.rate_limiter.can_send(mac_hex):
+            self.metrics.record_drop(mac_hex)
+            return  # Drop packet to respect LIFX rate limit
         
         # Get or create socket for this IP (WLED pattern)
         if ip not in self._rapid_socket_pool:
@@ -1460,7 +1661,9 @@ class LifxProtocol:
         # Send directly using socket pool
         try:
             self._rapid_socket_pool[ip].sendto(packet, (ip, LIFX_PORT))
+            self.metrics.record_send(mac_hex)  # Track successful send
         except Exception as e:
+            self.metrics.record_error(mac_hex)  # Track error
             # Try to recreate socket on error
             logging.debug(f"LIFX: Send failed to {ip}, recreating socket: {e}")
             try:
@@ -1475,7 +1678,9 @@ class LifxProtocol:
                 sock.setblocking(False)
                 self._rapid_socket_pool[ip] = sock
                 self._rapid_socket_pool[ip].sendto(packet, (ip, LIFX_PORT))
+                self.metrics.record_send(mac_hex)  # Track retry success
             except Exception as e2:
+                self.metrics.record_error(mac_hex)  # Track retry error
                 logging.warning(f"LIFX: Failed to send rapid update to {ip}: {e2}")
     
     def send_rgb_zones_rapid(self, light, zone_colors: List[Tuple[int, int, int]]) -> None:
@@ -1488,6 +1693,11 @@ class LifxProtocol:
         if not ip or not mac_hex:
             logging.debug(f"LIFX: Missing IP or MAC for zones rapid update")
             return
+        
+        # Check rate limit (20 msg/sec per device)
+        if not self.rate_limiter.can_send(mac_hex):
+            self.metrics.record_drop(mac_hex)
+            return  # Drop packet to respect LIFX rate limit
         
         # Get or create socket for this IP
         if ip not in self._rapid_socket_pool:
