@@ -417,6 +417,8 @@ class LifxProtocol:
         self.socket_pool: List[socket.socket] = []
         self.lock = Lock()
         self.executor = ThreadPoolExecutor(max_workers=10)
+        self._entertainment_mode = False
+        self._entertainment_sockets = {}  # Device MAC -> dedicated socket for entertainment
         self._init_socket_pool()
         
     def _init_socket_pool(self):
@@ -1086,6 +1088,98 @@ class LifxProtocol:
         
         device.send_packet(MSG_SET_COLOR_ZONES, payload, ack_required=False, res_required=False)
     
+    def _send_color_zone_rapid(self, device: LifxDevice, start: int, end: int, 
+                               color: Tuple[int, int, int, int], sock: Optional[socket.socket] = None) -> None:
+        """Send SetColorZones message with entertainment socket"""
+        duration = 0
+        apply = 1  # Apply immediately
+        
+        payload = struct.pack('<BBHHHHIB',
+                            start,      # Start index
+                            end,        # End index
+                            color[0],   # Hue
+                            color[1],   # Saturation
+                            color[2],   # Brightness
+                            color[3],   # Kelvin
+                            duration,   # Duration
+                            apply)      # Apply
+        
+        if sock:
+            packet = device.packet.build_header(
+                MSG_SET_COLOR_ZONES, payload, tagged=False,
+                ack_required=False, res_required=False,
+                target=device.mac
+            )
+            try:
+                sock.sendto(packet, (device.ip, device.port))
+            except:
+                device.send_packet(MSG_SET_COLOR_ZONES, payload, ack_required=False, res_required=False)
+        else:
+            device.send_packet(MSG_SET_COLOR_ZONES, payload, ack_required=False, res_required=False)
+    
+    def _send_extended_zones_rapid(self, device: LifxDevice, colors: List[Tuple[int, int, int, int]], 
+                                   sock: Optional[socket.socket] = None) -> None:
+        """Send SetExtendedColorZones with entertainment socket"""
+        # Process colors in chunks of 82 (max zones per message)
+        for chunk_start in range(0, len(colors), 82):
+            chunk = colors[chunk_start:chunk_start + 82]
+            colors_count = len(chunk)
+            
+            # Build SetExtendedColorZones payload
+            payload = struct.pack('<IBHB', 
+                                0,             # Duration (0 for instant)
+                                1,             # Apply immediately
+                                chunk_start,   # Starting zone index
+                                colors_count)  # Number of colors
+            
+            # Add HSBK values for each zone
+            for color in chunk:
+                payload += struct.pack('<HHHH',
+                                     color[0],  # Hue
+                                     color[1],  # Saturation
+                                     color[2],  # Brightness
+                                     color[3])  # Kelvin
+            
+            # Pad with zeros if less than 82 zones
+            while len(chunk) < 82:
+                payload += struct.pack('<HHHH', 0, 0, 0, DEFAULT_KELVIN)
+                chunk.append((0, 0, 0, DEFAULT_KELVIN))
+            
+            if sock:
+                packet = device.packet.build_header(
+                    MSG_SET_EXTENDED_COLOR_ZONES, payload, tagged=False,
+                    ack_required=False, res_required=False,
+                    target=device.mac
+                )
+                try:
+                    sock.sendto(packet, (device.ip, device.port))
+                except:
+                    device.send_packet(MSG_SET_EXTENDED_COLOR_ZONES, payload, ack_required=False, res_required=False)
+            else:
+                device.send_packet(MSG_SET_EXTENDED_COLOR_ZONES, payload, ack_required=False, res_required=False)
+    
+    def _set_gradient_rapid(self, device: LifxDevice, gradient: Dict, device_brightness: int = 254, 
+                           sock: Optional[socket.socket] = None) -> None:
+        """Set gradient with entertainment socket for fast updates"""
+        points = gradient.get('points', [])
+        if not points:
+            return
+        
+        if device.capabilities['type'] == 'multizone':
+            zone_count = device.capabilities.get('zone_count', 16)
+            colors = self._interpolate_gradient(points, zone_count, device_brightness)
+            
+            if device.capabilities.get('supports_extended', False):
+                self._send_extended_zones_rapid(device, colors, sock)
+            else:
+                for i, color in enumerate(colors):
+                    self._send_color_zone_rapid(device, i, i, color, sock)
+                    
+        elif device.capabilities['type'] == 'matrix':
+            # For matrix devices, use regular _set_gradient but with entertainment socket
+            # This is complex enough that we'll reuse the existing logic
+            self._set_gradient(device, gradient, transition_time=0, device_brightness=device_brightness)
+    
     def _send_tile_state(self, device: LifxDevice, tile_index: int, colors: List[Tuple[int, int, int, int]], duration_ms: int = 0) -> None:
         """Send SetTileState64 message(s) for devices with any number of pixels"""
         # Get actual tile dimensions from capabilities
@@ -1288,6 +1382,38 @@ class LifxProtocol:
         
         return h / 360.0, s, v
     
+    def start_entertainment_mode(self) -> None:
+        """Start entertainment mode for optimized rapid updates"""
+        logging.info("LIFX: Starting entertainment mode")
+        self._entertainment_mode = True
+        
+        # Create dedicated sockets for each device for zero-latency updates
+        for mac_hex, device in self.devices.items():
+            if mac_hex not in self._entertainment_sockets:
+                try:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    # Increase send buffer for high-frequency updates
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
+                    sock.setblocking(False)  # Non-blocking for entertainment
+                    self._entertainment_sockets[mac_hex] = sock
+                    logging.debug(f"LIFX: Created entertainment socket for {device.label}")
+                except Exception as e:
+                    logging.warning(f"LIFX: Failed to create entertainment socket for {device.label}: {e}")
+    
+    def stop_entertainment_mode(self) -> None:
+        """Stop entertainment mode and clean up resources"""
+        logging.info("LIFX: Stopping entertainment mode")
+        self._entertainment_mode = False
+        
+        # Close and clean up entertainment sockets
+        for mac_hex, sock in self._entertainment_sockets.items():
+            try:
+                sock.close()
+            except:
+                pass
+        self._entertainment_sockets.clear()
+    
     def send_rgb_rapid(self, light, r: int, g: int, b: int) -> None:
         """Send rapid RGB update for entertainment mode (single color devices)"""
         mac_hex = light.protocol_cfg.get('mac')
@@ -1315,7 +1441,21 @@ class LifxProtocol:
                             kelvin,        # Kelvin
                             0)             # Duration (0 for instant)
         
-        device.send_packet(MSG_SET_COLOR, payload, ack_required=False, res_required=False)
+        # Use entertainment socket if available for better performance
+        if self._entertainment_mode and mac_hex in self._entertainment_sockets:
+            sock = self._entertainment_sockets[mac_hex]
+            packet = device.packet.build_header(
+                MSG_SET_COLOR, payload, tagged=False,
+                ack_required=False, res_required=False,
+                target=device.mac
+            )
+            try:
+                sock.sendto(packet, (device.ip, device.port))
+            except Exception as e:
+                logging.debug(f"LIFX: Entertainment send failed, falling back: {e}")
+                device.send_packet(MSG_SET_COLOR, payload, ack_required=False, res_required=False)
+        else:
+            device.send_packet(MSG_SET_COLOR, payload, ack_required=False, res_required=False)
     
     def send_rgb_zones_rapid(self, light, zone_colors: List[Tuple[int, int, int]]) -> None:
         """Send rapid RGB zone updates for entertainment mode (multizone/matrix devices)"""
@@ -1328,6 +1468,11 @@ class LifxProtocol:
             return
         
         device_type = device.capabilities.get('type')
+        
+        # Get entertainment socket if available
+        entertainment_sock = None
+        if self._entertainment_mode and mac_hex in self._entertainment_sockets:
+            entertainment_sock = self._entertainment_sockets[mac_hex]
         
         if device_type == 'multizone':
             # Convert RGB colors to HSBK
@@ -1343,11 +1488,11 @@ class LifxProtocol:
             
             # Use extended zones for efficiency if supported
             if device.capabilities.get('supports_extended', False):
-                self._send_extended_zones(device, hsbk_colors)
+                self._send_extended_zones_rapid(device, hsbk_colors, entertainment_sock)
             else:
                 # Send individual zone updates
                 for i, color in enumerate(hsbk_colors):
-                    self._send_color_zone(device, i, i, color)
+                    self._send_color_zone_rapid(device, i, i, color, entertainment_sock)
                     
         elif device_type == 'matrix':
             # For matrix devices, map zones to tiles
@@ -1365,9 +1510,11 @@ class LifxProtocol:
                     'color': {'xy': {'x': xy[0], 'y': xy[1]}}
                 })
             
-            # Use existing gradient logic
+            # Use existing gradient logic with entertainment socket
             gradient = {'points': gradient_points}
-            self._set_gradient(device, gradient, transition_time=0)
+            # Pass brightness from light's cached state for fast updates
+            device_brightness = light.state.get('bri', 254)
+            self._set_gradient_rapid(device, gradient, device_brightness, entertainment_sock)
     
     def get_light_state(self, light) -> Dict:
         """Get current light state"""
@@ -1414,3 +1561,19 @@ def set_light(light, data):
 def get_light_state(light):
     """Get light state"""
     return _protocol.get_light_state(light)
+
+def start_entertainment_mode():
+    """Start entertainment mode for optimized rapid updates"""
+    return _protocol.start_entertainment_mode()
+
+def stop_entertainment_mode():
+    """Stop entertainment mode and clean up resources"""
+    return _protocol.stop_entertainment_mode()
+
+def send_rgb_rapid(light, r, g, b):
+    """Send rapid RGB update for entertainment mode"""
+    return _protocol.send_rgb_rapid(light, r, g, b)
+
+def send_rgb_zones_rapid(light, zone_colors):
+    """Send rapid RGB zone updates for entertainment mode"""
+    return _protocol.send_rgb_zones_rapid(light, zone_colors)
