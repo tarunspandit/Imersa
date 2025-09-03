@@ -21,6 +21,10 @@ from functions.colors import convert_xy, convert_rgb_xy, hsv_to_rgb
 
 logging = logManager.logger.get_logger(__name__)
 
+# Compatibility shim for legacy callers that expect lifxlan presence
+# This implementation is native and does not require lifxlan
+LifxLAN = None
+
 # Message type constants
 MSG_GET_SERVICE = 2
 MSG_STATE_SERVICE = 3
@@ -595,7 +599,40 @@ class LifxProtocol:
         self._rapid_socket_pool = {}  # IP -> socket for rapid updates (WLED pattern)
         self.rate_limiter = DeviceRateLimiter()  # Enforce 20 msg/sec limit
         self.metrics = LifxMetrics()  # Track performance
+        # Runtime settings updated via /lifx-settings
+        self._settings = {
+            'enabled': True,
+            'max_fps': 30,
+            'smoothing_enabled': False,
+            'smoothing_ms': 50,
+            'keepalive_interval': 45,
+            'static_ips': []
+        }
         self._init_socket_pool()
+
+    def update_entertainment_settings(self, settings: Dict[str, Any]) -> None:
+        """Update runtime settings used by the integration UI.
+
+        Currently used for:
+        - max_fps: caps frame generation rate upstream; we also use it to cap
+                   our internal per-device send rate below the LIFX 20 msg/sec limit.
+        - smoothing_* and keepalive/static_ips are stored for external use.
+        """
+        try:
+            if not isinstance(settings, dict):
+                return
+            self._settings.update({k: v for k, v in settings.items() if k in self._settings})
+
+            # Respect official 20 msg/sec limit, allow lowering below it
+            try:
+                max_fps = int(self._settings.get('max_fps', MAX_MESSAGES_PER_SECOND))
+            except Exception:
+                max_fps = MAX_MESSAGES_PER_SECOND
+            new_rate = max(1, min(MAX_MESSAGES_PER_SECOND, max_fps))
+            self.rate_limiter.max_rate = new_rate
+            logging.info(f"LIFX: Updated settings; rate limiter set to {new_rate} msg/sec")
+        except Exception as e:
+            logging.debug(f"LIFX: update_entertainment_settings error: {e}")
         
     def _init_socket_pool(self):
         """Initialize UDP socket pool for performance"""
@@ -807,6 +844,45 @@ class LifxProtocol:
                             })
         
         logging.info(f"LIFX: Discovery complete, found {len(discovered_this_run)} new devices, {len(self.devices)} total")
+
+    def _unicast_discover_by_ip(self, ip: str):
+        """Lightweight unicast resolver for manual add flows.
+
+        Returns a minimal object with get_label() and get_mac_addr() methods,
+        or None if the target did not respond.
+        """
+        try:
+            # Send GetService to target IP
+            builder = LifxPacket()
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.settimeout(0.5)
+            pkt = builder.build_header(MSG_GET_SERVICE, tagged=False)
+            sock.sendto(pkt, (ip, LIFX_PORT))
+            data, _ = sock.recvfrom(1024)
+            resp = builder.parse_header(data)
+            sock.close()
+            if not resp or resp.get('msg_type') != MSG_STATE_SERVICE:
+                return None
+
+            target = resp.get('target') or b''
+            mac_hex = target.hex()
+            # Build a temporary device to query label via LightState
+            dev = LifxDevice(target, ip)
+            state = dev.get_state() or {}
+            label = dev.label
+
+            class _MiniDev:
+                def __init__(self, mac_hex: str, label: str):
+                    self._mac = mac_hex
+                    self._label = label
+                def get_mac_addr(self):
+                    return self._mac
+                def get_label(self):
+                    return self._label
+
+            return _MiniDev(mac_hex, label)
+        except Exception:
+            return None
     
     def set_light(self, light, data: Dict) -> None:
         """Set light state based on Hue bridge commands"""
@@ -1864,3 +1940,11 @@ def send_rgb_rapid(light, r, g, b):
 def send_rgb_zones_rapid(light, zone_colors):
     """Send rapid RGB zone updates for entertainment mode"""
     return _protocol.send_rgb_zones_rapid(light, zone_colors)
+
+def update_entertainment_settings(settings: Dict[str, Any]):
+    """Update runtime LIFX settings from the UI (used by /lifx-settings)."""
+    return _protocol.update_entertainment_settings(settings)
+
+def _unicast_discover_by_ip(ip: str):
+    """Expose unicast helper for legacy manual-add code paths."""
+    return _protocol._unicast_discover_by_ip(ip)
