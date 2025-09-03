@@ -419,6 +419,7 @@ class LifxProtocol:
         self.executor = ThreadPoolExecutor(max_workers=10)
         self._entertainment_mode = False
         self._entertainment_sockets = {}  # Device MAC -> dedicated socket for entertainment
+        self._rapid_socket_pool = {}  # IP -> socket for rapid updates (WLED pattern)
         self._init_socket_pool()
         
     def _init_socket_pool(self):
@@ -1398,118 +1399,122 @@ class LifxProtocol:
             except:
                 pass
         self._entertainment_sockets.clear()
+        
+        # Close and clean up rapid socket pool (WLED pattern)
+        for ip, sock in self._rapid_socket_pool.items():
+            try:
+                sock.close()
+                logging.debug(f"LIFX: Closed rapid socket for {ip}")
+            except:
+                pass
+        self._rapid_socket_pool.clear()
     
     def send_rgb_rapid(self, light, r: int, g: int, b: int) -> None:
-        """Send rapid RGB update for entertainment mode (single color devices)"""
+        """Send rapid RGB update for entertainment mode (WLED pattern - no device dict needed)"""
+        # Get essentials from light object
+        ip = light.protocol_cfg.get('ip')
         mac_hex = light.protocol_cfg.get('mac')
-        if not mac_hex:
-            logging.debug(f"LIFX: No MAC address in protocol_cfg for rapid update")
+        
+        if not ip or not mac_hex:
+            logging.debug(f"LIFX: Missing IP or MAC for rapid update")
             return
-            
-        device = self.devices.get(mac_hex)
-        if not device:
-            # Try to recreate device from protocol_cfg
-            ip = light.protocol_cfg.get('ip')
-            if ip:
-                try:
-                    mac = bytes.fromhex(mac_hex)
-                    device = LifxDevice(mac, ip, getattr(light, 'name', 'Unknown'))
-                    device.capabilities = light.protocol_cfg.get('capabilities', {})
-                    self.devices[mac_hex] = device
-                    logging.debug(f"LIFX: Recreated device {mac_hex} for rapid update")
-                    
-                    # Create entertainment socket for this new device if in entertainment mode
-                    if self._entertainment_mode and mac_hex not in self._entertainment_sockets:
-                        try:
-                            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                            sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
-                            sock.setblocking(False)
-                            self._entertainment_sockets[mac_hex] = sock
-                        except Exception as e:
-                            logging.debug(f"LIFX: Failed to create entertainment socket: {e}")
-                except Exception as e:
-                    logging.warning(f"LIFX: Failed to recreate device for rapid update: {e}")
-                    return
-            else:
-                logging.debug(f"LIFX: Device {mac_hex} not found and cannot recreate (no IP)")
+        
+        # Get or create socket for this IP (WLED pattern)
+        if ip not in self._rapid_socket_pool:
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
+                sock.setblocking(False)
+                self._rapid_socket_pool[ip] = sock
+                logging.debug(f"LIFX: Created rapid socket for {ip}")
+            except Exception as e:
+                logging.debug(f"LIFX: Failed to create socket for {ip}: {e}")
                 return
         
         # Convert RGB to HSBK
         h, s, v = self._rgb_to_hsv(r, g, b)
         
-        hue_lifx = int(h * 65535)
-        sat_lifx = int(s * 65535)
-        bri_lifx = int(v * 65535)
-        kelvin = DEFAULT_KELVIN
-        
-        # Build SetColor payload with 0 duration for instant change
+        # Build SetColor payload
         payload = struct.pack('<BHHHHI',
-                            0,             # Reserved
-                            hue_lifx,      # Hue
-                            sat_lifx,      # Saturation
-                            bri_lifx,      # Brightness
-                            kelvin,        # Kelvin
-                            0)             # Duration (0 for instant)
+                            0,                          # Reserved
+                            int(h * 65535),            # Hue
+                            int(s * 65535),            # Saturation
+                            int(v * 65535),            # Brightness
+                            DEFAULT_KELVIN,            # Kelvin
+                            0)                         # Duration (instant)
         
-        # Use entertainment socket if available for better performance
-        if self._entertainment_mode and mac_hex in self._entertainment_sockets:
-            sock = self._entertainment_sockets[mac_hex]
-            packet = device.packet.build_header(
-                MSG_SET_COLOR, payload, tagged=False,
-                ack_required=False, res_required=False,
-                target=device.mac
-            )
-            try:
-                sock.sendto(packet, (device.ip, device.port))
-            except Exception as e:
-                logging.debug(f"LIFX: Entertainment send failed, falling back: {e}")
-                device.send_packet(MSG_SET_COLOR, payload, ack_required=False, res_required=False)
-        else:
-            device.send_packet(MSG_SET_COLOR, payload, ack_required=False, res_required=False)
-    
-    def send_rgb_zones_rapid(self, light, zone_colors: List[Tuple[int, int, int]]) -> None:
-        """Send rapid RGB zone updates for entertainment mode (multizone/matrix devices)"""
-        mac_hex = light.protocol_cfg.get('mac')
-        if not mac_hex:
-            logging.debug(f"LIFX: No MAC address in protocol_cfg for zones rapid update")
+        # Build packet using standalone builder
+        packet_builder = LifxPacket()
+        try:
+            mac_bytes = bytes.fromhex(mac_hex)
+        except Exception as e:
+            logging.debug(f"LIFX: Invalid MAC hex {mac_hex}: {e}")
             return
             
-        device = self.devices.get(mac_hex)
-        if not device:
-            # Try to recreate device from protocol_cfg
-            ip = light.protocol_cfg.get('ip')
-            if ip:
-                try:
-                    mac = bytes.fromhex(mac_hex)
-                    device = LifxDevice(mac, ip, getattr(light, 'name', 'Unknown'))
-                    device.capabilities = light.protocol_cfg.get('capabilities', {})
-                    self.devices[mac_hex] = device
-                    logging.debug(f"LIFX: Recreated device {mac_hex} for zones rapid update")
-                    
-                    # Create entertainment socket for this new device if in entertainment mode
-                    if self._entertainment_mode and mac_hex not in self._entertainment_sockets:
-                        try:
-                            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                            sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
-                            sock.setblocking(False)
-                            self._entertainment_sockets[mac_hex] = sock
-                        except Exception as e:
-                            logging.debug(f"LIFX: Failed to create entertainment socket: {e}")
-                except Exception as e:
-                    logging.warning(f"LIFX: Failed to recreate device for zones rapid update: {e}")
-                    return
-            else:
-                logging.debug(f"LIFX: Device {mac_hex} not found and cannot recreate (no IP)")
+        packet = packet_builder.build_header(
+            MSG_SET_COLOR, payload, 
+            tagged=False, ack_required=False, res_required=False,
+            target=mac_bytes
+        )
+        
+        # Send directly using socket pool
+        try:
+            self._rapid_socket_pool[ip].sendto(packet, (ip, LIFX_PORT))
+        except Exception as e:
+            # Try to recreate socket on error
+            logging.debug(f"LIFX: Send failed to {ip}, recreating socket: {e}")
+            try:
+                self._rapid_socket_pool[ip].close()
+            except:
+                pass
+            del self._rapid_socket_pool[ip]
+            # Try once more with new socket
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
+                sock.setblocking(False)
+                self._rapid_socket_pool[ip] = sock
+                self._rapid_socket_pool[ip].sendto(packet, (ip, LIFX_PORT))
+            except Exception as e2:
+                logging.warning(f"LIFX: Failed to send rapid update to {ip}: {e2}")
+    
+    def send_rgb_zones_rapid(self, light, zone_colors: List[Tuple[int, int, int]]) -> None:
+        """Send rapid RGB zone updates (WLED pattern - simplified)"""
+        # Get essentials from light object
+        ip = light.protocol_cfg.get('ip')
+        mac_hex = light.protocol_cfg.get('mac')
+        capabilities = light.protocol_cfg.get('capabilities', {})
+        
+        if not ip or not mac_hex:
+            logging.debug(f"LIFX: Missing IP or MAC for zones rapid update")
+            return
+        
+        # Get or create socket for this IP
+        if ip not in self._rapid_socket_pool:
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
+                sock.setblocking(False)
+                self._rapid_socket_pool[ip] = sock
+                logging.debug(f"LIFX: Created rapid socket for {ip}")
+            except Exception as e:
+                logging.debug(f"LIFX: Failed to create socket for {ip}: {e}")
                 return
         
-        device_type = device.capabilities.get('type')
+        # Get MAC bytes
+        try:
+            mac_bytes = bytes.fromhex(mac_hex)
+        except Exception as e:
+            logging.debug(f"LIFX: Invalid MAC hex {mac_hex}: {e}")
+            return
         
-        # Get entertainment socket if available
-        entertainment_sock = None
-        if self._entertainment_mode and mac_hex in self._entertainment_sockets:
-            entertainment_sock = self._entertainment_sockets[mac_hex]
+        device_type = capabilities.get('type', 'basic')
+        
+        # For basic devices without zones, just send first color
+        if device_type == 'basic' or not zone_colors:
+            if zone_colors:
+                self.send_rgb_rapid(light, *zone_colors[0])
+            return
         
         if device_type == 'multizone':
             # Convert RGB colors to HSBK
@@ -1523,35 +1528,70 @@ class LifxProtocol:
                     DEFAULT_KELVIN
                 ))
             
-            # Use extended zones for efficiency if supported
-            if device.capabilities.get('supports_extended', False):
-                self._send_extended_zones_rapid(device, hsbk_colors, entertainment_sock)
-            else:
-                # Send individual zone updates
-                for i, color in enumerate(hsbk_colors):
-                    self._send_color_zone_rapid(device, i, i, color, entertainment_sock)
+            # Send zones using SetExtendedColorZones if supported
+            if capabilities.get('supports_extended', False):
+                # Process in chunks of 82 zones
+                for chunk_start in range(0, len(hsbk_colors), 82):
+                    chunk = hsbk_colors[chunk_start:chunk_start + 82]
                     
+                    # Build SetExtendedColorZones payload
+                    payload = struct.pack('<IBHB', 
+                                        0,             # Duration (instant)
+                                        1,             # Apply immediately
+                                        chunk_start,   # Starting zone index
+                                        len(chunk))    # Number of colors
+                    
+                    # Add HSBK values
+                    for color in chunk:
+                        payload += struct.pack('<HHHH', *color)
+                    
+                    # Pad to 82 zones
+                    while len(chunk) < 82:
+                        payload += struct.pack('<HHHH', 0, 0, 0, DEFAULT_KELVIN)
+                        chunk.append((0, 0, 0, DEFAULT_KELVIN))
+                    
+                    # Build and send packet
+                    packet_builder = LifxPacket()
+                    packet = packet_builder.build_header(
+                        MSG_SET_EXTENDED_COLOR_ZONES, payload,
+                        tagged=False, ack_required=False, res_required=False,
+                        target=mac_bytes
+                    )
+                    
+                    try:
+                        self._rapid_socket_pool[ip].sendto(packet, (ip, LIFX_PORT))
+                    except Exception as e:
+                        logging.debug(f"LIFX: Failed to send extended zones: {e}")
+            else:
+                # Send individual zones
+                for i, color in enumerate(hsbk_colors):
+                    payload = struct.pack('<BBHHHHIB',
+                                        i,          # Start index
+                                        i,          # End index
+                                        color[0],   # Hue
+                                        color[1],   # Saturation
+                                        color[2],   # Brightness
+                                        color[3],   # Kelvin
+                                        0,          # Duration
+                                        1)          # Apply
+                    
+                    packet_builder = LifxPacket()
+                    packet = packet_builder.build_header(
+                        MSG_SET_COLOR_ZONES, payload,
+                        tagged=False, ack_required=False, res_required=False,
+                        target=mac_bytes
+                    )
+                    
+                    try:
+                        self._rapid_socket_pool[ip].sendto(packet, (ip, LIFX_PORT))
+                    except Exception as e:
+                        logging.debug(f"LIFX: Failed to send zone {i}: {e}")
+                        
         elif device_type == 'matrix':
-            # For matrix devices, map zones to tiles
-            tiles = device.capabilities.get('tiles', [])
-            if not tiles:
-                return
-            
-            # Convert zone colors to gradient points
-            gradient_points = []
-            for i, (r, g, b) in enumerate(zone_colors):
-                # Convert RGB to XY for gradient point
-                from functions.colors import convert_rgb_xy
-                xy = convert_rgb_xy(r, g, b)
-                gradient_points.append({
-                    'color': {'xy': {'x': xy[0], 'y': xy[1]}}
-                })
-            
-            # Use existing gradient logic with entertainment socket
-            gradient = {'points': gradient_points}
-            # Pass brightness from light's cached state for fast updates
-            device_brightness = getattr(light, 'state', {}).get('bri', 254)
-            self._set_gradient_rapid(device, gradient, device_brightness, entertainment_sock)
+            # For matrix devices, use first color for now (simplified)
+            # Full gradient support would require more complex tile mapping
+            if zone_colors:
+                self.send_rgb_rapid(light, *zone_colors[0])
     
     def get_light_state(self, light) -> Dict:
         """Get current light state"""
