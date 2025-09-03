@@ -168,6 +168,24 @@ def entertainmentService(group, user, mirror_port=None):
     except Exception as e:
         logging.debug(f"Could not start LIFX entertainment mode: {e}")
 
+    # Pre-resolve LIFX MAC addresses for rapid mode if missing
+    try:
+        for light_ref in group.lights:
+            try:
+                l = light_ref()
+                if l.protocol == "lifx":
+                    pcfg = l.protocol_cfg or {}
+                    if not pcfg.get("mac") and pcfg.get("ip"):
+                        dev = lifx_protocol._unicast_discover_by_ip(pcfg.get("ip"))
+                        if dev:
+                            mac = dev.get_mac_addr()
+                            l.protocol_cfg["mac"] = mac
+                            logging.info(f"LIFX: Resolved MAC {mac} for {l.name} at {pcfg.get('ip')}")
+            except Exception:
+                continue
+    except Exception:
+        pass
+
     lights_v2 = []
     lights_v1 = {}
     non_UDP_update_counter = 0
@@ -678,8 +696,8 @@ def entertainmentService(group, user, mirror_port=None):
                                 except Exception:
                                     pass
                                 
-                                # Use MAC address as key to match LIFX protocol's device indexing
-                                key = light.protocol_cfg.get("mac")
+                                # Use MAC address as key if present, else IP as a fallback
+                                key = light.protocol_cfg.get("mac") or light.protocol_cfg.get("ip")
                                 if key:
                                     if key not in lifxLights:
                                         lifxLights[key] = {

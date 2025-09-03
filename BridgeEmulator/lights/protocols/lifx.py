@@ -645,6 +645,40 @@ class LifxProtocol:
     def _get_socket(self) -> socket.socket:
         """Get a socket from the pool"""
         return self.socket_pool[random.randint(0, len(self.socket_pool) - 1)]
+
+    def _ensure_mac_for_light(self, light) -> Optional[str]:
+        """Ensure the light has a MAC stored in protocol_cfg; resolve if missing.
+
+        Returns the MAC hex string if available or resolved, else None.
+        """
+        try:
+            mac_hex = light.protocol_cfg.get('mac')
+            if mac_hex:
+                return mac_hex
+            ip = light.protocol_cfg.get('ip')
+            if not ip:
+                return None
+            resolved = self._unicast_discover_by_ip(ip)
+            if resolved:
+                mac_hex = resolved.get_mac_addr()
+                # persist to light for future frames
+                try:
+                    light.protocol_cfg['mac'] = mac_hex
+                except Exception:
+                    pass
+                # create device record if not exists
+                if mac_hex not in self.devices:
+                    try:
+                        mac_bytes = bytes.fromhex(mac_hex)
+                        device = LifxDevice(mac_bytes, ip, resolved.get_label())
+                        # Minimal capabilities; can be filled later on demand
+                        self.devices[mac_hex] = device
+                    except Exception:
+                        pass
+                return mac_hex
+        except Exception:
+            pass
+        return None
     
     def discover(self, detectedLights: List, device_ips: List[str]) -> None:
         """Discover LIFX devices on the network"""
@@ -1685,7 +1719,7 @@ class LifxProtocol:
         """Send rapid RGB update for entertainment mode (WLED pattern - no device dict needed)"""
         # Get essentials from light object
         ip = light.protocol_cfg.get('ip')
-        mac_hex = light.protocol_cfg.get('mac')
+        mac_hex = light.protocol_cfg.get('mac') or self._ensure_mac_for_light(light)
         
         if not ip or not mac_hex:
             logging.debug(f"LIFX: Missing IP or MAC for rapid update")
@@ -1763,7 +1797,7 @@ class LifxProtocol:
         """Send rapid RGB zone updates (WLED pattern - simplified)"""
         # Get essentials from light object
         ip = light.protocol_cfg.get('ip')
-        mac_hex = light.protocol_cfg.get('mac')
+        mac_hex = light.protocol_cfg.get('mac') or self._ensure_mac_for_light(light)
         capabilities = light.protocol_cfg.get('capabilities', {})
         
         if not ip or not mac_hex:
