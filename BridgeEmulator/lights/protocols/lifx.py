@@ -1488,9 +1488,9 @@ class LifxProtocol:
         tile_height = int(tile_info.get('height', 8))
         total_pixels = tile_width * tile_height
 
-        # Width parameter for SetTileState64 is the device matrix width in zones.
-        # Candle reports 5x5; standard tile 8x8; Ceiling may report e.g. 13x26.
-        width_param = int(tile_width)
+        # Width parameter for SetTileState64: 8 for standard tile, 5 for Candle.
+        # Using 8 here ensures correct addressing on devices that expect tile width.
+        width_param = 5 if (tile_width == 5 and tile_height == 5) else 8
 
         # Build all 8x8 packets by scanning y in steps of 8, then x in steps of 8
         packets: List[Tuple[int, bytes, int, int, int, int, int]] = []
@@ -1538,8 +1538,10 @@ class LifxProtocol:
                 msg_type, payload, x, y, _, _, t_idx = packet
                 device.send_packet(msg_type, payload, ack_required=False, res_required=False, reuse_socket=sock)
                 logging.debug(f"LIFX: Sent SetTileState64 {i+1}/{len(packets)} to {device.label}, tile_index={t_idx}, x={x}, y={y}")
-                if i + 1 < len(packets):
-                    time.sleep(0.005)
+                # Minimal inter-packet delay to maintain order; reduce to improve throughput
+                # Adjust or remove if devices reorder packets reliably
+                # if i + 1 < len(packets):
+                #     time.sleep(0.001)
         except Exception as e:
             logging.warning(f"LIFX: Failed to send Set64 packets: {e}")
         finally:
