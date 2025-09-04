@@ -617,6 +617,100 @@ class LifxProtocol:
             'static_ips': []
         }
         self._init_socket_pool()
+        # Per-matrix streaming workers
+        self._matrix_streamers: Dict[str, '_MatrixStreamer'] = {}
+
+    def _get_matrix_fps(self) -> int:
+        try:
+            return max(1, int(self._settings.get('max_fps', 30)))
+        except Exception:
+            return 30
+
+    def update_matrix_frame(self, light, gradient: Dict, bri: int) -> None:
+        """Push latest gradient frame to a per-device matrix streamer (non-blocking)."""
+        mac_hex = light.protocol_cfg.get('mac') or self._ensure_mac_for_light(light)
+        if not mac_hex:
+            return
+        device = self.devices.get(mac_hex)
+        if not device:
+            ip = light.protocol_cfg.get('ip')
+            if not ip:
+                return
+            try:
+                mac_bytes = bytes.fromhex(mac_hex)
+                device = LifxDevice(mac_bytes, ip, light.name)
+                device.capabilities = light.protocol_cfg.get('capabilities', {})
+                self.devices[mac_hex] = device
+            except Exception:
+                return
+
+        # Ensure streamer exists
+        streamer = self._matrix_streamers.get(mac_hex)
+        if streamer is None:
+            streamer = _MatrixStreamer(self, device)
+            self._matrix_streamers[mac_hex] = streamer
+            streamer.start()
+        # Update latest frame (lockless handoff inside streamer)
+        streamer.update_frame(gradient, bri)
+
+
+class _MatrixStreamer:
+    """Per-device matrix streaming worker.
+
+    Pulls latest gradient frame from a lock-less handoff and renders at a paced FPS,
+    always sending the newest data (drops stale frames). Keeps UI pipeline decoupled
+    from LIFX I/O and avoids executor backlog.
+    """
+    def __init__(self, protocol: LifxProtocol, device: LifxDevice):
+        self.protocol = protocol
+        self.device = device
+        self._fps = protocol._get_matrix_fps()
+        self._latest = None  # (gradient_dict, bri)
+        self._lock = threading.Lock()
+        self._stop = False
+        self._thread = None
+
+    def update_fps(self, fps: int) -> None:
+        self._fps = max(1, int(fps))
+
+    def update_frame(self, gradient: Dict, bri: int) -> None:
+        with self._lock:
+            self._latest = (gradient, int(bri))
+
+    def start(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop = False
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop = True
+        try:
+            if self._thread:
+                self._thread.join(timeout=0.5)
+        except Exception:
+            pass
+
+    def _run(self):
+        while not self._stop:
+            start = time.time()
+            frame = None
+            with self._lock:
+                frame = self._latest
+            if frame:
+                gradient, bri = frame
+                try:
+                    # zero transition for low latency; _set_gradient does chain copy
+                    self.protocol._set_gradient(self.device, gradient, transition_time=0, device_brightness=bri)
+                except Exception as e:
+                    logging.debug(f"LIFX matrix streamer error for {self.device.label}: {e}")
+            # Pace
+            interval = 1.0 / max(1, self._fps)
+            elapsed = time.time() - start
+            sleep_for = interval - elapsed
+            if sleep_for > 0:
+                time.sleep(sleep_for)
 
     def _copy_framebuffer_chain(self, device: LifxDevice, start_index: int, length: int,
                                 tile_width: int, tile_height: int, duration_ms: int = 0) -> None:
@@ -689,6 +783,12 @@ class LifxProtocol:
                 logging.warning(f"LIFX: max_fps set to {new_rate} (> {MAX_MESSAGES_PER_SECOND}). Devices may drop packets.")
             self.rate_limiter.max_rate = new_rate
             logging.info(f"LIFX: Updated settings; rate limiter set to {new_rate} msg/sec")
+            # Update matrix streamer FPS
+            try:
+                for streamer in self._matrix_streamers.values():
+                    streamer.update_fps(self._get_matrix_fps())
+            except Exception:
+                pass
         except Exception as e:
             logging.debug(f"LIFX: update_entertainment_settings error: {e}")
         
@@ -1897,6 +1997,8 @@ class LifxProtocol:
                     logging.warning(f"LIFX: Failed to create entertainment socket for {device.label}: {e}")
         
         logging.info(f"LIFX: Entertainment mode started with {len(self._entertainment_sockets)} device sockets")
+        
+        # Start matrix streamers on demand (when frames arrive). Nothing to do here.
     
     def stop_entertainment_mode(self) -> None:
         """Stop entertainment mode and clean up resources"""
@@ -1935,6 +2037,14 @@ class LifxProtocol:
             except:
                 pass
         self._rapid_socket_pool.clear()
+        
+        # Stop matrix streamers
+        for mac, streamer in list(self._matrix_streamers.items()):
+            try:
+                streamer.stop()
+            except Exception:
+                pass
+            self._matrix_streamers.pop(mac, None)
     
     def send_rgb_rapid(self, light, r: int, g: int, b: int) -> None:
         """Send rapid RGB update for entertainment mode (WLED pattern - no device dict needed)"""
