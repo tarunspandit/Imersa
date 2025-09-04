@@ -616,14 +616,23 @@ class LifxProtocol:
             'keepalive_interval': 45,
             'static_ips': []
         }
-        # Initialize socket pool (backward-compatible)
+        # Initialize UDP socket pool inline (no dependency on helper methods)
+        self.socket_pool = []
         try:
-            self._init_socket_pool()
-        except AttributeError:
-            # Older deployments may miss this method; fall back to safe init
-            self._init_socket_pool_safe()
+            for _ in range(10):
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                sock.settimeout(PACKET_TIMEOUT)
+                self.socket_pool.append(sock)
         except Exception:
-            self._init_socket_pool_safe()
+            # Fallback: ensure at least one socket exists
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                sock.settimeout(PACKET_TIMEOUT)
+                self.socket_pool.append(sock)
+            except Exception:
+                pass
         # Per-matrix streaming workers
         self._matrix_streamers: Dict[str, '_MatrixStreamer'] = {}
 
