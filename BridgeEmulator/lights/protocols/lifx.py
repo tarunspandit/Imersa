@@ -831,6 +831,30 @@ class _MatrixStreamer:
         """Get a socket from the pool"""
         return self.socket_pool[random.randint(0, len(self.socket_pool) - 1)]
 
+    # Backward-compatibility: gracefully handle older callers that expect
+    # attributes which may be missing in customized builds.
+    def __getattr__(self, name: str):
+        if name == 'get_light_state':
+            return self._compat_get_light_state
+        raise AttributeError(name)
+
+    def _compat_get_light_state(self, light) -> Dict:
+        """Compatibility shim for environments looking up get_light_state dynamically."""
+        try:
+            return self.get_light_state(light)
+        except Exception:
+            # Minimal, safe fallback
+            mac_hex = getattr(light, 'protocol_cfg', {}).get('mac') if hasattr(light, 'protocol_cfg') else None
+            if not mac_hex:
+                return {}
+            device = self.devices.get(mac_hex)
+            if device:
+                try:
+                    return device.get_state()
+                except Exception:
+                    return {}
+            return {}
+
     def _ensure_mac_for_light(self, light) -> Optional[str]:
         """Ensure the light has a MAC stored in protocol_cfg; resolve if missing.
 
