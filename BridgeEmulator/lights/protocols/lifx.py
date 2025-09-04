@@ -606,6 +606,7 @@ class LifxProtocol:
         self._rapid_socket_pool = {}  # IP -> socket for rapid updates (WLED pattern)
         self.rate_limiter = DeviceRateLimiter()  # Enforce 20 msg/sec limit
         self.metrics = LifxMetrics()  # Track performance
+        self._matrix_col_cache: Dict[str, Dict] = {}  # mac_hex -> {(tile_index, key): [(h,s) per column]}
         # Runtime settings updated via /lifx-settings
         self._settings = {
             'enabled': True,
@@ -1182,11 +1183,11 @@ class LifxProtocol:
                 else:
                     tile_y_normalized = 0.5
                 
-                # Map gradient to this tile based on its normalized position
-                tile_colors = self._map_gradient_to_tile(points, width, height, 
-                                                         tile_x_normalized, tile_y_normalized, 
-                                                         len(tiles),  # Use tile count instead of width/height
-                                                         device_brightness)
+                # Map gradient to this tile with column cache (high FPS)
+                tile_colors = self._map_gradient_to_tile_cached(device, tile, points,
+                                                               width, height,
+                                                               tile_x_normalized, tile_y_normalized,
+                                                               len(tiles), device_brightness)
                 
                 # Reorient colors based on tile orientation
                 orientation = tile.get('orientation', 'RightSideUp')
@@ -1360,6 +1361,88 @@ class LifxProtocol:
         colors: List[Tuple[int, int, int, int]] = []
         for _ in range(tile_height):
             colors.extend(column_hsbk)
+        return colors
+
+    def _points_key(self, points: List[Dict]) -> Tuple:
+        """Stable key for gradient points with coarse quantization to avoid jitter."""
+        key = []
+        for pt in points:
+            xy = pt.get('color', {}).get('xy', {})
+            x = round(float(xy.get('x', 0.5)), 3)
+            y = round(float(xy.get('y', 0.5)), 3)
+            key.append((x, y))
+        return tuple(key)
+
+    def _map_gradient_to_tile_cached(self, device: LifxDevice, tile: Dict, points: List[Dict],
+                                     tile_width: int, tile_height: int,
+                                     tile_x_normalized: float, tile_y_normalized: float,
+                                     tile_count: int, brightness: int = 254) -> List[Tuple[int, int, int, int]]:
+        """Cache per-tile column H/S across frames and only rescale brightness.
+
+        Returns full tile HSBK list in row-major order.
+        """
+        try:
+            mac_hex = device.mac.hex()
+        except Exception:
+            mac_hex = None
+
+        # Build cache key
+        pkey = self._points_key(points)
+        # Include tile position within chain so columns map consistently across tiles
+        cache_key = (tile.get('index', 0), pkey, int(tile_width), int(tile_count), round(float(tile_x_normalized), 3))
+
+        cols: Optional[List[Tuple[int, int]]] = None
+        if mac_hex:
+            store = self._matrix_col_cache.setdefault(mac_hex, {})
+            cols = store.get(cache_key)
+
+        if cols is None:
+            # Compute per-column H/S once via lightweight mapping routine
+            pcount = max(1, len(points))
+            positions = [i / (pcount - 1) for i in range(pcount)] if pcount > 1 else [0.0]
+            xys = [
+                (
+                    pt.get('color', {}).get('xy', {'x': 0.5, 'y': 0.5}).get('x', 0.5),
+                    pt.get('color', {}).get('xy', {'x': 0.5, 'y': 0.5}).get('y', 0.5),
+                ) for pt in points
+            ] if pcount > 0 else [(0.5, 0.5)]
+
+            cols = []
+            denom_w = max(1, tile_width - 1)
+            tile_span = 1.0 / max(1, tile_count)
+            for x in range(tile_width):
+                pixel_fraction = x / denom_w if tile_width > 1 else 0.5
+                position = (tile_x_normalized + pixel_fraction * tile_span) if tile_count > 1 else pixel_fraction
+                position = 0.0 if position < 0.0 else (1.0 if position > 1.0 else position)
+
+                if pcount == 1:
+                    xv, yv = xys[0]
+                else:
+                    j = 1
+                    while j < pcount and positions[j] < position:
+                        j += 1
+                    j = min(j, pcount - 1)
+                    p0, p1 = j - 1, j
+                    pos0, pos1 = positions[p0], positions[p1]
+                    t = (position - pos0) / (pos1 - pos0) if (pos1 - pos0) > 0 else 0.0
+                    x0, y0 = xys[p0]
+                    x1, y1 = xys[p1]
+                    xv = x0 + (x1 - x0) * t
+                    yv = y0 + (y1 - y0) * t
+
+                r, g, b = convert_xy(xv, yv, 255)
+                h, s, _ = self._rgb_to_hsv(r, g, b)
+                cols.append((int(h * 65535), int(s * 65535)))
+
+            if mac_hex:
+                self._matrix_col_cache[mac_hex][cache_key] = cols
+
+        # Assemble HSBK rows quickly with brightness scaling
+        bri_word = int((brightness / 254) * 65535)
+        colors: List[Tuple[int, int, int, int]] = []
+        for _ in range(tile_height):
+            for (h, s) in cols:
+                colors.append((h, s, bri_word, DEFAULT_KELVIN))
         return colors
     
     def _reorient_tile_colors(self, colors: List[Tuple[int, int, int, int]], 

@@ -1163,7 +1163,7 @@ def entertainmentService(group, user, mirror_port=None):
                             }
                             lifx_updates.append(update_data)
                         
-                        # Process all LIFX devices sequentially to avoid per-frame thread churn
+                        # Process LIFX devices in the shared executor to avoid blocking main loop
                         if lifx_updates:
                             def process_lifx_device(update_data):
                                 key = update_data['key']
@@ -1278,9 +1278,13 @@ def entertainmentService(group, user, mirror_port=None):
                                     
                                 except Exception as e:
                                     logging.debug(f"LIFX zone processing error for {key}: {e}")
-                            
+                            # Dispatch without blocking the main entertainment loop
                             for data in lifx_updates:
-                                process_lifx_device(data)
+                                try:
+                                    executor.submit(process_lifx_device, data)
+                                except Exception:
+                                    # Fallback to inline processing on submission failure
+                                    process_lifx_device(data)
 
                     # Hue lights are handled via DTLS tunnel, no need for API calls
 
