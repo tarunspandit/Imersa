@@ -117,7 +117,7 @@ def setGroupAction(group, state, scene=None):
                 logging.warning(f"Failed to update light {light.name}: {e}")
         
         # Use ThreadPoolExecutor to update all lights simultaneously
-        with ThreadPoolExecutor(max_workers=min(len(lights_to_update), 20)) as executor:
+        with ThreadPoolExecutor(max_workers=min(len(lights_to_update), 32)) as executor:
             futures = [executor.submit(update_light, item) for item in lights_to_update]
             # Wait for all updates to complete with timeout
             for future in futures:

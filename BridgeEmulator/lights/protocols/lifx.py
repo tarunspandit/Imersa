@@ -610,6 +610,8 @@ class LifxProtocol:
         # Per-device cache of last-sent 8x8 block hashes for delta streaming
         # Structure: { mac_hex: { (tile_index, x_off, y_off): int_hash } }
         self._tile_block_hashes: Dict[str, Dict[Tuple[int, int, int], int]] = {}
+        # Control sockets for non-entertainment commands (preserve ordering, reduce overhead)
+        self._control_sockets: Dict[str, socket.socket] = {}
         # Track last waveform target and time to avoid resetting animation too often
         # Structure: { mac_hex: { 'rgb': (r,g,b), 'ts': float } }
         self._wf_last: Dict[str, Dict[str, Any]] = {}
@@ -630,6 +632,30 @@ class LifxProtocol:
             'waveform_transient': False
         }
         self._init_socket_pool()
+
+    def _get_control_socket(self, device: LifxDevice) -> Optional[socket.socket]:
+        try:
+            mac_hex = device.mac.hex()
+        except Exception:
+            return None
+        sock = self._control_sockets.get(mac_hex)
+        if sock is not None:
+            return sock
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 131072)
+            except Exception:
+                pass
+            sock.setblocking(False)
+            try:
+                sock.connect((device.ip, device.port))
+            except Exception:
+                pass
+            self._control_sockets[mac_hex] = sock
+            return sock
+        except Exception:
+            return None
 
     def _copy_framebuffer_chain(self, device: LifxDevice, start_index: int, length: int,
                                 tile_width: int, tile_height: int, duration_ms: int = 0) -> None:
@@ -1123,15 +1149,30 @@ class LifxProtocol:
         if not device.last_state:
             device.last_state = {}
         
-        # Handle power state
+        # Handle power state first with control socket to preserve ordering
+        turning_on = False
+        ctrl_sock = self._get_control_socket(device)
         if 'on' in data:
             power = 65535 if data['on'] else 0
             payload = struct.pack('<H', power)
-            device.send_packet(MSG_SET_POWER, payload, ack_required=False, res_required=False)
+            try:
+                if ctrl_sock is not None:
+                    pkt = device.packet.build_header(
+                        MSG_SET_POWER, payload, tagged=False,
+                        ack_required=False, res_required=False,
+                        target=device.mac
+                    )
+                    try:
+                        ctrl_sock.send(pkt)
+                    except Exception:
+                        ctrl_sock.sendto(pkt, (device.ip, device.port))
+                else:
+                    device.send_packet(MSG_SET_POWER, payload, ack_required=False, res_required=False)
+            except Exception:
+                device.send_packet(MSG_SET_POWER, payload, ack_required=False, res_required=False)
             
-            # Update cached state
             device.last_state['on'] = data['on']
-            
+            turning_on = bool(data['on'])
             if not data['on']:
                 return  # Don't send color commands when turning off
         
@@ -1161,6 +1202,12 @@ class LifxProtocol:
                             tiles = device.capabilities.get('tiles') or []
                         except Exception:
                             tiles = []
+                # If we just powered on, small delay before tile writes
+                if turning_on:
+                    try:
+                        time.sleep(0.03)
+                    except Exception:
+                        pass
                 self._set_gradient(device, data['gradient'], transition_time, device_brightness)
                 
                 # Update cached state
@@ -1228,7 +1275,27 @@ class LifxProtocol:
                                 kelvin,        # Kelvin
                                 duration)      # Duration
             
-            device.send_packet(MSG_SET_COLOR, payload, ack_required=False, res_required=False)
+            # If we just powered on, allow brief gap so color isn't dropped
+            if turning_on:
+                try:
+                    time.sleep(0.02)
+                except Exception:
+                    pass
+            try:
+                if ctrl_sock is not None:
+                    pkt = device.packet.build_header(
+                        MSG_SET_COLOR, payload, tagged=False,
+                        ack_required=False, res_required=False,
+                        target=device.mac
+                    )
+                    try:
+                        ctrl_sock.send(pkt)
+                    except Exception:
+                        ctrl_sock.sendto(pkt, (device.ip, device.port))
+                else:
+                    device.send_packet(MSG_SET_COLOR, payload, ack_required=False, res_required=False)
+            except Exception:
+                device.send_packet(MSG_SET_COLOR, payload, ack_required=False, res_required=False)
             
             # Update cached state
             if 'bri' in data:
