@@ -2,6 +2,7 @@ import uuid
 import logManager
 import random
 from concurrent.futures import ThreadPoolExecutor
+import os
 
 logging = logManager.logger.get_logger(__name__)
 
@@ -117,7 +118,10 @@ def setGroupAction(group, state, scene=None):
                 logging.warning(f"Failed to update light {light.name}: {e}")
         
         # Use ThreadPoolExecutor to update all lights simultaneously
-        with ThreadPoolExecutor(max_workers=min(len(lights_to_update), 32)) as executor:
+        # Scale workers with CPU count but cap for stability
+        cpu = os.cpu_count() or 4
+        max_workers = min(len(lights_to_update), max(32, cpu * 8), 512)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [executor.submit(update_light, item) for item in lights_to_update]
             # Wait for all updates to complete with timeout
             for future in futures:
