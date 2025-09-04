@@ -1096,7 +1096,15 @@ class LifxProtocol:
             if ip:
                 mac = bytes.fromhex(mac_hex)
                 device = LifxDevice(mac, ip, light.name)
-                device.capabilities = light.protocol_cfg.get('capabilities', {})
+                # Prefer capabilities from light if present, else probe
+                device.capabilities = light.protocol_cfg.get('capabilities', {}) or {}
+                if not device.capabilities.get('type'):
+                    try:
+                        device.discover_capabilities()
+                        # Persist back to light for later frames
+                        light.protocol_cfg['capabilities'] = device.capabilities
+                    except Exception:
+                        pass
                 # Initialize cached state from Light object to avoid network queries
                 device.last_state = {
                     'on': light.state.get('on', False),
@@ -1127,6 +1135,14 @@ class LifxProtocol:
             if not data['on']:
                 return  # Don't send color commands when turning off
         
+        # Ensure device capabilities are populated before gradient handling
+        try:
+            if not device.capabilities.get('type'):
+                device.discover_capabilities()
+                light.protocol_cfg['capabilities'] = device.capabilities
+        except Exception:
+            pass
+
         # Handle gradient for capable devices
         if 'gradient' in data:
             device_type = device.capabilities.get('type')
@@ -1135,6 +1151,16 @@ class LifxProtocol:
                 transition_time = data.get('transitiontime', 0)
                 # Use Light's cached brightness instead of querying device
                 device_brightness = light.state.get('bri', 254)
+                # For matrix devices, ensure tiles are known; if not, probe once
+                if device_type == 'matrix':
+                    tiles = device.capabilities.get('tiles') or []
+                    if not tiles:
+                        try:
+                            device.discover_capabilities()
+                            light.protocol_cfg['capabilities'] = device.capabilities
+                            tiles = device.capabilities.get('tiles') or []
+                        except Exception:
+                            tiles = []
                 self._set_gradient(device, data['gradient'], transition_time, device_brightness)
                 
                 # Update cached state
@@ -1258,6 +1284,14 @@ class LifxProtocol:
                 max_x = max(t.get('x', 0) for t in tiles)
                 min_y = min(t.get('y', 0) for t in tiles)
                 max_y = max(t.get('y', 0) for t in tiles)
+            # If positions are unavailable or all identical (some firmwares),
+            # fall back to index-based placement so gradients still render.
+            index_based = False
+            try:
+                if (not tiles) or (max_x == min_x and max_y == min_y):
+                    index_based = True
+            except Exception:
+                index_based = True
             
             # Prepare all tiles data first
             tile_tasks = []
@@ -1268,14 +1302,23 @@ class LifxProtocol:
                 tile_y = tile.get('y', 0)
                 
                 # Normalize tile position to 0-1 range
-                if max_x > min_x:
-                    tile_x_normalized = (tile_x - min_x) / (max_x - min_x)
+                if not index_based:
+                    if max_x > min_x:
+                        tile_x_normalized = (tile_x - min_x) / (max_x - min_x)
+                    else:
+                        tile_x_normalized = 0.5
+                    if max_y > min_y:
+                        tile_y_normalized = (tile_y - min_y) / (max_y - min_y)
+                    else:
+                        tile_y_normalized = 0.5
                 else:
-                    tile_x_normalized = 0.5
-                    
-                if max_y > min_y:
-                    tile_y_normalized = (tile_y - min_y) / (max_y - min_y)
-                else:
+                    # Spread tiles uniformly along X by index to produce a visible gradient
+                    try:
+                        idx = int(tile.get('index', 0))
+                        count = max(1, len(tiles) - 1)
+                        tile_x_normalized = min(1.0, max(0.0, idx / count))
+                    except Exception:
+                        tile_x_normalized = 0.5
                     tile_y_normalized = 0.5
                 
                 # Map gradient to this tile with column cache (high FPS)
@@ -2384,3 +2427,35 @@ def _unicast_discover_by_ip(ip: str):
 def get_recommended_fps(light, configured_max: int = 60) -> int:
     """Module-level helper for per-device FPS recommendation."""
     return _protocol.get_recommended_fps(light, configured_max)
+
+def ensure_capabilities(light) -> Dict:
+    """Ensure capabilities are known for this light and return them.
+
+    For matrix devices, also ensures tile details are populated.
+    Updates light.protocol_cfg['capabilities'] in place.
+    """
+    try:
+        mac_hex = light.protocol_cfg.get('mac')
+        ip = light.protocol_cfg.get('ip')
+        if not mac_hex and ip:
+            mac_hex = _protocol._ensure_mac_for_light(light)
+        if not mac_hex:
+            return {}
+        device = _protocol.devices.get(mac_hex)
+        if not device:
+            device = LifxDevice(bytes.fromhex(mac_hex), ip or '', getattr(light, 'name', None))
+            _protocol.devices[mac_hex] = device
+        caps = device.capabilities or light.protocol_cfg.get('capabilities', {}) or {}
+        need_probe = not caps.get('type')
+        if caps.get('type') == 'matrix' and not caps.get('tiles'):
+            need_probe = True
+        if need_probe:
+            try:
+                device.discover_capabilities()
+                caps = device.capabilities
+                light.protocol_cfg['capabilities'] = caps
+            except Exception:
+                pass
+        return caps
+    except Exception:
+        return {}

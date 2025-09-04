@@ -707,7 +707,7 @@ def entertainmentService(group, user, mirror_port=None):
                                         _yeelight_last_send[ip] = now
 
 
-                            # LIFX (lifxlan rapid UDP updates with zone support)
+                            # LIFX (LAN with zone/matrix support)
                             elif proto == "lifx":
                                 # Respect runtime integration toggle
                                 try:
@@ -717,6 +717,15 @@ def entertainmentService(group, user, mirror_port=None):
                                 except Exception:
                                     pass
                                 
+                                # Ensure capabilities are present (matrix/multizone detection)
+                                try:
+                                    from lights.protocols import lifx as lifx_protocol
+                                    caps_fresh = lifx_protocol.ensure_capabilities(light)
+                                    if caps_fresh:
+                                        light.protocol_cfg['capabilities'] = caps_fresh
+                                except Exception:
+                                    pass
+
                                 # Use MAC address as key if present, else IP as a fallback
                                 key = light.protocol_cfg.get("mac") or light.protocol_cfg.get("ip")
                                 if key:
@@ -895,7 +904,7 @@ def entertainmentService(group, user, mirror_port=None):
                                         c.command("set_rgb", [(r * 65536) + (g * 256) + b, "smooth", smooth_ms])
                                         _yeelight_last_send[ip] = now
 
-                            # LIFX (lifxlan rapid UDP updates with zone support)
+                            # LIFX (LAN with zone/matrix support)
                             elif proto == "lifx":
                                 # Respect runtime integration toggle
                                 try:
@@ -905,6 +914,15 @@ def entertainmentService(group, user, mirror_port=None):
                                 except Exception:
                                     pass
                                 
+                                # Ensure capabilities are present
+                                try:
+                                    from lights.protocols import lifx as lifx_protocol
+                                    caps_fresh = lifx_protocol.ensure_capabilities(light)
+                                    if caps_fresh:
+                                        light.protocol_cfg['capabilities'] = caps_fresh
+                                except Exception:
+                                    pass
+
                                 # Use MAC address as key to match LIFX protocol's device indexing
                                 key = light.protocol_cfg.get("mac")
                                 if key:
@@ -1344,7 +1362,16 @@ def entertainmentService(group, user, mirror_port=None):
                                         else:
                                             # Basic device: use first color
                                             if zone_colors:
-                                                lifx_protocol.send_rgb_rapid(light, *zone_colors[0])
+                                                # Fallback: try gradient API even if caps missing
+                                                try:
+                                                    current_bri = light.state.get('bri', 254)
+                                                    gradient_data = {"points": []}
+                                                    for (r, g, b) in zone_colors:
+                                                        xy = convert_rgb_xy(r/255.0, g/255.0, b/255.0)
+                                                        gradient_data["points"].append({"color": {"xy": {"x": xy[0], "y": xy[1]}}})
+                                                    lifx_protocol.set_light(light, {"gradient": gradient_data, "bri": current_bri, "transitiontime": 0})
+                                                except Exception:
+                                                    lifx_protocol.send_rgb_rapid(light, *zone_colors[0])
                                         
                                     elif zones:
                                         # Non-gradient device - rapid single color update
