@@ -754,6 +754,11 @@ class LifxProtocol:
                                 device = LifxDevice(serial, ip)
                                 device.port = device_port  # Use discovered port
                                 device.discover_capabilities()
+                                # Fetch friendly label from device state
+                                try:
+                                    device.get_state()
+                                except Exception:
+                                    pass
                                 self.devices[serial_hex] = device
                                 
                                 # Map to appropriate Hue model and add gradient capabilities
@@ -761,7 +766,8 @@ class LifxProtocol:
                                     'mac': serial_hex,
                                     'ip': ip,
                                     'port': device_port,
-                                    'capabilities': device.capabilities
+                                    'capabilities': device.capabilities,
+                                    'label': device.label
                                 }
                                 
                                 if device.capabilities['type'] in ['multizone', 'matrix']:
@@ -776,7 +782,7 @@ class LifxProtocol:
                                 
                                 detectedLights.append({
                                     'protocol': 'lifx',
-                                    'name': device.label,
+                                    'name': device.label or f"LIFX {ip}",
                                     'modelid': modelid,
                                     'protocol_cfg': protocol_cfg
                                 })
@@ -854,6 +860,11 @@ class LifxProtocol:
                             device = LifxDevice(serial, ip)
                             device.port = device_port
                             device.discover_capabilities()
+                            # Fetch friendly label from device state
+                            try:
+                                device.get_state()
+                            except Exception:
+                                pass
                             self.devices[serial_hex] = device
                             
                             # Map to appropriate Hue model and add gradient capabilities
@@ -861,7 +872,8 @@ class LifxProtocol:
                                 'mac': serial_hex,
                                 'ip': ip,
                                 'port': device_port,
-                                'capabilities': device.capabilities
+                                'capabilities': device.capabilities,
+                                'label': device.label
                             }
                             
                             if device.capabilities['type'] in ['multizone', 'matrix']:
@@ -876,7 +888,7 @@ class LifxProtocol:
                             
                             detectedLights.append({
                                 'protocol': 'lifx',
-                                'name': device.label,
+                                'name': device.label or f"LIFX {ip}",
                                 'modelid': modelid,
                                 'protocol_cfg': protocol_cfg
                             })

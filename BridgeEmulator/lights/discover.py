@@ -300,6 +300,22 @@ def update_light_ip(lightObj: Light.Light, light: Dict) -> None:
             "bri_range": light["protocol_cfg"]["bri_range"]
         })
     logging.info(f"Update IP/config for light {light['name']}")
+    # Enrich LIFX name with friendly label if current name looks like a placeholder
+    try:
+        if light["protocol"] == "lifx":
+            ip = light["protocol_cfg"].get("ip")
+            if ip:
+                from lights.protocols import lifx as lifx_protocol
+                dev = lifx_protocol._unicast_discover_by_ip(ip)
+                if dev:
+                    label = dev.get_label()
+                    if label:
+                        name_lower = (lightObj.name or "").lower()
+                        if name_lower.startswith("lifx_") or name_lower.startswith("lifx "):
+                            lightObj.name = label
+                            logging.info(f"Renamed LIFX light to friendly label: {label}")
+    except Exception:
+        pass
 
 def is_light_matching(lightObj: Light.Light, light: Dict) -> bool:
     """
