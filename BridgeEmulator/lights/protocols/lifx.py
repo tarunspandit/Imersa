@@ -825,6 +825,148 @@ class LifxProtocol:
             logging.debug(f"LIFX: waveform_to_color error: {e}")
             return False
 
+    # ---------------------
+    # Scene Fast-Path (LIFX)
+    # ---------------------
+    def batch_set_scene(self, updates: List[Tuple[Any, Dict]]) -> None:
+        """Apply a scene to many LIFX lights in two phases to align updates.
+
+        updates: list of (light, state) where `light` is HueObjects.Light and
+        state is a Hue v1 state dict (may contain 'on', 'bri', 'xy', 'ct', or 'gradient').
+        """
+        if not updates:
+            return
+        # Build device records
+        records = []
+        for light, state in updates:
+            try:
+                mac_hex = light.protocol_cfg.get('mac') or self._ensure_mac_for_light(light)
+                if not mac_hex:
+                    continue
+                device = self.devices.get(mac_hex)
+                if not device:
+                    ip = light.protocol_cfg.get('ip')
+                    if not ip:
+                        continue
+                    device = LifxDevice(bytes.fromhex(mac_hex), ip, light.name)
+                    device.capabilities = light.protocol_cfg.get('capabilities', {}) or {}
+                    self.devices[mac_hex] = device
+                # Ensure capabilities once
+                if not device.capabilities.get('type'):
+                    try:
+                        device.discover_capabilities()
+                        light.protocol_cfg['capabilities'] = device.capabilities
+                    except Exception:
+                        pass
+                records.append((light, device, state))
+            except Exception:
+                continue
+
+        # Phase 0: OFF commands (can go immediately)
+        offs = [(d, s) for _, d, s in records if s.get('on') is False]
+        if offs:
+            for device, st in offs:
+                try:
+                    payload = struct.pack('<H', 0)
+                    sock = self._get_control_socket(device)
+                    if sock is not None:
+                        pkt = device.packet.build_header(MSG_SET_POWER, payload, tagged=False,
+                                                         ack_required=False, res_required=False,
+                                                         target=device.mac)
+                        try:
+                            sock.send(pkt)
+                        except Exception:
+                            sock.sendto(pkt, (device.ip, device.port))
+                    else:
+                        device.send_packet(MSG_SET_POWER, payload, ack_required=False, res_required=False)
+                except Exception:
+                    pass
+
+        # Phase 1: turn ON everybody that needs power, concurrently
+        ons = [(d, s) for _, d, s in records if s.get('on') is True]
+        if ons:
+            def pwr_on(dev_state):
+                device, st = dev_state
+                try:
+                    payload = struct.pack('<H', 65535)
+                    sock = self._get_control_socket(device)
+                    if sock is not None:
+                        pkt = device.packet.build_header(MSG_SET_POWER, payload, tagged=False,
+                                                         ack_required=False, res_required=False,
+                                                         target=device.mac)
+                        try:
+                            sock.send(pkt)
+                        except Exception:
+                            sock.sendto(pkt, (device.ip, device.port))
+                    else:
+                        device.send_packet(MSG_SET_POWER, payload, ack_required=False, res_required=False)
+                except Exception:
+                    pass
+            with ThreadPoolExecutor(max_workers=min(len(ons), 256)) as ex:
+                for item in ons:
+                    ex.submit(pwr_on, item)
+
+        # Small barrier to allow firmware to accept color/tiles after power-on
+        try:
+            time.sleep(0.03)
+        except Exception:
+            pass
+
+        # Phase 2: color/gradient application in parallel
+        def apply_color(dev_state):
+            light, device, st = dev_state
+            try:
+                if 'gradient' in st and device.capabilities.get('type') in ('matrix', 'multizone'):
+                    # Use the optimized gradient path
+                    bri = light.state.get('bri', 254)
+                    self._set_gradient(device, st['gradient'], st.get('transitiontime', 0), bri)
+                    return
+                # Else build standard color
+                # Baseline from last_state
+                current = device.last_state or {}
+                hue = current.get('hue', 0)
+                sat = current.get('sat', 254)
+                bri = current.get('bri', 254)
+                kelvin = DEFAULT_KELVIN
+                if 'xy' in st:
+                    x, y = st['xy']
+                    r, g, b = convert_xy(x, y, 255)
+                    h, s, _ = self._rgb_to_hsv(r, g, b)
+                    hue = int(h * 65535)
+                    sat = int(s * 254)
+                if 'ct' in st:
+                    mired = st['ct']
+                    kelvin = max(1500, min(9000, int(1000000 / mired))) if mired > 0 else DEFAULT_KELVIN
+                    sat = 0
+                if 'hue' in st:
+                    hue = st['hue']
+                if 'sat' in st:
+                    sat = st['sat']
+                if 'bri' in st:
+                    bri = st['bri']
+                hue_lifx = int(hue * 65535 / 65535) if hue <= 65535 else hue
+                sat_lifx = int(sat * 65535 / 254)
+                bri_lifx = int(bri * 65535 / 254)
+                duration = int(st.get('transitiontime', 4) * 100) if 'transitiontime' in st else 0
+                payload = struct.pack('<BHHHHI', 0, hue_lifx, sat_lifx, bri_lifx, kelvin, duration)
+                sock = self._get_control_socket(device)
+                if sock is not None:
+                    pkt = device.packet.build_header(MSG_SET_COLOR, payload, tagged=False,
+                                                     ack_required=False, res_required=False,
+                                                     target=device.mac)
+                    try:
+                        sock.send(pkt)
+                    except Exception:
+                        sock.sendto(pkt, (device.ip, device.port))
+                else:
+                    device.send_packet(MSG_SET_COLOR, payload, ack_required=False, res_required=False)
+            except Exception:
+                pass
+
+        with ThreadPoolExecutor(max_workers=min(len(records), 256)) as ex:
+            for rec in records:
+                ex.submit(apply_color, rec)
+
     def _ensure_mac_for_light(self, light) -> Optional[str]:
         """Ensure the light has a MAC stored in protocol_cfg; resolve if missing.
 

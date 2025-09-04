@@ -77,7 +77,8 @@ def setGroupAction(group, state, scene=None):
         group.action.update(state)
 
     queueState = {}
-    lights_to_update = []  # Collect lights for parallel update
+    lights_to_update = []  # Collect lights for parallel update (non-batched)
+    lifx_updates = []      # Collect LIFX lights for fast batched path
     
     for light in group.lights:
         if light() and light().id_v1 in lightsState:  # apply only if the light belong to this group
@@ -105,10 +106,23 @@ def setGroupAction(group, state, scene=None):
                     queueState[light().protocol_cfg["ip"]]["lights"][light(
                     ).protocol_cfg["command_topic"]] = lightsState[light().id_v1]
             else:
-                # Collect for parallel update instead of immediate sequential update
-                lights_to_update.append((light(), lightsState[light().id_v1]))
+                # For LIFX, use protocol-level batch fast path
+                if light().protocol == "lifx":
+                    lifx_updates.append((light(), lightsState[light().id_v1]))
+                else:
+                    # Collect for parallel update instead of immediate sequential update
+                    lights_to_update.append((light(), lightsState[light().id_v1]))
     
-    # Update all lights in parallel
+    # LIFX fast-path: two-phase batch to align updates across many devices
+    if lifx_updates:
+        try:
+            from lights.protocols import lifx as lifx_protocol
+            lifx_protocol._protocol.batch_set_scene(lifx_updates)
+        except Exception as e:
+            logging.warning(f"LIFX batch scene apply failed, falling back to per-light: {e}")
+            lights_to_update.extend(lifx_updates)
+
+    # Update all non-LIFX lights in parallel
     if lights_to_update:
         def update_light(light_and_state):
             light, state = light_and_state
