@@ -607,6 +607,9 @@ class LifxProtocol:
         self.rate_limiter = DeviceRateLimiter()  # Enforce 20 msg/sec limit
         self.metrics = LifxMetrics()  # Track performance
         self._matrix_col_cache: Dict[str, Dict] = {}  # mac_hex -> {(tile_index, key): [(h,s) per column]}
+        # Per-device cache of last-sent 8x8 block hashes for delta streaming
+        # Structure: { mac_hex: { (tile_index, x_off, y_off): int_hash } }
+        self._tile_block_hashes: Dict[str, Dict[Tuple[int, int, int], int]] = {}
         # Runtime settings updated via /lifx-settings
         self._settings = {
             'enabled': True,
@@ -1202,22 +1205,33 @@ class LifxProtocol:
             # Stage all tiles first to off-screen frame, then single chain CopyFrameBuffer
             tile_indices = [ti for (ti, _) in tile_tasks]
             tile_indices.sort()
+            any_changed = False
             for tile_index, colors in tile_tasks:
                 try:
-                    self._send_tile_state(device, tile_index, colors, send_duration, stage_only=True)
+                    # Delta stream: only send changed 8x8 blocks per tile
+                    changed = self._send_tile_state(device, tile_index, colors, 0, stage_only=True)
+                    any_changed = any_changed or changed
                 except Exception as e:
                     logging.warning(f"LIFX: Failed to stage gradient to tile {tile_index}: {e}")
 
             # Copy staged -> visible for the whole chain in one message (if multiple tiles)
             try:
-                if tile_indices:
+                # Only perform copy if at least one block changed
+                if tile_indices and any_changed:
                     start_idx = tile_indices[0]
                     length = len(tile_indices)
                     # Choose width/height from first tile; Ceiling/Tiles have uniform dims
                     t0 = next((t for t in tiles if t.get('index') == start_idx), tiles[0])
                     w0 = int(t0.get('width', 8))
                     h0 = int(t0.get('height', 8))
-                    self._copy_framebuffer_chain(device, start_idx, length, w0, h0, 0)
+                    # Use smoothing settings to crossfade frames for better visuals
+                    smoothing_ms = 0
+                    try:
+                        if self._settings.get('smoothing_enabled', False):
+                            smoothing_ms = max(0, int(self._settings.get('smoothing_ms', 0)))
+                    except Exception:
+                        smoothing_ms = 0
+                    self._copy_framebuffer_chain(device, start_idx, length, w0, h0, smoothing_ms)
             except Exception as e:
                 logging.debug(f"LIFX: Chain CopyFrameBuffer failed; tiles may have already copied individually: {e}")
     
@@ -1634,7 +1648,7 @@ class LifxProtocol:
             # This is complex enough that we'll reuse the existing logic
             self._set_gradient(device, gradient, transition_time=0, device_brightness=device_brightness)
     
-    def _send_tile_state(self, device: LifxDevice, tile_index: int, colors: List[Tuple[int, int, int, int]], duration_ms: int = 0, stage_only: bool = False) -> None:
+    def _send_tile_state(self, device: LifxDevice, tile_index: int, colors: List[Tuple[int, int, int, int]], duration_ms: int = 0, stage_only: bool = False) -> bool:
         """Send SetTileState64 message(s) covering the entire tile area.
 
         Uses an off-screen frame (1) for staging and then copies it to the
@@ -1663,6 +1677,15 @@ class LifxProtocol:
 
         # Build all 8x8 packets by scanning y in steps of 8, then x in steps of 8
         packets: List[Tuple[int, bytes, int, int, int, int, int]] = []
+
+        # Prepare delta cache for this device
+        mac_hex = None
+        try:
+            mac_hex = device.mac.hex()
+        except Exception:
+            pass
+        if mac_hex and mac_hex not in self._tile_block_hashes:
+            self._tile_block_hashes[mac_hex] = {}
 
         for y_offset in range(0, tile_height, 8):
             for x_offset in range(0, tile_width, 8):
@@ -1696,13 +1719,25 @@ class LifxProtocol:
                 # Ensure little-endian order for H words
                 if sys.byteorder != 'little':
                     block_words.byteswap()
+
+                # Compute lightweight hash to skip unchanged 8x8 blocks
+                block_hash = (sum(block_words) + (len(block_words) << 1)) & 0xFFFFFFFF
+                if mac_hex is not None:
+                    key = (tile_index, x_offset, y_offset)
+                    last = self._tile_block_hashes[mac_hex].get(key)
+                    if last is not None and last == block_hash:
+                        # Unchanged block; skip sending this 8x8
+                        continue
+                    # Update cache
+                    self._tile_block_hashes[mac_hex][key] = block_hash
+
                 payload += block_words.tobytes()
 
                 packets.append((MSG_SET_TILE_STATE_64, payload, x_offset, y_offset, 0, 0, tile_index))
 
         # Send packets sequentially to preserve order on device
         if not packets:
-            return
+            return False
 
         # Prefer entertainment socket if available, else ephemeral
         sock = None
@@ -1753,7 +1788,7 @@ class LifxProtocol:
             # After staging all blocks, copy staged frame (1) to visible (0)
             try:
                 if aborted or stage_only:
-                    return
+                    return True
                 copy_payload = struct.pack(
                     '<BBBBBBBBBBIB',
                     tile_index,      # tile_index
@@ -1803,6 +1838,7 @@ class LifxProtocol:
                     sock.close()
                 except Exception:
                     pass
+        return True
     
     def _rgb_to_hsv(self, r: int, g: int, b: int) -> Tuple[float, float, float]:
         """Convert RGB to HSV"""
