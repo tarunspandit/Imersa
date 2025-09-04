@@ -1125,8 +1125,7 @@ def entertainmentService(group, user, mirror_port=None):
 
                     # LIFX zone/gradient processing - PARALLEL
                     if lifxLights:
-                        max_fps = _lifx_tuning()
-                        min_interval = 1.0 / max_fps
+                        cfg_max_fps = _lifx_tuning()
                         now_ts = time.time()
                         
                         # Prepare all LIFX updates
@@ -1135,7 +1134,18 @@ def entertainmentService(group, user, mirror_port=None):
                         for key, data in lifxLights.items():
                             # Check frame rate limit
                             last_ts = _lifx_last_send.get(key, 0)
-                            if now_ts - last_ts < min_interval:
+                            # Per-device safe FPS based on packet budget
+                            caps = light.protocol_cfg.get('capabilities', {})
+                            if caps.get('type') == 'matrix':
+                                # Allow high-rate streaming for matrix (Ceiling/Tile)
+                                effective_fps = cfg_max_fps
+                            else:
+                                try:
+                                    effective_fps = lifx_protocol.get_recommended_fps(light, cfg_max_fps)
+                                except Exception:
+                                    effective_fps = cfg_max_fps
+                            effective_min_interval = 1.0 / max(1, effective_fps)
+                            if now_ts - last_ts < effective_min_interval:
                                 continue
                                 
                             light = data["light"]

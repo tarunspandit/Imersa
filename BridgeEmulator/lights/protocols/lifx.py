@@ -7,6 +7,7 @@ High-performance entertainment mode with parallel UDP.
 """
 
 import struct
+import math
 import socket
 import time
 import random
@@ -1143,10 +1144,18 @@ class LifxProtocol:
                 
                 tile_tasks.append((tile['index'], tile_colors))
             
+            # Choose smoothing duration when in entertainment mode
+            send_duration = duration_ms
+            try:
+                if self._entertainment_mode and self._settings.get('smoothing_enabled'):
+                    send_duration = max(send_duration, int(self._settings.get('smoothing_ms', 50)))
+            except Exception:
+                pass
+
             # Send to all tiles - sequentially to avoid thread churn and resource spikes
             for tile_index, colors in tile_tasks:
                 try:
-                    self._send_tile_state(device, tile_index, colors, duration_ms)
+                    self._send_tile_state(device, tile_index, colors, send_duration)
                 except Exception as e:
                     logging.warning(f"LIFX: Failed to send gradient to tile {tile_index}: {e}")
     
@@ -1538,23 +1547,48 @@ class LifxProtocol:
         if not packets:
             return
 
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(0.1)
+        # Prefer entertainment socket if available, else ephemeral
+        sock = None
+        mac_hex = None
+        try:
+            mac_hex = device.mac.hex()
+        except Exception:
+            pass
+        if mac_hex and mac_hex in self._entertainment_sockets:
+            sock = self._entertainment_sockets[mac_hex]
+        created_sock = False
+        if sock is None:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.settimeout(0.1)
+            created_sock = True
+
         try:
             for i, packet in enumerate(packets):
                 msg_type, payload, x, y, _, _, t_idx = packet
-                device.send_packet(msg_type, payload, ack_required=False, res_required=False, reuse_socket=sock)
+                try:
+                    built = device.packet.build_header(
+                        msg_type, payload, tagged=False,
+                        ack_required=False, res_required=False,
+                        target=device.mac
+                    )
+                    try:
+                        sock.send(built)
+                    except Exception:
+                        sock.sendto(built, (device.ip, device.port))
+                    try:
+                        self.metrics.record_send(device.mac.hex())
+                    except Exception:
+                        pass
+                except Exception:
+                    device.send_packet(msg_type, payload, ack_required=False, res_required=False, reuse_socket=sock)
+                    try:
+                        self.metrics.record_send(device.mac.hex())
+                    except Exception:
+                        pass
                 logging.debug(f"LIFX: Sent SetTileState64 {i+1}/{len(packets)} to {device.label}, tile_index={t_idx}, x={x}, y={y}")
-                # Minimal inter-packet delay to maintain order; reduce to improve throughput
-                # Adjust or remove if devices reorder packets reliably
-                # if i + 1 < len(packets):
-                #     time.sleep(0.001)
 
             # After staging all blocks, copy staged frame (1) to visible (0)
             try:
-                # Copy the whole tile from staged frame (1) to visible (0)
-                # Fields per docs: tile_index, length, src_fb_index, dst_fb_index,
-                # src_x, src_y, dst_x, dst_y, width, height, duration (uint32), reserved1
                 copy_payload = struct.pack(
                     '<BBBBBBBBBBIB',
                     tile_index,      # tile_index
@@ -1565,30 +1599,42 @@ class LifxProtocol:
                     0,               # src_y
                     0,               # dst_x
                     0,               # dst_y
-                    tile_width,      # width (copy entire tile width)
-                    tile_height,     # height (copy entire tile height)
-                    int(duration_ms),# duration ms (applies only when copying to visible)
+                    tile_width,      # width
+                    tile_height,     # height
+                    int(duration_ms),# duration ms
                     0                # reserved1
                 )
-                device.send_packet(
-                    MSG_COPY_FRAMEBUFFER,
-                    copy_payload,
-                    ack_required=False,
-                    res_required=False,
-                    reuse_socket=sock
-                )
-                logging.debug(
-                    f"LIFX: CopyFrameBuffer staged->visible tile={tile_index} size={tile_width}x{tile_height} duration={duration_ms}ms"
-                )
+                try:
+                    built = device.packet.build_header(
+                        MSG_COPY_FRAMEBUFFER, copy_payload, tagged=False,
+                        ack_required=False, res_required=False,
+                        target=device.mac
+                    )
+                    try:
+                        sock.send(built)
+                    except Exception:
+                        sock.sendto(built, (device.ip, device.port))
+                    try:
+                        self.metrics.record_send(device.mac.hex())
+                    except Exception:
+                        pass
+                except Exception:
+                    device.send_packet(MSG_COPY_FRAMEBUFFER, copy_payload, ack_required=False, res_required=False, reuse_socket=sock)
+                    try:
+                        self.metrics.record_send(device.mac.hex())
+                    except Exception:
+                        pass
+                logging.debug(f"LIFX: CopyFrameBuffer staged->visible tile={tile_index} size={tile_width}x{tile_height} duration={duration_ms}ms")
             except Exception as e:
                 logging.warning(f"LIFX: CopyFrameBuffer failed: {e}")
         except Exception as e:
             logging.warning(f"LIFX: Failed to send Set64 packets: {e}")
         finally:
-            try:
-                sock.close()
-            except Exception:
-                pass
+            if created_sock:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
     
     def _rgb_to_hsv(self, r: int, g: int, b: int) -> Tuple[float, float, float]:
         """Convert RGB to HSV"""
@@ -1610,6 +1656,47 @@ class LifxProtocol:
         v = max_c
         
         return h / 360.0, s, v
+
+    def get_recommended_fps(self, light, configured_max: int = 60) -> int:
+        """Return a safe per-device FPS cap based on packet budget.
+
+        Caps by MAX_MESSAGES_PER_SECOND (20) divided by packets-per-frame
+        for the device type, with 10% headroom. Honors configured_max.
+        """
+        try:
+            mac_hex = light.protocol_cfg.get('mac') or self._ensure_mac_for_light(light)
+            device = self.devices.get(mac_hex)
+            if not device:
+                return max(1, min(configured_max, 10))
+
+            budget = min(MAX_MESSAGES_PER_SECOND, int(self.rate_limiter.max_rate or MAX_MESSAGES_PER_SECOND))
+
+            packets_per_frame = 1
+            caps = device.capabilities or {}
+            dtype = caps.get('type')
+            if dtype == 'matrix':
+                tiles = caps.get('tiles', [])
+                if tiles:
+                    w = int(tiles[0].get('width', 8))
+                    h = int(tiles[0].get('height', 8))
+                    blocks = max(1, math.ceil(w / 8) * math.ceil(h / 8))
+                    packets_per_frame = blocks + 1  # CopyFrameBuffer
+                else:
+                    packets_per_frame = 3
+            elif dtype == 'multizone':
+                zones = int(caps.get('zone_count', 16))
+                if caps.get('supports_extended', False):
+                    packets_per_frame = max(1, math.ceil(zones / 82))
+                else:
+                    packets_per_frame = min(zones, 16)
+            else:
+                packets_per_frame = 1
+
+            safe_budget = max(1, int(budget * 0.9))
+            fps = max(1, int(safe_budget / max(1, packets_per_frame)))
+            return max(1, min(fps, int(configured_max)))
+        except Exception:
+            return max(1, min(configured_max, 10))
     
     def start_entertainment_mode(self) -> None:
         """Start entertainment mode for optimized rapid updates"""
@@ -1628,6 +1715,10 @@ class LifxProtocol:
                     # Increase send buffer for high-frequency updates
                     sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
                     sock.setblocking(False)  # Non-blocking for entertainment
+                    try:
+                        sock.connect((device.ip, device.port))
+                    except Exception:
+                        pass
                     self._entertainment_sockets[mac_hex] = sock
                     logging.debug(f"LIFX: Created entertainment socket for {device.label}")
                 except Exception as e:
@@ -1984,3 +2075,7 @@ def update_entertainment_settings(settings: Dict[str, Any]):
 def _unicast_discover_by_ip(ip: str):
     """Expose unicast helper for legacy manual-add code paths."""
     return _protocol._unicast_discover_by_ip(ip)
+
+def get_recommended_fps(light, configured_max: int = 60) -> int:
+    """Module-level helper for per-device FPS recommendation."""
+    return _protocol.get_recommended_fps(light, configured_max)
