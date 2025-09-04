@@ -1488,9 +1488,9 @@ class LifxProtocol:
         tile_height = int(tile_info.get('height', 8))
         total_pixels = tile_width * tile_height
 
-        # Width parameter must be the device's tile width in zones (per LIFX docs).
-        # Standard Tile: 8, Candle: 5, Ceiling/Matrix: report their actual width (e.g., 13).
-        width_param = int(tile_width)
+        # Width parameter is the rectangle width within the tile (max 8 for standard tiles).
+        # Use 8 for 8x8 tiles and larger matrices; use 5 for Candle (5x5) if encountered.
+        width_param = 8 if tile_width >= 8 else tile_width
 
         # Build all 8x8 packets by scanning y in steps of 8, then x in steps of 8
         packets: List[Tuple[int, bytes, int, int, int, int, int]] = []
