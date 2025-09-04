@@ -61,6 +61,16 @@ def buildConfig():
     result["UTC"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
     result["localtime"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     result["LogLevel"] = logManager.logger.get_level_name()
+    # Expose linkbutton state (boolean: true if active within 30s)
+    try:
+        lb = config.get("linkbutton")
+        if isinstance(lb, dict):
+            active = (lb.get("lastlinkbuttonpushed", 0) + 30) >= datetime.now().timestamp()
+        else:
+            active = False
+        result["linkbutton"] = active
+    except Exception:
+        result["linkbutton"] = False
     # Add WLED gradient mode to config
     if "wled" in config and "gradient_mode" in config["wled"]:
         result["wled_gradient_mode"] = config["wled"]["gradient_mode"]
