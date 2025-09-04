@@ -9,6 +9,7 @@ High-performance entertainment mode with parallel UDP.
 import struct
 import math
 import socket
+import sys
 import time
 import random
 import logging
@@ -16,6 +17,7 @@ from threading import Lock
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Tuple, Optional, Any
 from collections import deque, defaultdict
+from array import array
 
 import logManager
 from functions.colors import convert_xy, convert_rgb_xy, hsv_to_rgb
@@ -1219,77 +1221,86 @@ class LifxProtocol:
                               tile_x_normalized: float, tile_y_normalized: float, 
                               tile_count: int,
                               brightness: int = 254) -> List[Tuple[int, int, int, int]]:
-        """Map gradient points to a tile based on its normalized position (0-1)"""
+        """Map gradient points to a tile based on its normalized position (0-1).
+
+        Optimized for high FPS:
+        - Precompute gradient point positions once.
+        - Compute HSBK per column only, then replicate for rows.
+        - Avoid O(points^2) calls (no points.index in inner loops).
+        """
         if not points:
             return [(0, 0, 0, DEFAULT_KELVIN)] * (tile_width * tile_height)
-        
-        colors = []
-        
-        # For each pixel in the tile (row-major order as LIFX expects)
-        for y in range(tile_height):
-            for x in range(tile_width):
-                # Calculate position in overall gradient space (0.0 to 1.0)
-                # Hue gradients are 1D - we map them horizontally across tiles
-                
-                if tile_count > 1:
-                    # Multiple tiles - gradient spans across all tiles
-                    # Tile position is already normalized (0-1), pixel adds detail within tile
-                    pixel_fraction = x / max(1, tile_width - 1) if tile_width > 1 else 0.5
-                    # Each tile gets 1/tile_count of the gradient space
-                    tile_gradient_width = 1.0 / tile_count
-                    # Position = tile's starting position + pixel position within tile's portion
-                    gradient_position = tile_x_normalized + (pixel_fraction * tile_gradient_width)
-                else:
-                    # Single tile - gradient spans across the tile horizontally
-                    gradient_position = x / max(1, tile_width - 1) if tile_width > 1 else 0.5
-                
-                # Clamp to valid range
-                position = max(0.0, min(1.0, gradient_position))
-                
-                # Find surrounding gradient points
-                prev_point = points[0]
-                next_point = points[-1]
-                
-                for j, point in enumerate(points):
-                    point_pos = j / max(1, len(points) - 1)
-                    if point_pos <= position:
-                        prev_point = point
-                    if point_pos >= position:
-                        next_point = point
-                        break
-                
-                # Interpolate color
-                if prev_point == next_point:
-                    xy = prev_point.get('color', {}).get('xy', {'x': 0.5, 'y': 0.5})
-                else:
-                    prev_xy = prev_point.get('color', {}).get('xy', {'x': 0.5, 'y': 0.5})
-                    next_xy = next_point.get('color', {}).get('xy', {'x': 0.5, 'y': 0.5})
-                    
-                    # Calculate interpolation factor
-                    prev_pos = points.index(prev_point) / max(1, len(points) - 1)
-                    next_pos = points.index(next_point) / max(1, len(points) - 1)
-                    
-                    if next_pos - prev_pos > 0:
-                        t = (position - prev_pos) / (next_pos - prev_pos)
-                    else:
-                        t = 0
-                    
-                    xy = {
-                        'x': prev_xy['x'] + (next_xy['x'] - prev_xy['x']) * t,
-                        'y': prev_xy['y'] + (next_xy['y'] - prev_xy['y']) * t
-                    }
-                
-                # Convert to HSBK - extract pure color for accurate saturation
-                rgb_pure = convert_xy(xy['x'], xy['y'], 255)  # Full brightness for pure color
-                h, s, _ = self._rgb_to_hsv(rgb_pure[0], rgb_pure[1], rgb_pure[2])
-                
-                colors.append((
-                    int(h * 65535),         # Hue (unaffected by brightness)
-                    int(s * 65535),         # Saturation (from pure color)
-                    int((brightness / 254) * 65535),  # Brightness applied separately
-                    DEFAULT_KELVIN          # Kelvin
-                ))
-        
+
+        pcount = len(points)
+        if pcount == 1:
+            xy = points[0].get('color', {}).get('xy', {'x': 0.5, 'y': 0.5})
+            r, g, b = convert_xy(xy.get('x', 0.5), xy.get('y', 0.5), 255)
+            h, s, _ = self._rgb_to_hsv(r, g, b)
+            hsbk = (
+                int(h * 65535),
+                int(s * 65535),
+                int((brightness / 254) * 65535),
+                DEFAULT_KELVIN
+            )
+            return [hsbk] * (tile_width * tile_height)
+
+        positions = [i / (pcount - 1) for i in range(pcount)]
+        xys = [
+            (
+                pt.get('color', {}).get('xy', {'x': 0.5, 'y': 0.5}).get('x', 0.5),
+                pt.get('color', {}).get('xy', {'x': 0.5, 'y': 0.5}).get('y', 0.5),
+            ) for pt in points
+        ]
+
+        # Per-column HSBK
+        column_hsbk: List[Tuple[int, int, int, int]] = []
+        denom_w = max(1, tile_width - 1)
+        tile_span = 1.0 / max(1, tile_count)
+        for x in range(tile_width):
+            # Compute gradient position for this column
+            pixel_fraction = x / denom_w if tile_width > 1 else 0.5
+            if tile_count > 1:
+                position = tile_x_normalized + pixel_fraction * tile_span
+            else:
+                position = pixel_fraction
+            # Clamp
+            if position < 0.0:
+                position = 0.0
+            elif position > 1.0:
+                position = 1.0
+
+            # Find surrounding points (linear scan; pcount is small)
+            j = 1
+            while j < pcount and positions[j] < position:
+                j += 1
+            j = min(j, pcount - 1)
+            p0 = j - 1
+            p1 = j
+            pos0 = positions[p0]
+            pos1 = positions[p1]
+            if pos1 - pos0 > 0:
+                t = (position - pos0) / (pos1 - pos0)
+            else:
+                t = 0.0
+
+            x0, y0 = xys[p0]
+            x1, y1 = xys[p1]
+            xv = x0 + (x1 - x0) * t
+            yv = y0 + (y1 - y0) * t
+
+            r, g, b = convert_xy(xv, yv, 255)
+            h, s, _ = self._rgb_to_hsv(r, g, b)
+            column_hsbk.append((
+                int(h * 65535),
+                int(s * 65535),
+                int((brightness / 254) * 65535),
+                DEFAULT_KELVIN
+            ))
+
+        # Replicate per row into row-major order
+        colors: List[Tuple[int, int, int, int]] = []
+        for _ in range(tile_height):
+            colors.extend(column_hsbk)
         return colors
     
     def _reorient_tile_colors(self, colors: List[Tuple[int, int, int, int]], 
@@ -1513,8 +1524,9 @@ class LifxProtocol:
 
         for y_offset in range(0, tile_height, 8):
             for x_offset in range(0, tile_width, 8):
-                # Gather up to 8x8 colors for this block
-                block: List[Tuple[int, int, int, int]] = []
+                # Gather up to 8x8 colors for this block (row-major)
+                # Build words efficiently using array('H') to reduce packing overhead
+                block_words = array('H')
                 for ry in range(8):
                     src_y = y_offset + ry
                     for rx in range(8):
@@ -1522,11 +1534,12 @@ class LifxProtocol:
                         if src_x < tile_width and src_y < tile_height:
                             idx = src_y * tile_width + src_x
                             if idx < len(colors):
-                                block.append(colors[idx])
+                                h, s, b, k = colors[idx]
+                                block_words.extend((h, s, b, k))
                             else:
-                                block.append((0, 0, 0, DEFAULT_KELVIN))
+                                block_words.extend((0, 0, 0, DEFAULT_KELVIN))
                         else:
-                            block.append((0, 0, 0, DEFAULT_KELVIN))
+                            block_words.extend((0, 0, 0, DEFAULT_KELVIN))
 
                 # Build payload for this 8x8
                 payload = struct.pack('<BBBBBBI',
@@ -1538,8 +1551,10 @@ class LifxProtocol:
                                       width_param,  # 8 for Tile, 5 for Candle
                                       duration_ms)  # Duration
 
-                for color in block:
-                    payload += struct.pack('<HHHH', color[0], color[1], color[2], color[3])
+                # Ensure little-endian order for H words
+                if sys.byteorder != 'little':
+                    block_words.byteswap()
+                payload += block_words.tobytes()
 
                 packets.append((MSG_SET_TILE_STATE_64, payload, x_offset, y_offset, 0, 0, tile_index))
 
