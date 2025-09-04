@@ -610,6 +610,9 @@ class LifxProtocol:
         # Per-device cache of last-sent 8x8 block hashes for delta streaming
         # Structure: { mac_hex: { (tile_index, x_off, y_off): int_hash } }
         self._tile_block_hashes: Dict[str, Dict[Tuple[int, int, int], int]] = {}
+        # Track last waveform target and time to avoid resetting animation too often
+        # Structure: { mac_hex: { 'rgb': (r,g,b), 'ts': float } }
+        self._wf_last: Dict[str, Dict[str, Any]] = {}
         # Runtime settings updated via /lifx-settings
         self._settings = {
             'enabled': True,
@@ -753,6 +756,25 @@ class LifxProtocol:
             skew_ratio = float(skew if skew is not None else st.get('waveform_skew', 0.5))
             trans = bool(st.get('waveform_transient', False) if transient is None else transient)
 
+            # Avoid spamming waveforms: only send when target changes meaningfully
+            # and avoid restarting within most of the period duration.
+            try:
+                now = time.time()
+                last = self._wf_last.get(mac_hex)
+                if last:
+                    lr, lg, lb = last.get('rgb', (None, None, None))
+                    lts = float(last.get('ts', 0))
+                    if lr is not None:
+                        # Color delta small? skip
+                        if abs(r - lr) + abs(g - lg) + abs(b - lb) < 12:
+                            if now - lts < max(0.02, (period / 1000.0) * 0.75):
+                                return False
+                        # Too soon since last waveform? let current finish
+                        if now - lts < max(0.02, (period / 1000.0) * 0.5):
+                            return False
+            except Exception:
+                pass
+
             # Convert RGB to HSBK (keep current kelvin)
             h, s, v = self._rgb_to_hsv(r, g, b)
             hue = int(h * 65535)
@@ -766,7 +788,13 @@ class LifxProtocol:
                     kelvin = max(1500, min(9000, int(1000000 / last_ct)))
             except Exception:
                 pass
-            return device.send_waveform(wf_const, (hue, sat, bri, kelvin), period, cyc, skew_ratio, trans)
+            ok = device.send_waveform(wf_const, (hue, sat, bri, kelvin), period, cyc, skew_ratio, trans)
+            if ok:
+                try:
+                    self._wf_last[mac_hex] = {'rgb': (r, g, b), 'ts': time.time()}
+                except Exception:
+                    pass
+            return ok
         except Exception as e:
             logging.debug(f"LIFX: waveform_to_color error: {e}")
             return False
