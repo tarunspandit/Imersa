@@ -1469,170 +1469,81 @@ class LifxProtocol:
             self._set_gradient(device, gradient, transition_time=0, device_brightness=device_brightness)
     
     def _send_tile_state(self, device: LifxDevice, tile_index: int, colors: List[Tuple[int, int, int, int]], duration_ms: int = 0) -> None:
-        """Send SetTileState64 message(s) for devices with any number of pixels"""
-        # Get actual tile dimensions from capabilities
+        """Send SetTileState64 message(s) covering the entire tile area.
+
+        Correctly iterates 8x8 blocks across both width and height, so wide/tall
+        matrices (e.g., 13x26 Ceiling) are fully updated.
+        """
+        # Resolve tile info
         tiles = device.capabilities.get('tiles', [])
-        tile_info = None
-        for tile in tiles:
-            if tile['index'] == tile_index:
-                tile_info = tile
-                break
-        
+        tile_info = next((t for t in tiles if t.get('index') == tile_index), None)
         if not tile_info:
             logging.warning(f"LIFX: Tile index {tile_index} not found in device capabilities")
             return
-        
-        # Get actual dimensions
-        tile_width = tile_info.get('width', 8)
-        tile_height = tile_info.get('height', 8)
-        total_pixels = len(colors)
-        
-        # Use actual tile width for Set64 message, capped at 8
-        # SetTileState64 can only handle 8-wide grids, wider devices need multiple messages
-        width_param = min(tile_width, 8)
-        
-        # Log device tile configuration
-        logging.info(f"LIFX: Device {device.label} has {len(tiles)} tile(s) in chain")
-        for t in tiles:
-            logging.info(f"LIFX:   Tile {t['index']}: {t['width']}x{t['height']} at ({t.get('x', 0):.2f}, {t.get('y', 0):.2f})")
-        
-        logging.debug(f"LIFX: Sending colors to {device.label} tile {tile_index}: "
-                     f"{tile_width}x{tile_height}={total_pixels} pixels, "
-                     f"will need {(total_pixels + 63) // 64} Set64 message(s), "
-                     f"width_param={width_param}")
-        
-        # Build all Set64 packets first
-        packets = []
-        pixels_sent = 0
-        
-        while pixels_sent < total_pixels:
-            # Calculate x,y offset for this chunk
-            if tile_width <= 8:
-                # For 8-wide or narrower devices, chunk vertically
-                x_offset = 0
-                y_offset = (pixels_sent // 64) * 8  # Each Set64 covers 8 rows
-                
-                # Special handling for 5x5 Candle
-                if tile_width == 5 and tile_height == 5:
-                    x_offset = 0
-                    y_offset = 0  # Single message covers entire 5x5
-            else:
-                # For wider devices (e.g., 16x8), chunk horizontally
-                chunks_per_row = (tile_width + 7) // 8  # Round up
-                chunk_index = pixels_sent // 64
-                x_offset = (chunk_index % chunks_per_row) * 8
-                y_offset = (chunk_index // chunks_per_row) * 8
-                
-                logging.info(f"LIFX: Wide device ({tile_width}x{tile_height}) - chunk {chunk_index}, calculated x_offset={x_offset}, y_offset={y_offset}")
-            
-            # Get next 64 colors based on device width
-            if tile_width > 8:
-                # For wide devices (e.g., 16x8 Ceiling), extract columns not sequential pixels
-                # This ensures gradient displays correctly across the full width
-                chunk_colors = []
-                chunk_x = x_offset  # Which column chunk (0 or 8)
-                
-                # Extract 8 columns from each row
-                for row in range(min(tile_height, 8)):
-                    row_start = row * tile_width
-                    for col in range(8):
-                        pixel_col = chunk_x + col
-                        if pixel_col < tile_width:
-                            pixel_idx = row_start + pixel_col
-                            if pixel_idx < len(colors):
-                                chunk_colors.append(colors[pixel_idx])
+
+        tile_width = int(tile_info.get('width', 8))
+        tile_height = int(tile_info.get('height', 8))
+        total_pixels = tile_width * tile_height
+
+        # Width parameter for SetTileState64 is the device matrix width in zones.
+        # Candle reports 5x5; standard tile 8x8; Ceiling may report e.g. 13x26.
+        width_param = int(tile_width)
+
+        # Build all 8x8 packets by scanning y in steps of 8, then x in steps of 8
+        packets: List[Tuple[int, bytes, int, int, int, int, int]] = []
+
+        for y_offset in range(0, tile_height, 8):
+            for x_offset in range(0, tile_width, 8):
+                # Gather up to 8x8 colors for this block
+                block: List[Tuple[int, int, int, int]] = []
+                for ry in range(8):
+                    src_y = y_offset + ry
+                    for rx in range(8):
+                        src_x = x_offset + rx
+                        if src_x < tile_width and src_y < tile_height:
+                            idx = src_y * tile_width + src_x
+                            if idx < len(colors):
+                                block.append(colors[idx])
                             else:
-                                chunk_colors.append((0, 0, 0, DEFAULT_KELVIN))
+                                block.append((0, 0, 0, DEFAULT_KELVIN))
                         else:
-                            chunk_colors.append((0, 0, 0, DEFAULT_KELVIN))
-                
-                chunk_end = pixels_sent + 64
-            else:
-                # For 8-wide or narrower devices, use sequential pixels
-                chunk_end = min(pixels_sent + 64, total_pixels)
-                chunk_colors = colors[pixels_sent:chunk_end]
-            
-            # Pad to 64 colors if needed
-            while len(chunk_colors) < 64:
-                chunk_colors.append((0, 0, 0, DEFAULT_KELVIN))
-            
-            # Build Set64 packet
-            # For single wide tiles, we need special handling
-            tile_count = len(device.capabilities.get('tiles', []))
-            effective_tile_index = tile_index
-            effective_x_offset = x_offset
-            
-            if tile_count == 1 and tile_width > 8:
-                # Single wide tile like Ceiling 10x12
-                # The Set64 protocol may not support x_offset > 7
-                # Some devices might accept virtual tile indexing even with tile_count=1
-                if x_offset >= 8:
-                    # Try using tile_index to address the right half
-                    # This works for some LIFX devices that treat wide tiles as virtual tiles
-                    effective_tile_index = tile_index + (x_offset // 8)
-                    effective_x_offset = x_offset % 8
-                    logging.info(f"LIFX: Single wide tile - trying virtual tile_index={effective_tile_index} for x_offset={x_offset}")
-            elif tile_count > 1 and x_offset > 7:
-                # Multiple tiles - use actual tile indexing
-                # This is for chains of multiple physical tiles
-                effective_tile_index = tile_index + (x_offset // 8)
-                effective_x_offset = x_offset % 8
-                logging.info(f"LIFX: Multiple tiles - using tile_index={effective_tile_index} with x_offset={effective_x_offset}")
-            
-            payload = struct.pack('<BBBBBBI',
-                                effective_tile_index,  # Tile index 
-                                1,               # Length (number of tiles to update)
-                                0,               # Frame buffer index (0 = visible frame)
-                                effective_x_offset,  # X coordinate to start applying colors
-                                y_offset,        # Y coordinate to start applying colors
-                                width_param,     # Width (8 for Tile, 5 for Candle)
-                                duration_ms)     # Duration in milliseconds
-            
-            # Add 64 colors (HSBK each)
-            for color in chunk_colors[:64]:
-                payload += struct.pack('<HHHH',
-                                     color[0],   # Hue
-                                     color[1],   # Saturation
-                                     color[2],   # Brightness
-                                     color[3])   # Kelvin
-            
-            packets.append((MSG_SET_TILE_STATE_64, payload, effective_x_offset, y_offset, pixels_sent, chunk_end, effective_tile_index))
-            pixels_sent = chunk_end
-        
-        # Send all packets - sequentially for wide devices to ensure proper ordering
-        if len(packets) > 1:
-            # Multiple packets - send sequentially with small delay for proper ordering
-            # This is critical for wide devices like Ceiling to display correctly
-            import time
-            
-            # Use a single socket for all packets to same device
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.settimeout(0.1)
-            
+                            block.append((0, 0, 0, DEFAULT_KELVIN))
+
+                # Build payload for this 8x8
+                payload = struct.pack('<BBBBBBI',
+                                      tile_index,   # Tile index in chain
+                                      1,            # Length (tiles to update)
+                                      0,            # Frame (0 visible)
+                                      x_offset,     # X within tile
+                                      y_offset,     # Y within tile
+                                      width_param,  # 8 for Tile, 5 for Candle
+                                      duration_ms)  # Duration
+
+                for color in block:
+                    payload += struct.pack('<HHHH', color[0], color[1], color[2], color[3])
+
+                packets.append((MSG_SET_TILE_STATE_64, payload, x_offset, y_offset, 0, 0, tile_index))
+
+        # Send packets sequentially to preserve order on device
+        if not packets:
+            return
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(0.1)
+        try:
+            for i, packet in enumerate(packets):
+                msg_type, payload, x, y, _, _, t_idx = packet
+                device.send_packet(msg_type, payload, ack_required=False, res_required=False, reuse_socket=sock)
+                logging.debug(f"LIFX: Sent SetTileState64 {i+1}/{len(packets)} to {device.label}, tile_index={t_idx}, x={x}, y={y}")
+                if i + 1 < len(packets):
+                    time.sleep(0.005)
+        except Exception as e:
+            logging.warning(f"LIFX: Failed to send Set64 packets: {e}")
+        finally:
             try:
-                for i, packet in enumerate(packets):
-                    msg_type, payload, x, y, start, end, tile_idx = packet
-                    device.send_packet(msg_type, payload, ack_required=False, res_required=False, reuse_socket=sock)
-                    logging.debug(f"LIFX: Sent SetTileState64 packet {i+1}/{len(packets)} to {device.label}, "
-                                f"tile_index={tile_idx}, x={x}, y={y}, pixels {start}-{end-1}")
-                    
-                    # Small delay between packets to ensure proper ordering (5ms)
-                    if packet != packets[-1]:  # Don't delay after last packet
-                        time.sleep(0.005)
-            except Exception as e:
-                logging.warning(f"LIFX: Failed to send Set64 packet: {e}")
-            finally:
-                try:
-                    sock.close()
-                except:
-                    pass
-        else:
-            # Single packet - send directly
-            if packets:
-                msg_type, payload, x, y, start, end, tile_idx = packets[0]
-                device.send_packet(msg_type, payload, ack_required=False, res_required=False)
-                logging.debug(f"LIFX: Sent SetTileState64 to {device.label}, "
-                            f"tile_index={tile_idx}, x={x}, y={y}, pixels {start}-{end-1}")
+                sock.close()
+            except Exception:
+                pass
     
     def _rgb_to_hsv(self, r: int, g: int, b: int) -> Tuple[float, float, float]:
         """Convert RGB to HSV"""
