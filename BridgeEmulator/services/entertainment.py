@@ -1193,7 +1193,15 @@ def entertainmentService(group, user, mirror_port=None):
                                 
                                 try:
                                     # Waveform path: use device-native one-cycle waveforms for smooth transitions
-                                    if wf_cfg.get('use_waveforms', True):
+                                    # Decide whether to use waveforms for this device
+                                    caps = light.protocol_cfg.get('capabilities', {}) if hasattr(light, 'protocol_cfg') else {}
+                                    is_matrix = caps.get('type') == 'matrix'
+                                    is_multizone = caps.get('type') == 'multizone'
+                                    wants_gradient = bool(points_capable > 0 and gradient_points)
+
+                                    use_wf_here = bool(wf_cfg.get('use_waveforms', True)) and not (is_matrix or (is_multizone and wants_gradient))
+
+                                    if use_wf_here:
                                         # Determine target RGB robustly
                                         target_rgb = None
                                         if points_capable > 0 and gradient_points:
@@ -1241,7 +1249,7 @@ def entertainmentService(group, user, mirror_port=None):
                                                 transient=wf_cfg['waveform_transient']
                                             )
                                         # else: no target; skip
-                                    # Gradient/zone path (fallback when not using waveforms)
+                                    # Gradient/zone path (for matrix/multizone or when waveforms disabled)
                                     elif points_capable > 0 and gradient_points:
                                         # Device supports zones/gradient
                                         # Sort gradient points by ID

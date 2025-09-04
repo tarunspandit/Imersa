@@ -2001,6 +2001,11 @@ class LifxProtocol:
         
         # Reset metrics for this session
         self.metrics.reset()
+        # Reset per-block hashes so first frame fully populates staging buffers
+        try:
+            self._tile_block_hashes.clear()
+        except Exception:
+            self._tile_block_hashes = {}
         
         # Create dedicated sockets for each device for high-rate updates
         for mac_hex, device in self.devices.items():
