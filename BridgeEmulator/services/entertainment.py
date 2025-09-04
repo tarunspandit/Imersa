@@ -1248,7 +1248,7 @@ def entertainmentService(group, user, mirror_port=None):
                                                 if zone_colors:
                                                     lifx_protocol.send_rgb_rapid(light, *zone_colors[0])
                                         elif caps.get('type') == 'matrix':
-                                            # For matrix devices, hand off to per-device streamer
+                                            # For matrix devices, use existing gradient path (tiles)
                                             gradient_data = {"points": []}
                                             current_bri = light.state.get('bri', 254)
                                             for (r, g, b) in zone_colors:
@@ -1259,10 +1259,11 @@ def entertainmentService(group, user, mirror_port=None):
                                                 gradient_data["points"].append({
                                                     "color": {"xy": {"x": xy[0], "y": xy[1]}}
                                                 })
-                                            try:
-                                                lifx_protocol.update_matrix_frame(light, gradient_data, current_bri)
-                                            except Exception as e:
-                                                logging.debug(f"LIFX matrix handoff failed: {e}")
+                                            lifx_protocol.set_light(light, {
+                                                "gradient": gradient_data,
+                                                "bri": current_bri,
+                                                "transitiontime": 0
+                                            })
                                         else:
                                             # Basic device: use first color
                                             if zone_colors:
