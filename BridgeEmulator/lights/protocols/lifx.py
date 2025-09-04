@@ -10,6 +10,7 @@ import struct
 import math
 import socket
 import sys
+import errno
 import time
 import random
 import logging
@@ -616,6 +617,54 @@ class LifxProtocol:
         }
         self._init_socket_pool()
 
+    def _copy_framebuffer_chain(self, device: LifxDevice, start_index: int, length: int,
+                                tile_width: int, tile_height: int, duration_ms: int = 0) -> None:
+        """Copy staged framebuffer (1) to visible (0) across a chain of tiles in one message."""
+        if length <= 0:
+            return
+        payload = struct.pack(
+            '<BBBBBBBBBBIB',
+            start_index,  # starting tile index in chain
+            max(1, length),
+            1,  # src_fb_index (staged)
+            0,  # dst_fb_index (visible)
+            0,  # src_x
+            0,  # src_y
+            0,  # dst_x
+            0,  # dst_y
+            tile_width,
+            tile_height,
+            int(duration_ms),
+            0
+        )
+
+        # Prefer entertainment socket if available
+        sock = None
+        mac_hex = None
+        try:
+            mac_hex = device.mac.hex()
+        except Exception:
+            pass
+        if mac_hex and mac_hex in self._entertainment_sockets:
+            sock = self._entertainment_sockets[mac_hex]
+
+        try:
+            if sock is not None:
+                packet = device.packet.build_header(
+                    MSG_COPY_FRAMEBUFFER, payload,
+                    tagged=False, ack_required=False, res_required=False,
+                    target=device.mac
+                )
+                try:
+                    sock.send(packet)
+                except (BlockingIOError, OSError):
+                    # Drop if buffer full; next frame will catch up
+                    return
+            else:
+                device.send_packet(MSG_COPY_FRAMEBUFFER, payload, ack_required=False, res_required=False)
+        except Exception as e:
+            logging.debug(f"LIFX: copy framebuffer chain failed: {e}")
+
     def update_entertainment_settings(self, settings: Dict[str, Any]) -> None:
         """Update runtime settings used by the integration UI.
 
@@ -1149,12 +1198,27 @@ class LifxProtocol:
             # For matrix devices, keep duration at 0 for low latency
             send_duration = 0
 
-            # Send to all tiles - sequentially to avoid thread churn and resource spikes
+            # Stage all tiles first to off-screen frame, then single chain CopyFrameBuffer
+            tile_indices = [ti for (ti, _) in tile_tasks]
+            tile_indices.sort()
             for tile_index, colors in tile_tasks:
                 try:
-                    self._send_tile_state(device, tile_index, colors, send_duration)
+                    self._send_tile_state(device, tile_index, colors, send_duration, stage_only=True)
                 except Exception as e:
-                    logging.warning(f"LIFX: Failed to send gradient to tile {tile_index}: {e}")
+                    logging.warning(f"LIFX: Failed to stage gradient to tile {tile_index}: {e}")
+
+            # Copy staged -> visible for the whole chain in one message (if multiple tiles)
+            try:
+                if tile_indices:
+                    start_idx = tile_indices[0]
+                    length = len(tile_indices)
+                    # Choose width/height from first tile; Ceiling/Tiles have uniform dims
+                    t0 = next((t for t in tiles if t.get('index') == start_idx), tiles[0])
+                    w0 = int(t0.get('width', 8))
+                    h0 = int(t0.get('height', 8))
+                    self._copy_framebuffer_chain(device, start_idx, length, w0, h0, 0)
+            except Exception as e:
+                logging.debug(f"LIFX: Chain CopyFrameBuffer failed; tiles may have already copied individually: {e}")
     
     def _interpolate_gradient(self, points: List[Dict], count: int, brightness: int = 254) -> List[Tuple[int, int, int, int]]:
         """Interpolate gradient points to specific number of colors"""
@@ -1487,7 +1551,7 @@ class LifxProtocol:
             # This is complex enough that we'll reuse the existing logic
             self._set_gradient(device, gradient, transition_time=0, device_brightness=device_brightness)
     
-    def _send_tile_state(self, device: LifxDevice, tile_index: int, colors: List[Tuple[int, int, int, int]], duration_ms: int = 0) -> None:
+    def _send_tile_state(self, device: LifxDevice, tile_index: int, colors: List[Tuple[int, int, int, int]], duration_ms: int = 0, stage_only: bool = False) -> None:
         """Send SetTileState64 message(s) covering the entire tile area.
 
         Uses an off-screen frame (1) for staging and then copies it to the
@@ -1572,6 +1636,7 @@ class LifxProtocol:
             sock.settimeout(0.1)
             created_sock = True
 
+        aborted = False
         try:
             for i, packet in enumerate(packets):
                 msg_type, payload, x, y, _, _, t_idx = packet
@@ -1581,8 +1646,15 @@ class LifxProtocol:
                         ack_required=False, res_required=False,
                         target=device.mac
                     )
-                    # Blocking send ensures kernel queues packet; avoids EWOULDBLOCK drops
-                    sock.send(built)
+                    # Non-blocking send; drop frame if buffer full (real-time behavior)
+                    try:
+                        sock.send(built)
+                    except (BlockingIOError, OSError) as se:
+                        if isinstance(se, BlockingIOError) or getattr(se, 'errno', None) in (errno.EAGAIN, errno.EWOULDBLOCK):
+                            aborted = True
+                            break
+                        else:
+                            raise
                     try:
                         self.metrics.record_send(device.mac.hex())
                     except Exception:
@@ -1597,6 +1669,8 @@ class LifxProtocol:
 
             # After staging all blocks, copy staged frame (1) to visible (0)
             try:
+                if aborted or stage_only:
+                    return
                 copy_payload = struct.pack(
                     '<BBBBBBBBBBIB',
                     tile_index,      # tile_index
@@ -1618,7 +1692,13 @@ class LifxProtocol:
                         ack_required=False, res_required=False,
                         target=device.mac
                     )
-                    sock.send(built)
+                    try:
+                        sock.send(built)
+                    except (BlockingIOError, OSError) as se:
+                        if isinstance(se, BlockingIOError) or getattr(se, 'errno', None) in (errno.EAGAIN, errno.EWOULDBLOCK):
+                            aborted = True
+                        else:
+                            raise
                     try:
                         self.metrics.record_send(device.mac.hex())
                     except Exception:
@@ -1722,8 +1802,8 @@ class LifxProtocol:
                         sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 262144)
                     except Exception:
                         sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
-                    # Use blocking sends for reliability at high FPS
-                    sock.setblocking(True)
+                    # Non-blocking sends let us drop stale frames instead of stalling
+                    sock.setblocking(False)
                     try:
                         sock.connect((device.ip, device.port))
                     except Exception:
