@@ -1194,53 +1194,38 @@ def entertainmentService(group, user, mirror_port=None):
                                 try:
                                     # Waveform path: use device-native one-cycle waveforms for smooth transitions
                                     if wf_cfg.get('use_waveforms', True):
-                                        # Determine target RGB robustly
-                                        target_rgb = None
+                                        # Determine target RGB
                                         if points_capable > 0 and gradient_points:
-                                            # gradient_points may be list of dicts with {id, color: [r,g,b]}
-                                            try:
-                                                colors = []
-                                                for gp in gradient_points:
-                                                    if isinstance(gp, dict):
-                                                        c = gp.get('color')
-                                                        if isinstance(c, (list, tuple)) and len(c) >= 3:
-                                                            colors.append((int(c[0]), int(c[1]), int(c[2])))
-                                                    elif isinstance(gp, (list, tuple)) and len(gp) >= 3:
-                                                        colors.append((int(gp[0]), int(gp[1]), int(gp[2])))
-                                                if colors:
-                                                    rs = sum(c[0] for c in colors)
-                                                    gs = sum(c[1] for c in colors)
-                                                    bs = sum(c[2] for c in colors)
-                                                    n = len(colors)
-                                                    target_rgb = (rs // n, gs // n, bs // n)
-                                            except Exception:
-                                                target_rgb = None
-                                        if target_rgb is None and zones:
-                                            try:
-                                                # zones is dict: idx -> [r,g,b]; average all entries
-                                                if hasattr(zones, 'items'):
-                                                    vals = list(zones.values())
-                                                    if vals:
-                                                        rs = sum(int(v[0]) for v in vals)
-                                                        gs = sum(int(v[1]) for v in vals)
-                                                        bs = sum(int(v[2]) for v in vals)
-                                                        n = len(vals)
-                                                        target_rgb = (rs // n, gs // n, bs // n)
-                                                else:
-                                                    v = zones.get(0, [0,0,0])
-                                                    target_rgb = (int(v[0]), int(v[1]), int(v[2]))
-                                            except Exception:
-                                                target_rgb = None
-                                        if target_rgb is not None:
+                                            # Average all points for a coherent global tone
+                                            rs = gs = bs = 0.0
+                                            n = len(gradient_points)
+                                            for (r, g, b) in gradient_points:
+                                                rs += r; gs += g; bs += b
+                                            if n > 0:
+                                                r = int(rs / n); g = int(gs / n); b = int(bs / n)
+                                            else:
+                                                r, g, b = 0, 0, 0
                                             lifx_protocol.waveform_to_color(
-                                                light, target_rgb[0], target_rgb[1], target_rgb[2],
+                                                light, r, g, b,
                                                 period_ms=wf_cfg['waveform_period_ms'],
                                                 waveform_type=wf_cfg['waveform_type'],
                                                 cycles=wf_cfg['waveform_cycles'],
                                                 skew=wf_cfg['waveform_skew'],
                                                 transient=wf_cfg['waveform_transient']
                                             )
-                                        # else: no target; skip
+                                        elif zones:
+                                            r, g, b = zones.get(0, [0, 0, 0])
+                                            lifx_protocol.waveform_to_color(
+                                                light, r, g, b,
+                                                period_ms=wf_cfg['waveform_period_ms'],
+                                                waveform_type=wf_cfg['waveform_type'],
+                                                cycles=wf_cfg['waveform_cycles'],
+                                                skew=wf_cfg['waveform_skew'],
+                                                transient=wf_cfg['waveform_transient']
+                                            )
+                                        else:
+                                            # Nothing to do
+                                            pass
                                     # Gradient/zone path (fallback when not using waveforms)
                                     elif points_capable > 0 and gradient_points:
                                         # Device supports zones/gradient
