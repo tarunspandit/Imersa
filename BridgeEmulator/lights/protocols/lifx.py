@@ -50,6 +50,7 @@ MSG_GET_DEVICE_CHAIN = 701
 MSG_STATE_DEVICE_CHAIN = 702
 MSG_SET_TILE_STATE_64 = 715
 MSG_STATE_TILE_STATE_64 = 711
+MSG_COPY_FRAMEBUFFER = 716
 
 # Constants
 LIFX_PORT = 56700
@@ -1474,8 +1475,11 @@ class LifxProtocol:
     def _send_tile_state(self, device: LifxDevice, tile_index: int, colors: List[Tuple[int, int, int, int]], duration_ms: int = 0) -> None:
         """Send SetTileState64 message(s) covering the entire tile area.
 
+        Uses an off-screen frame (1) for staging and then copies it to the
+        visible frame with CopyFrameBuffer (type 716), as per LIFX docs.
+
         Correctly iterates 8x8 blocks across both width and height, so wide/tall
-        matrices (e.g., 13x26 Ceiling) are fully updated.
+        matrices (e.g., 13x26 Ceiling) are fully updated without partial draws.
         """
         # Resolve tile info
         tiles = device.capabilities.get('tiles', [])
@@ -1491,6 +1495,9 @@ class LifxProtocol:
         # Width parameter is the rectangle width within the tile (max 8 for standard tiles).
         # Use 8 for 8x8 tiles and larger matrices; use 5 for Candle (5x5) if encountered.
         width_param = 8 if tile_width >= 8 else tile_width
+
+        # Stage updates into non-visible frame 1 to avoid on-screen tearing/partials
+        stage_frame = 1
 
         # Build all 8x8 packets by scanning y in steps of 8, then x in steps of 8
         packets: List[Tuple[int, bytes, int, int, int, int, int]] = []
@@ -1516,7 +1523,7 @@ class LifxProtocol:
                 payload = struct.pack('<BBBBBBI',
                                       tile_index,   # Tile index in chain
                                       1,            # Length (tiles to update)
-                                      0,            # Frame (0 visible)
+                                      stage_frame,  # Frame (1 = off-screen staging)
                                       x_offset,     # X within tile
                                       y_offset,     # Y within tile
                                       width_param,  # 8 for Tile, 5 for Candle
@@ -1542,6 +1549,39 @@ class LifxProtocol:
                 # Adjust or remove if devices reorder packets reliably
                 # if i + 1 < len(packets):
                 #     time.sleep(0.001)
+
+            # After staging all blocks, copy staged frame (1) to visible (0)
+            try:
+                # Copy the whole tile from staged frame (1) to visible (0)
+                # Fields per docs: tile_index, length, src_fb_index, dst_fb_index,
+                # src_x, src_y, dst_x, dst_y, width, height, duration (uint32), reserved1
+                copy_payload = struct.pack(
+                    '<BBBBBBBBBBIB',
+                    tile_index,      # tile_index
+                    1,               # length (tiles)
+                    stage_frame,     # src_fb_index (staged)
+                    0,               # dst_fb_index (visible)
+                    0,               # src_x
+                    0,               # src_y
+                    0,               # dst_x
+                    0,               # dst_y
+                    tile_width,      # width (copy entire tile width)
+                    tile_height,     # height (copy entire tile height)
+                    int(duration_ms),# duration ms (applies only when copying to visible)
+                    0                # reserved1
+                )
+                device.send_packet(
+                    MSG_COPY_FRAMEBUFFER,
+                    copy_payload,
+                    ack_required=False,
+                    res_required=False,
+                    reuse_socket=sock
+                )
+                logging.debug(
+                    f"LIFX: CopyFrameBuffer staged->visible tile={tile_index} size={tile_width}x{tile_height} duration={duration_ms}ms"
+                )
+            except Exception as e:
+                logging.warning(f"LIFX: CopyFrameBuffer failed: {e}")
         except Exception as e:
             logging.warning(f"LIFX: Failed to send Set64 packets: {e}")
         finally:
