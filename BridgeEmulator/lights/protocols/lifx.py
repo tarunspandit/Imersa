@@ -1146,13 +1146,8 @@ class LifxProtocol:
                 
                 tile_tasks.append((tile['index'], tile_colors))
             
-            # Choose smoothing duration when in entertainment mode
-            send_duration = duration_ms
-            try:
-                if self._entertainment_mode and self._settings.get('smoothing_enabled'):
-                    send_duration = max(send_duration, int(self._settings.get('smoothing_ms', 50)))
-            except Exception:
-                pass
+            # For matrix devices, keep duration at 0 for low latency
+            send_duration = 0
 
             # Send to all tiles - sequentially to avoid thread churn and resource spikes
             for tile_index, colors in tile_tasks:
@@ -1586,10 +1581,8 @@ class LifxProtocol:
                         ack_required=False, res_required=False,
                         target=device.mac
                     )
-                    try:
-                        sock.send(built)
-                    except Exception:
-                        sock.sendto(built, (device.ip, device.port))
+                    # Blocking send ensures kernel queues packet; avoids EWOULDBLOCK drops
+                    sock.send(built)
                     try:
                         self.metrics.record_send(device.mac.hex())
                     except Exception:
@@ -1600,7 +1593,7 @@ class LifxProtocol:
                         self.metrics.record_send(device.mac.hex())
                     except Exception:
                         pass
-                logging.debug(f"LIFX: Sent SetTileState64 {i+1}/{len(packets)} to {device.label}, tile_index={t_idx}, x={x}, y={y}")
+                # Debug logging per-block removed to avoid overhead at high FPS
 
             # After staging all blocks, copy staged frame (1) to visible (0)
             try:
@@ -1625,10 +1618,7 @@ class LifxProtocol:
                         ack_required=False, res_required=False,
                         target=device.mac
                     )
-                    try:
-                        sock.send(built)
-                    except Exception:
-                        sock.sendto(built, (device.ip, device.port))
+                    sock.send(built)
                     try:
                         self.metrics.record_send(device.mac.hex())
                     except Exception:
@@ -1639,7 +1629,7 @@ class LifxProtocol:
                         self.metrics.record_send(device.mac.hex())
                     except Exception:
                         pass
-                logging.debug(f"LIFX: CopyFrameBuffer staged->visible tile={tile_index} size={tile_width}x{tile_height} duration={duration_ms}ms")
+                # Debug logging suppressed at high FPS
             except Exception as e:
                 logging.warning(f"LIFX: CopyFrameBuffer failed: {e}")
         except Exception as e:
@@ -1721,15 +1711,19 @@ class LifxProtocol:
         # Reset metrics for this session
         self.metrics.reset()
         
-        # Create dedicated sockets for each device for zero-latency updates
+        # Create dedicated sockets for each device for high-rate updates
         for mac_hex, device in self.devices.items():
             if mac_hex not in self._entertainment_sockets:
                 try:
                     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                     # Increase send buffer for high-frequency updates
-                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
-                    sock.setblocking(False)  # Non-blocking for entertainment
+                    try:
+                        sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 262144)
+                    except Exception:
+                        sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
+                    # Use blocking sends for reliability at high FPS
+                    sock.setblocking(True)
                     try:
                         sock.connect((device.ip, device.port))
                     except Exception:
