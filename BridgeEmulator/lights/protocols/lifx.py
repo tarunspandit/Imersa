@@ -625,12 +625,14 @@ class LifxProtocol:
                 return
             self._settings.update({k: v for k, v in settings.items() if k in self._settings})
 
-            # Respect official 20 msg/sec limit, allow lowering below it
+            # Use slider-defined max_fps as per-device message budget (no hard 20 cap)
             try:
                 max_fps = int(self._settings.get('max_fps', MAX_MESSAGES_PER_SECOND))
             except Exception:
                 max_fps = MAX_MESSAGES_PER_SECOND
-            new_rate = max(1, min(MAX_MESSAGES_PER_SECOND, max_fps))
+            new_rate = max(1, max_fps)
+            if new_rate > MAX_MESSAGES_PER_SECOND:
+                logging.warning(f"LIFX: max_fps set to {new_rate} (> {MAX_MESSAGES_PER_SECOND}). Devices may drop packets.")
             self.rate_limiter.max_rate = new_rate
             logging.info(f"LIFX: Updated settings; rate limiter set to {new_rate} msg/sec")
         except Exception as e:
@@ -1311,19 +1313,16 @@ class LifxProtocol:
         """Send SetExtendedColorZones message for efficient multizone updates"""
         # SetExtendedColorZones can update up to 82 zones in a single message
         duration = 0  # Immediate transition
-        apply = 1  # Apply immediately (APPLY_APPLY)
-        zone_index = 0  # Starting zone
-        
+        total = len(colors)
         # Process colors in chunks of 82 (max zones per message)
-        for chunk_start in range(0, len(colors), 82):
+        for chunk_start in range(0, total, 82):
             chunk = colors[chunk_start:chunk_start + 82]
             colors_count = len(chunk)
-            
+            apply_flag = 1 if (chunk_start + colors_count >= total) else 0
             # Build SetExtendedColorZones payload
-            # Duration (uint32) + Apply (uint8) + Zone Index (uint16) + Colors Count (uint8)
             payload = struct.pack('<IBHB', 
                                 duration,      # Duration in ms
-                                apply,         # Apply flag
+                                apply_flag,    # Apply only on last chunk
                                 chunk_start,   # Starting zone index
                                 colors_count)  # Number of colors
             
@@ -1395,14 +1394,16 @@ class LifxProtocol:
                                    sock: Optional[socket.socket] = None) -> None:
         """Send SetExtendedColorZones with entertainment socket"""
         # Process colors in chunks of 82 (max zones per message)
-        for chunk_start in range(0, len(colors), 82):
+        total = len(colors)
+        for chunk_start in range(0, total, 82):
             chunk = colors[chunk_start:chunk_start + 82]
             colors_count = len(chunk)
             
             # Build SetExtendedColorZones payload
+            apply_flag = 1 if (chunk_start + colors_count >= total) else 0
             payload = struct.pack('<IBHB', 
                                 0,             # Duration (0 for instant)
-                                1,             # Apply immediately
+                                apply_flag,    # Apply only on last chunk
                                 chunk_start,   # Starting zone index
                                 colors_count)  # Number of colors
             
@@ -1426,7 +1427,11 @@ class LifxProtocol:
                     target=device.mac
                 )
                 try:
-                    sock.sendto(packet, (device.ip, device.port))
+                    # If sock is connected, send() is fine; otherwise sendto()
+                    try:
+                        sock.send(packet)
+                    except Exception:
+                        sock.sendto(packet, (device.ip, device.port))
                 except:
                     device.send_packet(MSG_SET_EXTENDED_COLOR_ZONES, payload, ack_required=False, res_required=False)
             else:
@@ -1635,6 +1640,10 @@ class LifxProtocol:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
                 sock.setblocking(False)
+                try:
+                    sock.connect((ip, LIFX_PORT))
+                except Exception:
+                    pass
                 self._rapid_socket_pool[ip] = sock
                 logging.debug(f"LIFX: Created rapid socket for {ip}")
             except Exception as e:
@@ -1669,7 +1678,8 @@ class LifxProtocol:
         
         # Send directly using socket pool; on error, optionally fallback to lifxlan
         try:
-            self._rapid_socket_pool[ip].sendto(packet, (ip, LIFX_PORT))
+            # Prefer connected send for lower overhead
+            self._rapid_socket_pool[ip].send(packet)
             self.metrics.record_send(mac_hex)  # Track successful send
             return
         except Exception as e:
@@ -1686,8 +1696,12 @@ class LifxProtocol:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
                 sock.setblocking(False)
+                try:
+                    sock.connect((ip, LIFX_PORT))
+                except Exception:
+                    pass
                 self._rapid_socket_pool[ip] = sock
-                self._rapid_socket_pool[ip].sendto(packet, (ip, LIFX_PORT))
+                self._rapid_socket_pool[ip].send(packet)
                 self.metrics.record_send(mac_hex)  # Track retry success
                 return
             except Exception:
@@ -1729,6 +1743,10 @@ class LifxProtocol:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
                 sock.setblocking(False)
+                try:
+                    sock.connect((ip, LIFX_PORT))
+                except Exception:
+                    pass
                 self._rapid_socket_pool[ip] = sock
                 logging.debug(f"LIFX: Created rapid socket for {ip}")
             except Exception as e:
@@ -1765,13 +1783,15 @@ class LifxProtocol:
             # Send zones using SetExtendedColorZones if supported
             if capabilities.get('supports_extended', False):
                 # Process in chunks of 82 zones
-                for chunk_start in range(0, len(hsbk_colors), 82):
+                total = len(hsbk_colors)
+                for chunk_start in range(0, total, 82):
                     chunk = hsbk_colors[chunk_start:chunk_start + 82]
                     
                     # Build SetExtendedColorZones payload
+                    apply_flag = 1 if (chunk_start + len(chunk) >= total) else 0
                     payload = struct.pack('<IBHB', 
                                         0,             # Duration (instant)
-                                        1,             # Apply immediately
+                                        apply_flag,    # Apply on last chunk only
                                         chunk_start,   # Starting zone index
                                         len(chunk))    # Number of colors
                     
@@ -1793,7 +1813,7 @@ class LifxProtocol:
                     )
                     
                     try:
-                        self._rapid_socket_pool[ip].sendto(packet, (ip, LIFX_PORT))
+                        self._rapid_socket_pool[ip].send(packet)
                     except Exception as e:
                         logging.debug(f"LIFX: Failed to send extended zones: {e}")
             else:
@@ -1817,7 +1837,7 @@ class LifxProtocol:
                     )
                     
                     try:
-                        self._rapid_socket_pool[ip].sendto(packet, (ip, LIFX_PORT))
+                        self._rapid_socket_pool[ip].send(packet)
                     except Exception as e:
                         logging.debug(f"LIFX: Failed to send zone {i}: {e}")
                         

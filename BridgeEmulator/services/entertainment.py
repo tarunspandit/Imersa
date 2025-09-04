@@ -95,7 +95,10 @@ def _lifx_tuning():
     except Exception:
         lifx_cfg = {}
     max_fps = lifx_cfg.get("max_fps", 120)
-    return max(30, int(max_fps))
+    try:
+        return max(1, int(max_fps))
+    except Exception:
+        return 60
 
 
 def getObject(v2uuid):
