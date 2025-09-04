@@ -304,15 +304,26 @@ def lifx_settings():
             "smoothing_enabled": False,
             "smoothing_ms": 50,
             "keepalive_interval": 45,
-            "static_ips": []
+            "static_ips": [],
+            # Waveforms (for smooth device-native transitions)
+            "use_waveforms": True,
+            "waveform_type": "sine",          # sine|triangle|saw|half_sine|pulse
+            "waveform_period_ms": 80,          # ms per cycle
+            "waveform_cycles": 1.0,            # 1 = one-shot to target
+            "waveform_skew": 0.5,              # 0..1
+            "waveform_transient": False        # False = end at target
         })
         if flask_login.current_user.is_authenticated or True:
             if request.method == 'POST':
                 data = request.get_json(force=True)
                 if isinstance(data, dict):
                     # Only accept specific keys
-                    allowed_keys = ["enabled", "max_fps", "smoothing_enabled", "smoothing_ms", 
-                                   "keepalive_interval", "static_ips"]
+                    allowed_keys = [
+                        "enabled", "max_fps", "smoothing_enabled", "smoothing_ms", 
+                        "keepalive_interval", "static_ips",
+                        "use_waveforms", "waveform_type", "waveform_period_ms",
+                        "waveform_cycles", "waveform_skew", "waveform_transient"
+                    ]
                     for k in allowed_keys:
                         if k in data:
                             lifx[k] = data[k]

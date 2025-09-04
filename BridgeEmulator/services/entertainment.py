@@ -101,6 +101,24 @@ def _lifx_tuning():
         return 60
 
 
+def _lifx_waveform_cfg():
+    """Return waveform configuration for LIFX from runtime config."""
+    try:
+        lifx_cfg = bridgeConfig.get("temp", {}).get("integrations", {}).get("lifx", {})
+        if not lifx_cfg:
+            lifx_cfg = bridgeConfig.get("config", {}).get("lifx", {})
+    except Exception:
+        lifx_cfg = {}
+    return {
+        "use_waveforms": bool(lifx_cfg.get("use_waveforms", True)),
+        "waveform_type": str(lifx_cfg.get("waveform_type", "sine")),
+        "waveform_period_ms": int(lifx_cfg.get("waveform_period_ms", 80)),
+        "waveform_cycles": float(lifx_cfg.get("waveform_cycles", 1.0)),
+        "waveform_skew": float(lifx_cfg.get("waveform_skew", 0.5)),
+        "waveform_transient": bool(lifx_cfg.get("waveform_transient", False)),
+    }
+
+
 def getObject(v2uuid):
     for key, obj in bridgeConfig["lights"].items():
         if str(uuid.uuid5(uuid.NAMESPACE_URL, obj.id_v2 + 'entertainment')) == v2uuid:
@@ -1126,6 +1144,7 @@ def entertainmentService(group, user, mirror_port=None):
                     # LIFX zone/gradient processing - PARALLEL
                     if lifxLights:
                         cfg_max_fps = _lifx_tuning()
+                        wf_cfg = _lifx_waveform_cfg()
                         now_ts = time.time()
                         
                         # Prepare all LIFX updates
@@ -1173,7 +1192,42 @@ def entertainmentService(group, user, mirror_port=None):
                                 zones = update_data['zones']
                                 
                                 try:
-                                    if points_capable > 0 and gradient_points:
+                                    # Waveform path: use device-native one-cycle waveforms for smooth transitions
+                                    if wf_cfg.get('use_waveforms', True):
+                                        # Determine target RGB
+                                        if points_capable > 0 and gradient_points:
+                                            # Average all points for a coherent global tone
+                                            rs = gs = bs = 0.0
+                                            n = len(gradient_points)
+                                            for (r, g, b) in gradient_points:
+                                                rs += r; gs += g; bs += b
+                                            if n > 0:
+                                                r = int(rs / n); g = int(gs / n); b = int(bs / n)
+                                            else:
+                                                r, g, b = 0, 0, 0
+                                            lifx_protocol.waveform_to_color(
+                                                light, r, g, b,
+                                                period_ms=wf_cfg['waveform_period_ms'],
+                                                waveform_type=wf_cfg['waveform_type'],
+                                                cycles=wf_cfg['waveform_cycles'],
+                                                skew=wf_cfg['waveform_skew'],
+                                                transient=wf_cfg['waveform_transient']
+                                            )
+                                        elif zones:
+                                            r, g, b = zones.get(0, [0, 0, 0])
+                                            lifx_protocol.waveform_to_color(
+                                                light, r, g, b,
+                                                period_ms=wf_cfg['waveform_period_ms'],
+                                                waveform_type=wf_cfg['waveform_type'],
+                                                cycles=wf_cfg['waveform_cycles'],
+                                                skew=wf_cfg['waveform_skew'],
+                                                transient=wf_cfg['waveform_transient']
+                                            )
+                                        else:
+                                            # Nothing to do
+                                            pass
+                                    # Gradient/zone path (fallback when not using waveforms)
+                                    elif points_capable > 0 and gradient_points:
                                         # Device supports zones/gradient
                                         # Sort gradient points by ID
                                         gradient_points.sort(key=lambda x: x["id"])

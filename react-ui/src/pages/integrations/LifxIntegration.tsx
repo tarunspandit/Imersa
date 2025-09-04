@@ -12,6 +12,12 @@ type LifxSettings = {
   smoothing_ms: number;
   keepalive_interval: number;
   static_ips: string[];
+  use_waveforms: boolean;
+  waveform_type: 'sine' | 'triangle' | 'saw' | 'half_sine' | 'pulse';
+  waveform_period_ms: number;
+  waveform_cycles: number;
+  waveform_skew: number; // 0..1
+  waveform_transient: boolean;
 };
 
 const defaultSettings: LifxSettings = {
@@ -20,7 +26,13 @@ const defaultSettings: LifxSettings = {
   smoothing_enabled: false,
   smoothing_ms: 50,
   keepalive_interval: 45,
-  static_ips: []
+  static_ips: [],
+  use_waveforms: true,
+  waveform_type: 'sine',
+  waveform_period_ms: 80,
+  waveform_cycles: 1.0,
+  waveform_skew: 0.5,
+  waveform_transient: false
 };
 
 const LifxIntegration: React.FC = () => {
@@ -141,6 +153,14 @@ const LifxIntegration: React.FC = () => {
           <CardContent className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
+                <div className="font-medium">Use Waveforms</div>
+                <div className="text-xs text-muted-foreground">Device-native smooth transitions (less traffic)</div>
+              </div>
+              <Switch checked={settings.use_waveforms} onCheckedChange={(v) => setSettings({ ...settings, use_waveforms: !!v })} />
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div>
                 <div className="font-medium">Enabled</div>
                 <div className="text-xs text-muted-foreground">Include LIFX in discovery and entertainment</div>
               </div>
@@ -168,6 +188,62 @@ const LifxIntegration: React.FC = () => {
                 </div>
               </div>
             </div>
+
+            {settings.use_waveforms && (
+              <div className="space-y-4 pt-2 border-t">
+                <div>
+                  <label className="text-sm font-medium mb-2 block">Waveform Type</label>
+                  <select
+                    value={settings.waveform_type}
+                    onChange={(e) => setSettings({ ...settings, waveform_type: e.target.value as LifxSettings['waveform_type'] })}
+                    className="w-full border rounded px-2 py-1"
+                  >
+                    <option value="sine">Sine</option>
+                    <option value="triangle">Triangle</option>
+                    <option value="half_sine">Half Sine</option>
+                    <option value="saw">Saw</option>
+                    <option value="pulse">Pulse</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-2 block">Waveform Period (ms)</label>
+                  <div className="flex items-center gap-4">
+                    <input
+                      type="range"
+                      min={20}
+                      max={400}
+                      step={10}
+                      value={settings.waveform_period_ms}
+                      onChange={(e) => setSettings({ ...settings, waveform_period_ms: Number(e.target.value) })}
+                      className="flex-1"
+                    />
+                    <div className="w-16 text-center font-mono text-sm">{settings.waveform_period_ms}ms</div>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-2 block">Waveform Skew</label>
+                  <div className="flex items-center gap-4">
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={settings.waveform_skew}
+                      onChange={(e) => setSettings({ ...settings, waveform_skew: Number(e.target.value) })}
+                      className="flex-1"
+                    />
+                    <div className="w-16 text-center font-mono text-sm">{settings.waveform_skew.toFixed(2)}</div>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="font-medium">Transient</div>
+                    <div className="text-xs text-muted-foreground">Return to original color after cycle</div>
+                  </div>
+                  <Switch checked={settings.waveform_transient} onCheckedChange={(v) => setSettings({ ...settings, waveform_transient: !!v })} />
+                </div>
+              </div>
+            )}
 
             <div className="space-y-3 pt-2 border-t">
               <div className="flex items-center justify-between">

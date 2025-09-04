@@ -617,7 +617,14 @@ class LifxProtocol:
             'smoothing_enabled': False,
             'smoothing_ms': 50,
             'keepalive_interval': 45,
-            'static_ips': []
+            'static_ips': [],
+            # Waveform defaults
+            'use_waveforms': True,
+            'waveform_type': 'sine',
+            'waveform_period_ms': 80,
+            'waveform_cycles': 1.0,
+            'waveform_skew': 0.5,
+            'waveform_transient': False
         }
         self._init_socket_pool()
 
@@ -706,6 +713,63 @@ class LifxProtocol:
     def _get_socket(self) -> socket.socket:
         """Get a socket from the pool"""
         return self.socket_pool[random.randint(0, len(self.socket_pool) - 1)]
+
+    def waveform_to_color(self, light, r: int, g: int, b: int, 
+                           period_ms: Optional[int] = None,
+                           waveform_type: Optional[str] = None,
+                           cycles: Optional[float] = None,
+                           skew: Optional[float] = None,
+                           transient: Optional[bool] = None) -> bool:
+        """Apply a device-native waveform to smoothly reach a target RGB color.
+
+        Uses SetWaveform (103) with cycles=1 by default to perform a single
+        shaped transition to the target, ending there (transient=False).
+        """
+        try:
+            mac_hex = light.protocol_cfg.get('mac') or self._ensure_mac_for_light(light)
+            if not mac_hex:
+                return False
+            device = self.devices.get(mac_hex)
+            if not device:
+                ip = light.protocol_cfg.get('ip')
+                if not ip:
+                    return False
+                device = LifxDevice(bytes.fromhex(mac_hex), ip, light.name)
+                self.devices[mac_hex] = device
+
+            # Choose parameters from settings if not provided
+            st = self._settings
+            wf_type = (waveform_type or st.get('waveform_type', 'sine')).lower()
+            type_map = {
+                'saw': WAVEFORM_SAW,
+                'sine': WAVEFORM_SINE,
+                'half_sine': WAVEFORM_HALF_SINE,
+                'triangle': WAVEFORM_TRIANGLE,
+                'pulse': WAVEFORM_PULSE,
+            }
+            wf_const = type_map.get(wf_type, WAVEFORM_SINE)
+            period = int(period_ms if period_ms is not None else st.get('waveform_period_ms', 80))
+            cyc = float(cycles if cycles is not None else st.get('waveform_cycles', 1.0))
+            skew_ratio = float(skew if skew is not None else st.get('waveform_skew', 0.5))
+            trans = bool(st.get('waveform_transient', False) if transient is None else transient)
+
+            # Convert RGB to HSBK (keep current kelvin)
+            h, s, v = self._rgb_to_hsv(r, g, b)
+            hue = int(h * 65535)
+            sat = int(s * 65535)
+            bri = int(v * 65535)
+            kelvin = DEFAULT_KELVIN
+            try:
+                # Prefer last known CT if present to keep whites stable
+                last_ct = int(device.last_state.get('ct')) if device.last_state else None
+                if last_ct:
+                    kelvin = max(1500, min(9000, int(1000000 / last_ct)))
+            except Exception:
+                pass
+            return device.send_waveform(wf_const, (hue, sat, bri, kelvin), period, cyc, skew_ratio, trans)
+        except Exception as e:
+            logging.debug(f"LIFX: waveform_to_color error: {e}")
+            return False
 
     def _ensure_mac_for_light(self, light) -> Optional[str]:
         """Ensure the light has a MAC stored in protocol_cfg; resolve if missing.
