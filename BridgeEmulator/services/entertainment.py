@@ -1150,7 +1150,7 @@ def entertainmentService(group, user, mirror_port=None):
                             }
                             lifx_updates.append(update_data)
                         
-                        # Process all LIFX devices in parallel
+                        # Process all LIFX devices sequentially to avoid per-frame thread churn
                         if lifx_updates:
                             def process_lifx_device(update_data):
                                 key = update_data['key']
@@ -1266,12 +1266,8 @@ def entertainmentService(group, user, mirror_port=None):
                                 except Exception as e:
                                     logging.debug(f"LIFX zone processing error for {key}: {e}")
                             
-                            # Use ThreadPoolExecutor to send to all LIFX devices in parallel
-                            from concurrent.futures import ThreadPoolExecutor
-                            with ThreadPoolExecutor(max_workers=min(len(lifx_updates), 10)) as executor:
-                                futures = [executor.submit(process_lifx_device, data) for data in lifx_updates]
-                                # Don't wait for results in entertainment mode - keep it fast
-                                # The futures will complete in the background
+                            for data in lifx_updates:
+                                process_lifx_device(data)
 
                     # Hue lights are handled via DTLS tunnel, no need for API calls
 

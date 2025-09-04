@@ -1128,26 +1128,12 @@ class LifxProtocol:
                 
                 tile_tasks.append((tile['index'], tile_colors))
             
-            # Send to all tiles - in parallel if multiple
-            if len(tile_tasks) > 1:
-                # Multiple tiles - send in parallel
-                def send_tile_wrapper(task_data):
-                    tile_index, colors = task_data
+            # Send to all tiles - sequentially to avoid thread churn and resource spikes
+            for tile_index, colors in tile_tasks:
+                try:
                     self._send_tile_state(device, tile_index, colors, duration_ms)
-                
-                with ThreadPoolExecutor(max_workers=min(len(tile_tasks), 5)) as executor:
-                    futures = [executor.submit(send_tile_wrapper, task) for task in tile_tasks]
-                    # Wait for all to complete
-                    for future in futures:
-                        try:
-                            future.result(timeout=0.2)  # 200ms timeout
-                        except Exception as e:
-                            logging.warning(f"LIFX: Failed to send gradient to tile: {e}")
-            else:
-                # Single tile - send directly
-                if tile_tasks:
-                    tile_index, colors = tile_tasks[0]
-                    self._send_tile_state(device, tile_index, colors, duration_ms)
+                except Exception as e:
+                    logging.warning(f"LIFX: Failed to send gradient to tile {tile_index}: {e}")
     
     def _interpolate_gradient(self, points: List[Dict], count: int, brightness: int = 254) -> List[Tuple[int, int, int, int]]:
         """Interpolate gradient points to specific number of colors"""
